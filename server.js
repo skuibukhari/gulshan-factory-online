@@ -442,30 +442,22 @@ app.get('/api/dashboard', requireLogin, requireSection('dashboard'), (req, res) 
   });
 });
 
-// ---------- Printable A4 production sheet (server-rendered) ----------
+// ---------- Printable A4 sheets (server-rendered) ----------
+// ?type=totals — item-wise production sheet (kul miqdar)
+// ?type=shops  — shop-wise packing slips (har dukan alag A4 page)
 function esc(s) { return String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c])); }
 app.get('/print', requireLogin, (req, res) => {
   if (!can(req.user, 'reports', 'view')) return res.status(403).send('forbidden');
-  const { date, route_id } = req.query;
+  const { date, route_id, type } = req.query;
+  const mode = type === 'shops' ? 'shops' : 'totals';
   let f = 'WHERE 1=1'; const args = [];
   if (date) { f += ' AND o.delivery_date=?'; args.push(date); }
   if (route_id) { f += ' AND o.route_id=?'; args.push(route_id); }
-  const totals = db.prepare(`SELECT p.name AS product_name, c.name AS category_name, u.name AS unit_name, SUM(oi.quantity) AS total_qty
-    FROM order_items oi JOIN orders o ON o.id=oi.order_id JOIN products p ON p.id=oi.product_id
-    LEFT JOIN categories c ON c.id=p.category_id LEFT JOIN units u ON u.id=p.unit_id
-    ${f} GROUP BY p.id ORDER BY c.sort, c.id, p.name`).all(...args);
-  const orders = db.prepare(`SELECT o.id, o.delivery_date, s.name AS shop_name, r.name AS route_name FROM orders o
-    JOIN shops s ON s.id=o.shop_id LEFT JOIN routes r ON r.id=o.route_id ${f} ORDER BY s.name`).all(...args);
-  const itemsByOrder = db.prepare(`SELECT oi.order_id, p.name AS product_name, u.name AS unit_name, oi.quantity
-    FROM order_items oi JOIN products p ON p.id=oi.product_id LEFT JOIN units u ON u.id=p.unit_id WHERE oi.order_id=?`);
   const routeName = route_id ? (db.prepare('SELECT name FROM routes WHERE id=?').get(route_id) || {}).name : 'تمام روٹس';
-  const rows = totals.map(t => `<tr><td>${esc(t.category_name || '')}</td><td>${esc(t.product_name)}</td><td>${esc(t.total_qty)} ${esc(t.unit_name || '')}</td></tr>`).join('');
-  const shopBlocks = orders.map(o => {
-    const its = itemsByOrder.all(o.id).map(i => `<div class="si"><span>${esc(i.product_name)}</span><b>${esc(i.quantity)} ${esc(i.unit_name || '')}</b></div>`).join('');
-    return `<div class="shop"><h3>${esc(o.shop_name)} <small>${esc(o.delivery_date)}</small></h3>${its}</div>`;
-  }).join('');
-  res.send(`<!DOCTYPE html><html lang="ur" dir="rtl"><head><meta charset="utf-8"><title>پروڈکشن شیٹ — گلشن فیکٹری</title>
-<style>
+  const dateLabel = date || 'تمام';
+  const head = (title) => `<div class="head"><img src="/logo.png" alt="logo"><div><h1>گلشن فیکٹری <span>Gulshan Factory</span></h1><div class="meta">${esc(title)} — تاریخ: ${esc(dateLabel)} | روٹ: ${esc(routeName)}</div></div></div>`;
+  const printBtn = `<br><button class="printbtn" onclick="window.print()" style="padding:10px 24px;font-size:16px">پرنٹ کریں</button>`;
+  const css = `<style>
  @page{size:A4;margin:10mm} *{box-sizing:border-box}
  body{font-family:'Noto Nastaliq Urdu','Jameel Noori Nastaleeq',serif;direction:rtl;color:#111;margin:0;padding:10mm}
  .head{display:flex;align-items:center;gap:12px;border-bottom:3px solid #e8721c;padding-bottom:8px;margin-bottom:10px}
@@ -474,17 +466,44 @@ app.get('/print', requireLogin, (req, res) => {
  table{width:100%;border-collapse:collapse;font-size:14px;margin-bottom:14px}
  th{background:#1a1a1a;color:#fff;padding:6px} td{border:1px solid #999;padding:5px 8px}
  tr:nth-child(even) td{background:#fdf3e7}
- .shop{break-inside:avoid;border:1px solid #ccc;border-radius:6px;padding:6px 10px;margin-bottom:8px}
- .shop h3{margin:0 0 4px;font-size:15px;color:#e8721c} .shop h3 small{color:#555}
- .si{display:flex;justify-content:space-between;font-size:13px;border-top:1px dotted #ccc;padding:2px 0}
- .nb{display:none} @media print{.nb{display:none} .printbtn{display:none}}
-</style></head><body>
-<div class="head"><img src="/logo.png" alt="logo"><div><h1>گلشن فیکٹری <span>Gulshan Factory</span></h1><div class="meta">پروڈکشن شیٹ — تاریخ: ${esc(date || 'تمام')} | روٹ: ${esc(routeName)}</div></div></div>
-<h2 style="color:#2e7d32">آئٹم وائز کل مقدار</h2>
-<table><tr><th>کیٹیگری</th><th>آئٹم</th><th>کل مقدار</th></tr>${rows || '<tr><td colspan=3>کوئی آرڈر نہیں</td></tr>'}</table>
-<h2 style="color:#2e7d32">دکان وائز آرڈر</h2>${shopBlocks || '<p>کوئی آرڈر نہیں</p>'}
-<br><button class="printbtn" onclick="window.print()" style="padding:10px 24px;font-size:16px">پرنٹ کریں</button>
-</body></html>`);
+ .slip{break-inside:avoid}
+ .slip h2.shopname{font-size:24px;color:#e8721c;margin:0 0 4px}
+ .slip .smeta{color:#555;font-size:14px;margin-bottom:8px}
+ .sig{display:flex;justify-content:space-between;margin-top:26px;font-size:14px}
+ .sig div{border-top:1px solid #333;padding-top:4px;width:40%;text-align:center}
+ .note{background:#fdf3e7;border:1px dashed #e8721c;padding:6px 10px;margin:8px 0;font-size:13px}
+ @media print{ .printbtn{display:none} .pagebreak{break-after:page} }
+</style>`;
+  if (mode === 'shops') {
+    const orders = db.prepare(`SELECT o.id, o.delivery_date, o.note, s.name AS shop_name, r.name AS route_name FROM orders o
+      JOIN shops s ON s.id=o.shop_id LEFT JOIN routes r ON r.id=o.route_id ${f} ORDER BY s.name`).all(...args);
+    const itemsByOrder = db.prepare(`SELECT p.name AS product_name, u.name AS unit_name, oi.quantity
+      FROM order_items oi JOIN products p ON p.id=oi.product_id LEFT JOIN units u ON u.id=p.unit_id WHERE oi.order_id=? ORDER BY p.name`);
+    const slips = orders.map((o, idx) => {
+      const its = itemsByOrder.all(o.id);
+      const rows = its.map((it, i) => `<tr><td>${i + 1}</td><td>${esc(it.product_name)}</td><td><b>${esc(it.quantity)} ${esc(it.unit_name || '')}</b></td><td style="width:70px">☐</td></tr>`).join('')
+        || '<tr><td colspan=4>کوئی آئٹم نہیں</td></tr>';
+      return `<div class="slip${idx < orders.length - 1 ? ' pagebreak' : ''}">
+        ${head('ڈیلیوری سلپ')}
+        <h2 class="shopname">${esc(o.shop_name)}</h2>
+        <div class="smeta">تاریخ: ${esc(o.delivery_date)} | روٹ: ${esc(o.route_name || '—')}</div>
+        <table><tr><th>#</th><th>آئٹم</th><th>مقدار</th><th>پیک ✓</th></tr>${rows}</table>
+        ${o.note ? `<div class="note">نوٹ: ${esc(o.note)}</div>` : ''}
+        <div class="sig"><div>فیکٹری (دستخط)</div><div>وصول کنندہ (دستخط)</div></div>
+      </div>`;
+    }).join('');
+    return res.send(`<!DOCTYPE html><html lang="ur" dir="rtl"><head><meta charset="utf-8"><title>دکان وائز سلپس — گلشن فیکٹری</title>${css}</head><body>${slips || '<p>کوئی آرڈر نہیں</p>'}${printBtn}</body></html>`);
+  }
+  const totals = db.prepare(`SELECT p.name AS product_name, c.name AS category_name, u.name AS unit_name, SUM(oi.quantity) AS total_qty,
+      COUNT(DISTINCT o.shop_id) AS shop_count
+    FROM order_items oi JOIN orders o ON o.id=oi.order_id JOIN products p ON p.id=oi.product_id
+    LEFT JOIN categories c ON c.id=p.category_id LEFT JOIN units u ON u.id=p.unit_id
+    ${f} GROUP BY p.id ORDER BY c.sort, c.id, p.name`).all(...args);
+  const rows = totals.map(t => `<tr><td>${esc(t.category_name || '')}</td><td>${esc(t.product_name)}</td><td><b>${esc(t.total_qty)} ${esc(t.unit_name || '')}</b></td><td>${t.shop_count} دکان</td></tr>`).join('');
+  res.send(`<!DOCTYPE html><html lang="ur" dir="rtl"><head><meta charset="utf-8"><title>پروڈکشن شیٹ — گلشن فیکٹری</title>${css}</head><body>
+${head('پروڈکشن شیٹ — آئٹم وائز کل مقدار')}
+<table><tr><th>کیٹیگری</th><th>آئٹم</th><th>کل مقدار</th><th>دکانیں</th></tr>${rows || '<tr><td colspan=4>کوئی آرڈر نہیں</td></tr>'}</table>
+${printBtn}</body></html>`);
 });
 
 app.use(express.static(path.join(__dirname, 'public')));

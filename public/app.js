@@ -438,7 +438,8 @@ async function loadTotals() {
   const t = await api('GET', `/api/totals?date=${d}${r ? '&route_id=' + r : ''}`);
   const rows = t.map(x => `<tr><td>${esc(x.category_name || '')}</td><td>${esc(x.product_name)}</td><td><b>${esc(x.total_qty)} ${esc(x.unit_name || '')}</b></td><td>${x.shop_count} دکان</td></tr>`).join('');
   $('#rpBody').innerHTML = `<table><tr><th>کیٹیگری</th><th>آئٹم</th><th>کل مقدار</th><th>دکانیں</th></tr>${rows || '<tr><td colspan=4>کوئی آرڈر نہیں</td></tr>'}</table>`;
-  $('#rpPrint').innerHTML = `<a class="btn green" target="_blank" href="/print?date=${d}${r ? '&route_id=' + r : ''}">🖨 A4 پروڈکشن شیٹ کھولیں / پرنٹ</a>`;
+  $('#rpPrint').innerHTML = `<a class="btn green" target="_blank" href="/print?type=totals&date=${d}${r ? '&route_id=' + r : ''}">🖨 آئٹم وائز ٹوٹل پرنٹ کریں</a>
+  <a class="btn dark" target="_blank" href="/print?type=shops&date=${d}${r ? '&route_id=' + r : ''}">🧾 دکان وائز سلپ پرنٹ کریں (ہر دکان الگ صفحہ)</a>`;
 }
 
 // ---------- settings: users & access ----------
