@@ -81,7 +81,7 @@ const MENU = [
   ['units', '⚖ یونٹس'], ['products', '🍞 آئٹمز'], ['shops', '🏪 دکانیں'],
 ];
 const VIEW_SEC = { dashboard: 'dashboard', order: 'orders', orders: 'orders', order_history: 'order_history', reports: 'reports',
-  vehicles: 'vehicles', routes: 'routes', categories: 'categories', units: 'units', products: 'products', shops: 'shops' };
+  vehicles: 'vehicles', routes: 'routes', cats: 'categories', units: 'units', products: 'products', shops: 'shops' };
 function viewAllowed(key) {
   const sec = VIEW_SEC[key];
   if (!sec) return true;
@@ -107,9 +107,9 @@ function buildMenu() {
 function showView(name) {
   if (!viewAllowed(name)) name = firstAllowedView();
   document.querySelectorAll('.view').forEach(v => v.classList.remove('on'));
-  const el = $('#v-' + name); if (el) el.classList.add('on');
+  const el = $('#v-' + (name === 'order_history' ? 'history' : name)); if (el) el.classList.add('on');
   document.querySelectorAll('#menuNav button').forEach(b => b.classList.toggle('active', b.dataset.view === name));
-  ({ dashboard: renderDashboard, order: renderOrderForm, orders: renderOrders, history: renderHistory,
+  ({ dashboard: renderDashboard, order: renderOrderForm, orders: renderOrders, order_history: renderHistory,
      vehicles: () => renderMaster('vehicles'), routes: renderRoutes, cats: () => renderMaster('cats'),
      units: () => renderMaster('units'), products: renderProducts, shops: () => renderMaster('shops'),
      reports: renderReports }[name] || (() => {}))();
@@ -309,12 +309,13 @@ const MASTER_CONF = {
 async function renderMaster(key) {
   const conf = MASTER_CONF[key];
   const endpoint = conf.api || key;
+  const sec = VIEW_SEC[key] || key;
   const list = await api('GET', '/api/' + endpoint);
   const rows = list.map(r => `<tr>${conf.fields.map(([f]) => `<td>${esc(r[f])}</td>`).join('')}
     <td>${r.active === 0 ? '<span class="badge off">بند</span>' : '<span class="badge">فعال</span>'}
-    ${can(key, 'full') || can('shops', 'full') ? ` <button class="btn small ghost" onclick="masterEdit('${key}','${endpoint}',${r.id})">✏</button>
+    ${can(sec, 'full') ? ` <button class="btn small ghost" onclick="masterEdit('${key}','${endpoint}',${r.id})">✏</button>
     <button class="btn small danger" onclick="masterDel('${endpoint}',${r.id},'${key}')">🗑</button>` : ''}</td></tr>`).join('');
-  const form = (can(key, 'full') || (key === 'shops' && can('shops', 'full'))) ? `
+  const form = can(sec, 'full') ? `
     <div class="formgrid" id="mf-${key}">
       ${conf.fields.map(([f, l]) => `<label>${l}<br><input id="mf-${key}-${f}"></label>`).join('')}
       <label><br><button class="btn small green" onclick="masterAdd('${key}','${endpoint}')">➕ شامل کریں</button></label>
