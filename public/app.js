@@ -75,7 +75,7 @@ function urlB64ToKey(b64) {
 async function setupPush() {
   try {
     if (!('serviceWorker' in navigator) || !('PushManager' in window) || !('Notification' in window)) return;
-    if (ME.role === 'shop') return; // shops don't need alerts about other shops' orders
+    // all roles subscribe: staff get order/login alerts, everyone gets route/supply updates
     if (Notification.permission === 'denied') return;
     if (Notification.permission !== 'granted') { await Notification.requestPermission(); }
     if (Notification.permission !== 'granted') return;
@@ -162,6 +162,12 @@ async function renderDashboard() {
   const cd = d.upcoming.map(r => `
     <div class="kbd">🚚 <b>${esc(r.name)}</b> — گاڑی: ${esc(r.vehicle_name || '—')}
     <br>📅 سپلائی: ${esc(r.supply_date || '—')} &nbsp; ⏰ کٹ آف: ${esc(r.cutoff_date || '')} ${esc(r.cutoff_time || '')}</div>`).join('');
+  const p2 = n => String(n).padStart(2, '0');
+  const ro = (d.recent_orders || []).map(o => {
+    const dt = new Date(String(o.created_at || '').replace(' ', 'T') + 'Z'); // stored UTC -> viewer local time
+    const when = isNaN(dt) ? esc(o.created_at || '') : `${p2(dt.getDate())}-${p2(dt.getMonth() + 1)} ${p2(dt.getHours())}:${p2(dt.getMinutes())}`;
+    return `<div class="kbd">🕐 <b>${when}</b> — 🏪 ${esc(o.shop_name)} — ${o.items} آئٹمز<br>📅 ڈیلیوری: ${esc(o.delivery_date || '—')}</div>`;
+  }).join('');
   const cards = d.scope === 'shop'
     ? `<div class="card"><div class="n">🏪</div><div class="l">${esc(d.shop_name || 'میری دکان')}</div></div>
       <div class="card"><div class="n">${d.today_orders}</div><div class="l">آج کے آرڈر</div></div>
@@ -180,6 +186,7 @@ async function renderDashboard() {
       ${cards}
     </div>
     <h2 class="st">🗓 <span>آنے والی سپلائی</span></h2>${cd || '<p class="note">کوئی شیڈول نہیں</p>'}
+    <h2 class="st">📋 <span>${d.scope === 'shop' ? 'میرے تازہ ترین آرڈرز' : 'تازہ ترین آرڈرز — کب، کس دکان سے'}</span></h2>${ro || '<p class="note">ابھی کوئی آرڈر نہیں</p>'}
     <div style="margin-top:14px">
       ${can('orders', 'full') ? '<button class="btn" onclick="showView(\'order\')">🧾 نیا آرڈر</button> ' : ''}
       ${can('reports') ? '<button class="btn green" onclick="showView(\'reports\')">🖨 پروڈکشن شیٹ</button>' : ''}

@@ -153,6 +153,12 @@ function notifyNewOrder(orderId, shopId, deliveryDate, itemCount, creatorId) {
     WHERE u.active=1 AND u.role IN ('super_admin','factory') AND u.id != ?`).all(creatorId || 0);
   pushTo(subs, payload);
 }
+// Push to ALL subscribed users (any role) — e.g. route/supply changes shops must know about.
+function notifyAll(title, body) {
+  const payload = JSON.stringify({ title, body, url: '/' });
+  const subs = db.prepare(`SELECT ps.* FROM push_subscriptions ps JOIN users u ON u.id=ps.user_id WHERE u.active=1`).all();
+  pushTo(subs, payload);
+}
 // Login alerts -> only super_admins. Failed attempts throttled: max 1 alert per username per 10 min.
 const lastFailAlert = {};
 function notifyLogin(username, ok, excludeUserId) {
@@ -323,18 +329,21 @@ function cleanVals(table_cols, body) {
     return v;
   });
 }
-function crud(path, table, section, cols) {
+function crud(path, table, section, cols, hooks) {
   app.get('/api/' + path, requireLogin, requireSection(section, 'view'), (req, res) => {
     res.json(db.prepare(`SELECT * FROM ${table} ORDER BY id DESC`).all());
   });
   app.post('/api/' + path, requireLogin, requireSection(section, 'full'), (req, res) => {
     const vals = cleanVals(cols, req.body);
     const r = db.prepare(`INSERT INTO ${table} (${cols.join(',')}) VALUES (${cols.map(() => '?').join(',')})`).run(...vals);
+    if (hooks && hooks.afterWrite) hooks.afterWrite('create', r.lastInsertRowid, null);
     res.json({ ok: true, id: r.lastInsertRowid });
   });
   app.put('/api/' + path + '/:id', requireLogin, requireSection(section, 'full'), (req, res) => {
+    const old = (hooks && hooks.needOld) ? db.prepare(`SELECT * FROM ${table} WHERE id=?`).get(req.params.id) : null;
     const vals = cleanVals(cols, req.body);
     db.prepare(`UPDATE ${table} SET ${cols.map(c => `${c}=?`).join(',')} WHERE id=?`).run(...vals, req.params.id);
+    if (hooks && hooks.afterWrite) hooks.afterWrite('update', req.params.id, old);
     res.json({ ok: true });
   });
   app.delete('/api/' + path + '/:id', requireLogin, requireSection(section, 'full'), (req, res) => {
@@ -343,7 +352,23 @@ function crud(path, table, section, cols) {
   });
 }
 crud('vehicles', 'vehicles', 'vehicles', ['name', 'plate', 'active']);
-crud('routes', 'routes', 'routes', ['name', 'vehicle_id', 'supply_date', 'cutoff_date', 'cutoff_time', 'active']);
+crud('routes', 'routes', 'routes', ['name', 'vehicle_id', 'supply_date', 'cutoff_date', 'cutoff_time', 'active'], {
+  needOld: true,
+  afterWrite(method, id, old) {
+    const row = db.prepare('SELECT * FROM routes WHERE id=?').get(id);
+    if (!row) return;
+    const sched = `سپلائی: ${row.supply_date || '—'} | کٹ آف: ${row.cutoff_date || ''} ${row.cutoff_time || ''}`;
+    if (method === 'create') {
+      notifyAll('🚚 نیا روٹ', `${row.name} — ${sched}`);
+    } else if (old) {
+      const changed = [];
+      if (String(old.supply_date || '') !== String(row.supply_date || '')) changed.push(`نئی سپلائی تاریخ: ${row.supply_date}`);
+      if (String(old.cutoff_date || '') !== String(row.cutoff_date || '') || String(old.cutoff_time || '') !== String(row.cutoff_time || ''))
+        changed.push(`نیا کٹ آف: ${row.cutoff_date} ${row.cutoff_time}`);
+      if (changed.length) notifyAll('🚚 روٹ اپڈیٹ', `${row.name} — ${changed.join(' | ')}`);
+    }
+  }
+});
 crud('categories', 'categories', 'categories', ['name', 'sort']);
 crud('units', 'units', 'units', ['name']);
 crud('shops', 'shops', 'shops', ['name', 'phone', 'address', 'active']);
@@ -538,6 +563,9 @@ app.get('/api/dashboard', requireLogin, requireSection('dashboard'), (req, res) 
     vehicles: own ? undefined : db.prepare('SELECT COUNT(*) c FROM vehicles WHERE active=1').get().c,
     routes: own ? undefined : db.prepare('SELECT COUNT(*) c FROM routes WHERE active=1').get().c,
     products: own ? undefined : db.prepare('SELECT COUNT(*) c FROM products WHERE active=1').get().c,
+    recent_orders: db.prepare(`SELECT o.id, o.created_at, o.delivery_date, s.name AS shop_name,
+      (SELECT COUNT(*) FROM order_items WHERE order_id=o.id) AS items
+      FROM orders o JOIN shops s ON s.id=o.shop_id WHERE 1=1 ${sf} ORDER BY o.id DESC LIMIT 10`).all(),
     upcoming,
   });
 });
