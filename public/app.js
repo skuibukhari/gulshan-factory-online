@@ -71,13 +71,18 @@ async function doSetup() {
 async function doLogin() {
   $('#liErr').textContent = '';
   try {
-    await api('POST', '/api/login', { username: $('#liUser').value.trim(), password: $('#liPass').value });
+    const username = $('#liUser').value.trim();
+    await api('POST', '/api/login', { username, password: $('#liPass').value });
+    try { localStorage.setItem('gf-lastuser', username); } catch (e) {}
     await enterApp();
   } catch (e) { $('#liErr').textContent = 'یوزر نام یا پاس ورڈ غلط ہے'; }
 }
 // ---------- forgot password (OTP to registered mobile) ----------
 function showAuth(id) { for (const v of ['loginView', 'forgotView', 'otpView', 'setupView']) { const el = document.getElementById(v); if (el) el.style.display = v === id ? 'flex' : 'none'; } }
-function showLogin() { showAuth('loginView'); }
+function showLogin() {
+  try { const lu = localStorage.getItem('gf-lastuser'); if (lu && !$('#liUser').value) $('#liUser').value = lu; } catch (e) {}
+  showAuth('loginView');
+}
 function showForgot() { $('#fpErr').textContent = ''; showAuth('forgotView'); }
 let fpUsername = '';
 async function doForgot() {
@@ -623,8 +628,10 @@ async function bioLogin() {
   const dbg = (step, info) => { try { api('POST', '/api/webauthn-debug', { step, info: String(info || '').slice(0, 200) }); } catch (e) {} };
   dbg('click');
   if (!window.PublicKeyCredential) { err.textContent = 'اس براؤزر میں فنگر پرنٹ سپورٹ نہیں'; dbg('no-support'); return; }
-  const username = $('#liUser').value.trim();
+  let username = $('#liUser').value.trim();
+  if (!username) { try { username = localStorage.getItem('gf-lastuser') || ''; } catch (e) {} }
   if (!username) { err.textContent = 'پہلے یوزر نام لکھیں'; dbg('no-username'); return; }
+  $('#liUser').value = username;
   try {
     err.textContent = '⏳ سرور سے رابطہ ہو رہا ہے...'; dbg('login-start-begin', username);
     const { options } = await api('POST', '/api/webauthn/login-start', { username });
@@ -638,6 +645,7 @@ async function bioLogin() {
     dbg('finish-begin');
     await api('POST', '/api/webauthn/login-finish', { username, asrt: wbnPost(asrt) });
     dbg('finish-ok');
+    try { localStorage.setItem('gf-lastuser', username); } catch (e) {}
     await enterApp();
   } catch (e) { dbg('outer-error', e.message); err.textContent = e.message === 'no_bio' ? 'اس یوزر کے لیے فنگر پرنٹ سیٹ نہیں — پہلے لاگ اِن کر کے سیٹنگ میں آن کریں' : 'فنگر پرنٹ ناکام — دوبارہ کوشش کریں'; }
 }
