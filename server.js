@@ -352,7 +352,7 @@ app.post('/api/webauthn/register-start', requireLogin, async (req, res) => {
       userName: req.user.username,
       attestationType: 'none',
       authenticatorSelection: { authenticatorAttachment: 'platform', userVerification: 'preferred' },
-      excludeCredentials: existing.map(r => ({ id: r.cred_id })),
+      excludeCredentials: existing.map(r => ({ id: r.cred_id, type: 'public-key' })),
     });
     req.session.wbnChallenge = opts.challenge;
     res.json({ options: opts });
@@ -387,7 +387,7 @@ app.post('/api/webauthn/login-start', async (req, res) => {
   try {
     const opts = await wbn.generateAuthenticationOptions({
       rpID: rpIDOf(req),
-      allowCredentials: creds.map(c => ({ id: c.cred_id })),
+      allowCredentials: creds.map(c => ({ id: c.cred_id, type: 'public-key' })),
       userVerification: 'preferred',
     });
     req.session.wbnChallenge = opts.challenge;

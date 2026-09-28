@@ -625,7 +625,10 @@ async function bioLogin() {
   if (!username) { err.textContent = 'پہلے یوزر نام لکھیں'; return; }
   try {
     const { options } = await api('POST', '/api/webauthn/login-start', { username });
-    const asrt = await navigator.credentials.get({ publicKey: wbnPre(options) });
+    let asrt;
+    try { asrt = await navigator.credentials.get({ publicKey: wbnPre(options) }); }
+    catch (ge) { err.textContent = 'فنگر پرنٹ نہیں کھلا (' + (ge && ge.name || 'error') + ') — دوبارہ کوشش کریں'; return; }
+    if (!asrt) { err.textContent = 'فنگر پرنٹ منسوخ ہو گیا'; return; }
     await api('POST', '/api/webauthn/login-finish', { username, asrt: wbnPost(asrt) });
     await enterApp();
   } catch (e) { err.textContent = e.message === 'no_bio' ? 'اس یوزر کے لیے فنگر پرنٹ سیٹ نہیں — پہلے لاگ اِن کر کے سیٹنگ میں آن کریں' : 'فنگر پرنٹ ناکام — دوبارہ کوشش کریں'; }
