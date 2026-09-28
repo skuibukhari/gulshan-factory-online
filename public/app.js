@@ -61,6 +61,32 @@ async function enterApp() {
   await refreshCache();
   buildMenu();
   showView(firstAllowedView());
+  setupPush(); // order notifications for staff (non-blocking)
+}
+
+// ---------- push notifications (new order alerts) ----------
+function urlB64ToKey(b64) {
+  const pad = '='.repeat((4 - (b64.length % 4)) % 4);
+  const bin = atob((b64 + pad).replace(/-/g, '+').replace(/_/g, '/'));
+  const out = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+  return out;
+}
+async function setupPush() {
+  try {
+    if (!('serviceWorker' in navigator) || !('PushManager' in window) || !('Notification' in window)) return;
+    if (ME.role === 'shop') return; // shops don't need alerts about other shops' orders
+    if (Notification.permission === 'denied') return;
+    if (Notification.permission !== 'granted') { await Notification.requestPermission(); }
+    if (Notification.permission !== 'granted') return;
+    const reg = await navigator.serviceWorker.ready;
+    let sub = await reg.pushManager.getSubscription();
+    if (!sub) {
+      const { publicKey } = await api('GET', '/api/vapid-public-key');
+      sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: urlB64ToKey(publicKey) });
+    }
+    await api('POST', '/api/push-subscribe', { subscription: sub.toJSON() });
+  } catch (e) { /* push optional — never break the app */ }
 }
 
 // ---------- cache ----------

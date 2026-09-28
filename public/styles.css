@@ -13,13 +13,27 @@ a{color:var(--green)}
 button{font-family:inherit;cursor:pointer}
 /* ---------- login / setup ---------- */
 .auth-wrap{min-height:100vh;display:flex;align-items:center;justify-content:center;
-  background:linear-gradient(135deg,#191919 0%,#2b2b2b 55%,#1f5c22 130%);padding:20px}
+  background:linear-gradient(135deg,#191919 0%,#2b2b2b 55%,#1f5c22 130%);padding:20px;
+  position:relative;overflow:hidden}
+/* animated drifting glow orbs */
+.auth-wrap::before,.auth-wrap::after{content:'';position:absolute;border-radius:50%;filter:blur(70px);opacity:.5;pointer-events:none}
+.auth-wrap::before{width:340px;height:340px;background:#e8721c;top:-90px;right:-90px;animation:drift1 14s ease-in-out infinite alternate}
+.auth-wrap::after{width:300px;height:300px;background:#2e7d32;bottom:-80px;left:-70px;animation:drift2 18s ease-in-out infinite alternate}
+@keyframes drift1{from{transform:translate(0,0) scale(1)}to{transform:translate(-70px,60px) scale(1.25)}}
+@keyframes drift2{from{transform:translate(0,0) scale(1.15)}to{transform:translate(60px,-50px) scale(.95)}}
 .auth-card{background:#fff;border-radius:18px;max-width:440px;width:100%;padding:36px 30px;text-align:center;
-  box-shadow:0 20px 60px rgba(0,0,0,.45);border-top:6px solid var(--orange)}
-.auth-card img.logo{height:110px;margin-bottom:6px}
-.auth-card h1{margin:6px 0 0;font-size:34px;color:var(--black)}
+  box-shadow:0 20px 60px rgba(0,0,0,.45);border-top:6px solid var(--orange);
+  position:relative;z-index:1;animation:cardIn .7s cubic-bezier(.2,.9,.3,1.2) both}
+@keyframes cardIn{from{opacity:0;transform:translateY(36px) scale(.97)}to{opacity:1;transform:none}}
+.auth-card img.logo{height:110px;margin-bottom:6px;animation:logoFloat 4s ease-in-out infinite}
+@keyframes logoFloat{0%,100%{transform:translateY(0)}50%{transform:translateY(-8px)}}
+.auth-card h1{margin:6px 0 0;font-size:34px;color:var(--black);animation:fadeUp .7s .15s both}
 .auth-card h1 .en{display:block;font-size:16px;color:var(--muted);letter-spacing:1px}
-.welcome{color:var(--green);font-size:19px;margin:10px 0 20px}
+@keyframes fadeUp{from{opacity:0;transform:translateY(14px)}to{opacity:1;transform:none}}
+.welcome{color:var(--green);font-size:19px;margin:10px 0 20px;animation:fadeUp .7s .3s both;
+  background:linear-gradient(90deg,#2e7d32 20%,#e8721c 50%,#2e7d32 80%);background-size:200% auto;
+  -webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent;animation:fadeUp .7s .3s both,sheen 5s linear infinite}
+@keyframes sheen{to{background-position:200% center}}
 .auth-card input{width:100%;padding:10px 14px;margin:6px 0;border:2px solid var(--border);border-radius:10px;font-family:inherit;font-size:16px}
 .auth-card input:focus{border-color:var(--orange);outline:none}
 .btn{display:inline-block;border:none;border-radius:10px;padding:10px 26px;font-size:17px;font-weight:700;color:#fff;background:var(--orange);margin-top:8px}

@@ -86,6 +86,18 @@ CREATE TABLE IF NOT EXISTS permissions (
   level TEXT NOT NULL CHECK(level IN ('none','view','full')),
   PRIMARY KEY (user_id, section)
 );
+CREATE TABLE IF NOT EXISTS push_subscriptions (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  endpoint TEXT NOT NULL UNIQUE,
+  p256dh TEXT NOT NULL,
+  auth TEXT NOT NULL,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE TABLE IF NOT EXISTS app_settings (
+  key TEXT PRIMARY KEY,
+  value TEXT NOT NULL
+);
 `);
 
 const SECTIONS = ['dashboard','orders','order_history','shops','products','categories','units','vehicles','routes','schedule','reports','users'];
@@ -106,6 +118,37 @@ function getPermissions(userId) {
   for (const s of SECTIONS) p[s] = 'none';
   for (const r of rows) p[r.section] = r.level;
   return p;
+}
+
+// ---------- Web Push notifications (new order alerts on mobile) ----------
+// VAPID keys are auto-generated once and stored in app_settings — no setup needed.
+const webpush = require('web-push');
+function appSetting(k, v) {
+  if (v === undefined) { const r = db.prepare('SELECT value FROM app_settings WHERE key=?').get(k); return r ? r.value : null; }
+  db.prepare('INSERT OR REPLACE INTO app_settings (key, value) VALUES (?,?)').run(k, v);
+}
+(function ensureVapid() {
+  if (!appSetting('vapid_public') || !appSetting('vapid_private')) {
+    const keys = webpush.generateVAPIDKeys();
+    appSetting('vapid_public', keys.publicKey);
+    appSetting('vapid_private', keys.privateKey);
+  }
+  webpush.setVapidDetails('mailto:gulshan-factory@local', appSetting('vapid_public'), appSetting('vapid_private'));
+})();
+// Send a push to every subscribed staff member (super_admin + factory), except the order creator.
+function notifyNewOrder(orderId, shopId, deliveryDate, itemCount, creatorId) {
+  const shop = db.prepare('SELECT name FROM shops WHERE id=?').get(shopId);
+  const payload = JSON.stringify({
+    title: '🧾 نیا آرڈر — گلشن فیکٹری',
+    body: `${shop ? shop.name : 'دکان'}: ${itemCount} آئٹمز | ڈیلیوری: ${deliveryDate}`,
+    url: '/',
+  });
+  const subs = db.prepare(`SELECT ps.* FROM push_subscriptions ps JOIN users u ON u.id=ps.user_id
+    WHERE u.active=1 AND u.role IN ('super_admin','factory') AND u.id != ?`).all(creatorId || 0);
+  for (const s of subs) {
+    webpush.sendNotification({ endpoint: s.endpoint, keys: { p256dh: s.p256dh, auth: s.auth } }, payload)
+      .catch(e => { if (e.statusCode === 404 || e.statusCode === 410) db.prepare('DELETE FROM push_subscriptions WHERE id=?').run(s.id); });
+  }
 }
 
 // ---------- App ----------
@@ -202,6 +245,21 @@ app.post('/api/logout', (req, res) => req.session.destroy(() => res.json({ ok: t
 app.get('/api/me', requireLogin, (req, res) => {
   const shop = req.user.shop_id ? db.prepare('SELECT id, name FROM shops WHERE id=?').get(req.user.shop_id) : null;
   res.json({ id: req.user.id, username: req.user.username, role: req.user.role, shop_id: req.user.shop_id, shop_name: shop ? shop.name : null, permissions: req.user.role === 'super_admin' ? Object.fromEntries(SECTIONS.map(s => [s, 'full'])) : getPermissions(req.user.id) });
+});
+app.get('/api/vapid-public-key', requireLogin, (req, res) => {
+  res.json({ publicKey: appSetting('vapid_public') });
+});
+app.post('/api/push-subscribe', requireLogin, (req, res) => {
+  const s = (req.body || {}).subscription || req.body || {};
+  if (!s.endpoint || !s.keys || !s.keys.p256dh || !s.keys.auth) return res.status(400).json({ error: 'bad_input' });
+  db.prepare(`INSERT OR REPLACE INTO push_subscriptions (user_id, endpoint, p256dh, auth) VALUES (?,?,?,?)`)
+    .run(req.user.id, s.endpoint, s.keys.p256dh, s.keys.auth);
+  res.json({ ok: true });
+});
+app.post('/api/push-unsubscribe', requireLogin, (req, res) => {
+  const ep = ((req.body || {}).endpoint) || '';
+  if (ep) db.prepare('DELETE FROM push_subscriptions WHERE user_id=? AND endpoint=?').run(req.user.id, ep);
+  res.json({ ok: true });
 });
 
 // Catalog needed to place an order: active categories, products and routes.
@@ -360,7 +418,10 @@ app.post('/api/orders', requireLogin, requireSection('orders', 'full'), (req, re
     }
     return r.lastInsertRowid;
   });
-  res.json({ ok: true, id: ins() });
+  const orderId = ins();
+  const itemCount = b.items.filter(it => it.product_id && Number(it.quantity) > 0).length;
+  notifyNewOrder(orderId, shop_id, b.delivery_date, itemCount, req.user.id);
+  res.json({ ok: true, id: orderId });
 });
 app.put('/api/orders/:id', requireLogin, requireSection('orders', 'full'), (req, res) => {
   const o = db.prepare('SELECT * FROM orders WHERE id=?').get(req.params.id);
