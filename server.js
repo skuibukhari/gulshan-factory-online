@@ -110,6 +110,31 @@ function getPermissions(userId) {
 
 // ---------- App ----------
 const app = express();
+
+// GitHub auto-deploy webhook. Must be registered BEFORE express.json() so the
+// raw body is available for signature verification.
+// Setup: set DEPLOY_SECRET env on the server and the same secret in the GitHub
+// webhook (Payload URL https://<site>/api/deploy, content type application/json).
+// On every push to main it runs `git pull`. Frontend-only changes go live
+// immediately (static files are read from disk); if server.js changed, restart
+// the site from the panel once.
+app.post('/api/deploy', express.raw({ type: 'application/json', limit: '1mb' }), (req, res) => {
+  const secret = process.env.DEPLOY_SECRET;
+  if (!secret) return res.status(500).json({ error: 'deploy_not_configured' });
+  const sig = req.headers['x-hub-signature-256'] || '';
+  const expected = 'sha256=' + require('crypto').createHmac('sha256', secret).update(req.body).digest('hex');
+  if (sig.length !== expected.length || !require('crypto').timingSafeEqual(Buffer.from(sig), Buffer.from(expected)))
+    return res.status(403).json({ error: 'bad_signature' });
+  let ref = '';
+  try { ref = JSON.parse(req.body.toString()).ref || ''; } catch (e) {}
+  if (ref && ref !== 'refs/heads/main') return res.json({ ok: true, skipped: 'not_main' });
+  require('child_process').execFile('git', ['pull', 'origin', 'main'], { cwd: __dirname, timeout: 60000 }, (err, stdout, stderr) => {
+    const out = String(stdout || '') + String(stderr || '');
+    if (err) return res.status(500).json({ error: 'pull_failed', log: out.slice(-500) });
+    res.json({ ok: true, server_restart_needed: /server\.js/.test(out), log: out.slice(-300) });
+  });
+});
+
 app.use(express.json({ limit: '1mb' }));
 app.set('trust proxy', 1);
 const sessSecret = process.env.SESSION_SECRET || 'gulshan-factory-dev-secret-change-me';
