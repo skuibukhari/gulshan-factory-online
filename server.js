@@ -381,19 +381,28 @@ app.get('/api/totals', requireLogin, requireSection('reports', 'view'), (req, re
     ${f} GROUP BY p.id ORDER BY c.sort, c.id, p.name`).all(...args);
   res.json(rows);
 });
-app.get('/api/dashboard', requireLogin, (req, res) => {
+app.get('/api/dashboard', requireLogin, requireSection('dashboard'), (req, res) => {
   const own = scopedShopId(req);
   const sf = own ? `AND shop_id=${own}` : '';
   const today = new Date().toISOString().slice(0, 10);
+  const shopName = own ? (db.prepare('SELECT name FROM shops WHERE id=?').get(own) || {}).name || '' : '';
+  const upcoming = own
+    ? db.prepare(`SELECT DISTINCT r.*, v.name AS vehicle_name FROM routes r
+        LEFT JOIN vehicles v ON v.id=r.vehicle_id
+        JOIN orders o ON o.route_id=r.id AND o.shop_id=?
+        WHERE r.active=1 ORDER BY r.supply_date LIMIT 5`).all(own)
+    : db.prepare(`SELECT r.*, v.name AS vehicle_name FROM routes r LEFT JOIN vehicles v ON v.id=r.vehicle_id
+        WHERE r.active=1 ORDER BY r.supply_date LIMIT 5`).all();
   res.json({
+    scope: own ? 'shop' : 'admin',
+    shop_name: shopName,
     today_orders: db.prepare(`SELECT COUNT(*) c FROM orders WHERE delivery_date=? ${sf}`).get(today).c,
     total_orders: db.prepare(`SELECT COUNT(*) c FROM orders WHERE 1=1 ${sf}`).get().c,
-    shops: db.prepare('SELECT COUNT(*) c FROM shops WHERE active=1').get().c,
-    vehicles: db.prepare('SELECT COUNT(*) c FROM vehicles WHERE active=1').get().c,
-    routes: db.prepare('SELECT COUNT(*) c FROM routes WHERE active=1').get().c,
-    products: db.prepare('SELECT COUNT(*) c FROM products WHERE active=1').get().c,
-    upcoming: db.prepare(`SELECT r.*, v.name AS vehicle_name FROM routes r LEFT JOIN vehicles v ON v.id=r.vehicle_id
-      WHERE r.active=1 ORDER BY r.supply_date LIMIT 5`).all(),
+    shops: own ? undefined : db.prepare('SELECT COUNT(*) c FROM shops WHERE active=1').get().c,
+    vehicles: own ? undefined : db.prepare('SELECT COUNT(*) c FROM vehicles WHERE active=1').get().c,
+    routes: own ? undefined : db.prepare('SELECT COUNT(*) c FROM routes WHERE active=1').get().c,
+    products: own ? undefined : db.prepare('SELECT COUNT(*) c FROM products WHERE active=1').get().c,
+    upcoming,
   });
 });
 

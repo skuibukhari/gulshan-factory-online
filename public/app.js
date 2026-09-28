@@ -58,7 +58,7 @@ async function enterApp() {
   $('#meLine').textContent = ME.username + ' — ' + ({ super_admin: 'سپر ایڈمن', factory: 'فیکٹری یوزر', shop: 'دکان' }[ME.role] || ME.role);
   await refreshCache();
   buildMenu();
-  showView('dashboard');
+  showView(firstAllowedView());
 }
 
 // ---------- cache ----------
@@ -80,14 +80,22 @@ const MENU = [
   ['vehicles', '🚚 گاڑیاں'], ['routes', '🗺 روٹس و شیڈول'], ['categories', '🗂 کیٹیگریز'],
   ['units', '⚖ یونٹس'], ['products', '🍞 آئٹمز'], ['shops', '🏪 دکانیں'],
 ];
+const VIEW_SEC = { dashboard: 'dashboard', order: 'orders', orders: 'orders', order_history: 'order_history', reports: 'reports',
+  vehicles: 'vehicles', routes: 'routes', categories: 'categories', units: 'units', products: 'products', shops: 'shops' };
+function viewAllowed(key) {
+  const sec = VIEW_SEC[key];
+  if (!sec) return true;
+  if (sec === 'orders' && key === 'order') return can('orders', 'full');
+  return can(sec);
+}
+function firstAllowedView() {
+  for (const [key] of MENU) if (viewAllowed(key)) return key;
+  return 'dashboard';
+}
 function buildMenu() {
   const nav = $('#menuNav'); nav.innerHTML = '';
-  const vis = { dashboard: 'dashboard', order: 'orders', orders: 'orders', order_history: 'order_history', reports: 'reports',
-    vehicles: 'vehicles', routes: 'routes', categories: 'categories', units: 'units', products: 'products', shops: 'shops' };
   for (const [key, label] of MENU) {
-    const sec = vis[key];
-    if (sec === 'orders' && key === 'order' && !can('orders', 'full')) continue;
-    if (!can(sec)) continue;
+    if (!viewAllowed(key)) continue;
     const b = document.createElement('button');
     b.textContent = label; b.dataset.view = key;
     b.onclick = () => { showView(key); toggleMenu(false); };
@@ -97,6 +105,7 @@ function buildMenu() {
   out.textContent = '🚪 لاگ آؤٹ'; out.onclick = doLogout; nav.appendChild(out);
 }
 function showView(name) {
+  if (!viewAllowed(name)) name = firstAllowedView();
   document.querySelectorAll('.view').forEach(v => v.classList.remove('on'));
   const el = $('#v-' + name); if (el) el.classList.add('on');
   document.querySelectorAll('#menuNav button').forEach(b => b.classList.toggle('active', b.dataset.view === name));
@@ -125,17 +134,22 @@ async function renderDashboard() {
   const cd = d.upcoming.map(r => `
     <div class="kbd">🚚 <b>${esc(r.name)}</b> — گاڑی: ${esc(r.vehicle_name || '—')}
     <br>📅 سپلائی: ${esc(r.supply_date || '—')} &nbsp; ⏰ کٹ آف: ${esc(r.cutoff_date || '')} ${esc(r.cutoff_time || '')}</div>`).join('');
+  const cards = d.scope === 'shop'
+    ? `<div class="card"><div class="n">🏪</div><div class="l">${esc(d.shop_name || 'میری دکان')}</div></div>
+      <div class="card"><div class="n">${d.today_orders}</div><div class="l">آج کے آرڈر</div></div>
+      <div class="card"><div class="n">${d.total_orders}</div><div class="l">کل آرڈر</div></div>`
+    : `<div class="card"><div class="n">${d.today_orders}</div><div class="l">آج کے آرڈر</div></div>
+      <div class="card"><div class="n">${d.total_orders}</div><div class="l">کل آرڈر</div></div>
+      <div class="card"><div class="n">${d.shops}</div><div class="l">دکانیں</div></div>
+      <div class="card"><div class="n">${d.vehicles}</div><div class="l">گاڑیاں</div></div>
+      <div class="card"><div class="n">${d.routes}</div><div class="l">روٹس</div></div>
+      <div class="card"><div class="n">${d.products}</div><div class="l">آئٹمز</div></div>`;
   $('#v-dashboard').innerHTML = `
     <div class="clock">🕐 <span id="liveClock"></span></div>
     <div id="cdBox"></div>
     <h2 class="st">📊 <span>ڈیش بورڈ</span></h2>
     <div class="cards">
-      <div class="card"><div class="n">${d.today_orders}</div><div class="l">آج کے آرڈر</div></div>
-      <div class="card"><div class="n">${d.total_orders}</div><div class="l">کل آرڈر</div></div>
-      <div class="card"><div class="n">${d.shops}</div><div class="l">دکانیں</div></div>
-      <div class="card"><div class="n">${d.vehicles}</div><div class="l">گاڑیاں</div></div>
-      <div class="card"><div class="n">${d.routes}</div><div class="l">روٹس</div></div>
-      <div class="card"><div class="n">${d.products}</div><div class="l">آئٹمز</div></div>
+      ${cards}
     </div>
     <h2 class="st">🗓 <span>آنے والی سپلائی</span></h2>${cd || '<p class="note">کوئی شیڈول نہیں</p>'}
     <div style="margin-top:14px">
