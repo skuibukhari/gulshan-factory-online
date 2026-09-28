@@ -620,18 +620,26 @@ async function bioRemove() {
 }
 async function bioLogin() {
   const err = $('#liErr'); err.textContent = '';
-  if (!window.PublicKeyCredential) { err.textContent = 'اس براؤزر میں فنگر پرنٹ سپورٹ نہیں'; return; }
+  const dbg = (step, info) => { try { api('POST', '/api/webauthn-debug', { step, info: String(info || '').slice(0, 200) }); } catch (e) {} };
+  dbg('click');
+  if (!window.PublicKeyCredential) { err.textContent = 'اس براؤزر میں فنگر پرنٹ سپورٹ نہیں'; dbg('no-support'); return; }
   const username = $('#liUser').value.trim();
-  if (!username) { err.textContent = 'پہلے یوزر نام لکھیں'; return; }
+  if (!username) { err.textContent = 'پہلے یوزر نام لکھیں'; dbg('no-username'); return; }
   try {
+    err.textContent = '⏳ سرور سے رابطہ ہو رہا ہے...'; dbg('login-start-begin', username);
     const { options } = await api('POST', '/api/webauthn/login-start', { username });
+    dbg('login-start-ok');
+    err.textContent = '👆 اب فنگر پرنٹ لگائیں...'; dbg('get-begin');
     let asrt;
     try { asrt = await navigator.credentials.get({ publicKey: wbnPre(options) }); }
-    catch (ge) { err.textContent = 'فنگر پرنٹ نہیں کھلا (' + (ge && ge.name || 'error') + ') — دوبارہ کوشش کریں'; return; }
-    if (!asrt) { err.textContent = 'فنگر پرنٹ منسوخ ہو گیا'; return; }
+    catch (ge) { err.textContent = 'فنگر پرنٹ نہیں کھلا (' + (ge && ge.name || 'error') + ') — دوبارہ کوشش کریں'; dbg('get-error', ge && ge.name); return; }
+    dbg('get-ok');
+    if (!asrt) { err.textContent = 'فنگر پرنٹ منسوخ ہو گیا'; dbg('get-null'); return; }
+    dbg('finish-begin');
     await api('POST', '/api/webauthn/login-finish', { username, asrt: wbnPost(asrt) });
+    dbg('finish-ok');
     await enterApp();
-  } catch (e) { err.textContent = e.message === 'no_bio' ? 'اس یوزر کے لیے فنگر پرنٹ سیٹ نہیں — پہلے لاگ اِن کر کے سیٹنگ میں آن کریں' : 'فنگر پرنٹ ناکام — دوبارہ کوشش کریں'; }
+  } catch (e) { dbg('outer-error', e.message); err.textContent = e.message === 'no_bio' ? 'اس یوزر کے لیے فنگر پرنٹ سیٹ نہیں — پہلے لاگ اِن کر کے سیٹنگ میں آن کریں' : 'فنگر پرنٹ ناکام — دوبارہ کوشش کریں'; }
 }
 async function renderSettingsPush() {
   const st = await api('GET', '/api/push-status');

@@ -426,6 +426,17 @@ app.delete('/api/webauthn', requireLogin, (req, res) => {
   db.prepare('DELETE FROM webauthn_creds WHERE user_id=?').run(req.user.id);
   res.json({ ok: true });
 });
+// ---------- webauthn client debug log (diagnose login issues; in-memory) ----------
+const wbnDebugLog = [];
+app.post('/api/webauthn-debug', (req, res) => {
+  wbnDebugLog.push({ t: new Date().toISOString(), ip: req.ip, ...(req.body || {}) });
+  if (wbnDebugLog.length > 120) wbnDebugLog.splice(0, wbnDebugLog.length - 120);
+  res.json({ ok: true });
+});
+app.get('/api/webauthn-debug', requireLogin, (req, res) => {
+  if (req.user.role !== 'super_admin') return res.status(403).json({ error: 'forbidden' });
+  res.json(wbnDebugLog);
+});
 
 // ---------- Splash ads (super_admin uploads image/video shown at app start) ----------
 const AD_DIR = path.join(DATA_DIR, 'ads');
