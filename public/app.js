@@ -51,6 +51,8 @@ function karachiToday() {
 // ---------- init ----------
 async function init() {
   try {
+    const ad = await api('GET', '/api/ad').catch(() => ({ enabled: false }));
+    if (ad.enabled && ad.url) await showSplash(ad);
     const st = await api('GET', '/api/status');
     if (st.setupRequired) { $('#setupView').style.display = 'flex'; return; }
     if (st.loggedIn) { await enterApp(); return; }
@@ -74,6 +76,19 @@ async function doLogin() {
 async function doLogout() {
   await api('POST', '/api/logout');
   location.reload();
+}
+// ---------- change own password ----------
+async function doChangePassword() {
+  const cur = $('#pwCur').value, nw = $('#pwNew').value, nw2 = $('#pwNew2').value;
+  const err = $('#pwErr'); err.textContent = '';
+  if (nw !== nw2) { err.textContent = 'نیا پاس ورڈ دونوں جگہ ایک جیسا لکھیں'; return; }
+  if (nw.length < 6) { err.textContent = 'پاس ورڈ کم از کم 6 حروف کا ہو'; return; }
+  try {
+    await api('POST', '/api/change-password', { current: cur, next: nw });
+  } catch (e) { err.textContent = 'موجودہ پاس ورڈ غلط ہے'; return; }
+  $('#pwModal').style.display = 'none';
+  $('#pwCur').value = $('#pwNew').value = $('#pwNew2').value = '';
+  alert('پاس ورڈ تبدیل ہو گیا ✅');
 }
 async function enterApp() {
   ME = await api('GET', '/api/me');
@@ -152,6 +167,8 @@ function buildMenu() {
     b.onclick = () => { showView(key); toggleMenu(false); };
     nav.appendChild(b);
   }
+  const pw = document.createElement('button');
+  pw.textContent = '🔑 پاس ورڈ تبدیل کریں'; pw.onclick = () => { $('#pwModal').style.display = 'flex'; toggleMenu(false); }; nav.appendChild(pw);
   const out = document.createElement('button');
   out.textContent = '🚪 لاگ آؤٹ'; out.onclick = doLogout; nav.appendChild(out);
 }
@@ -504,8 +521,8 @@ function setTab(t, btn) {
   setTabName = t;
   document.querySelectorAll('.setpanel .tabs button').forEach(b => b.classList.remove('active'));
   btn.classList.add('active');
-  for (const k of ['users', 'access', 'push']) $('#set' + k[0].toUpperCase() + k.slice(1)).style.display = t === k ? 'block' : 'none';
-  if (t === 'users') renderSettingsUsers(); else if (t === 'access') renderSettingsAccess(); else renderSettingsPush();
+  for (const k of ['users', 'access', 'push', 'ad']) $('#set' + k[0].toUpperCase() + k.slice(1)).style.display = t === k ? 'block' : 'none';
+  if (t === 'users') renderSettingsUsers(); else if (t === 'access') renderSettingsAccess(); else if (t === 'push') renderSettingsPush(); else renderSettingsAd();
 }
 async function renderSettingsPush() {
   const st = await api('GET', '/api/push-status');
@@ -518,6 +535,54 @@ async function renderSettingsPush() {
 async function pushTest() {
   const r = await api('POST', '/api/push-test');
   alert(r.sent ? 'ٹیسٹ بھیج دیا گیا! اپنا موبائل چیک کرو 📱' : 'کوئی ڈیوائس رجسٹرڈ نہیں — پہلے موبائل پر نوٹیفکیشن Allow کرو');
+}
+// ---------- settings: splash ad ----------
+async function renderSettingsAd() {
+  const ad = await api('GET', '/api/ad');
+  const durs = [2, 3, 4, 5, 6, 8, 10].map(d => `<option value="${d}"${ad.duration === d ? ' selected' : ''}>${d} سیکنڈ</option>`).join('');
+  $('#setAd').innerHTML = `<h3>📢 اشتہار (ایپ کھلنے پر)</h3>
+    ${ad.enabled ? (ad.type === 'video'
+      ? `<video src="${ad.url}" style="max-width:100%;max-height:220px;border-radius:10px" controls playsinline></video>`
+      : `<img src="${ad.url}" style="max-width:100%;max-height:220px;border-radius:10px">`) : '<p class="note">کوئی اشتہار نہیں لگا</p>'}
+    <div class="formgrid">
+      <label>تصویر / ویڈیو<br><input type="file" id="adFile" accept="image/*,video/*"></label>
+      <label>دکھانے کی مدت<br><select id="adDur">${durs}</select></label>
+      <label><br><input type="checkbox" id="adOn" ${ad.enabled ? 'checked' : ''} style="width:auto"> اشتہار دکھائیں</label>
+      <label><br><button class="btn small green" onclick="adSave()">💾 محفوظ کریں</button></label>
+    </div>
+    ${ad.enabled ? '<button class="btn small danger" onclick="adDel()">🗑 اشتہار حذف کریں</button>' : ''}`;
+}
+async function adSave() {
+  const fd = new FormData();
+  const f = $('#adFile').files[0];
+  if (f) fd.append('file', f);
+  fd.append('enabled', $('#adOn').checked ? '1' : '0');
+  fd.append('duration', $('#adDur').value);
+  const r = await fetch('/api/ads', { method: 'POST', body: fd });
+  if (!r.ok) { alert('اپلوڈ ناکام — صرف تصویر یا ویڈیو (زیادہ سے زیادہ 25MB)'); return; }
+  alert('اشتہار محفوظ ہو گیا ✅');
+  renderSettingsAd();
+}
+async function adDel() {
+  if (!confirm('اشتہار حذف کریں؟')) return;
+  await api('DELETE', '/api/ads');
+  renderSettingsAd();
+}
+// ---------- splash ad at app start ----------
+function showSplash(ad) {
+  return new Promise(resolve => {
+    const v = $('#splashView'), m = $('#splashMedia');
+    m.innerHTML = ad.type === 'video'
+      ? `<video src="${ad.url}" autoplay muted playsinline style="width:100%;height:100%;object-fit:contain"></video>`
+      : `<img src="${ad.url}" style="width:100%;height:100%;object-fit:contain" alt="اشتہار">`;
+    v.style.display = 'flex';
+    let done = false;
+    window.hideSplash = () => {
+      if (done) return; done = true;
+      v.style.display = 'none'; m.innerHTML = ''; resolve();
+    };
+    setTimeout(window.hideSplash, (ad.duration || 4) * 1000);
+  });
 }
 async function renderSettingsUsers() {
   const users = await api('GET', '/api/users');

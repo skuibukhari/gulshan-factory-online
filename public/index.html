@@ -15,6 +15,24 @@
 <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png">
 </head>
 <body>
+<!-- ===== Splash ad (shown at app start if super_admin set one) ===== -->
+<div id="splashView" style="display:none">
+  <div class="splash-brand">گلشن فیکٹری <span>Gulshan Factory</span></div>
+  <div class="splash-media" id="splashMedia"></div>
+  <button class="btn ghost" id="splashSkip" onclick="hideSplash()">⏭ چھوڑیں</button>
+</div>
+<!-- ===== Change password modal ===== -->
+<div class="modal" id="pwModal" style="display:none">
+  <div class="mbox">
+    <h3>🔑 پاس ورڈ تبدیل کریں</h3>
+    <input type="password" id="pwCur" placeholder="موجودہ پاس ورڈ" autocomplete="current-password">
+    <input type="password" id="pwNew" placeholder="نیا پاس ورڈ (کم از کم 6 حروف)" autocomplete="new-password">
+    <input type="password" id="pwNew2" placeholder="نیا پاس ورڈ دوبارہ لکھیں" autocomplete="new-password">
+    <div class="err" id="pwErr"></div>
+    <button class="btn green" onclick="doChangePassword()">محفوظ کریں</button>
+    <button class="btn ghost" onclick="document.getElementById('pwModal').style.display='none'">منسوخ</button>
+  </div>
+</div>
 
 <!-- ===== Login ===== -->
 <div id="loginView" class="auth-wrap" style="display:none">
@@ -66,10 +84,12 @@
         <button class="active" onclick="setTab('users',this)">یوزرز</button>
         <button onclick="setTab('access',this)">رسائی / اختیار</button>
         <button onclick="setTab('push',this)">🔔 اطلاعات</button>
+        <button onclick="setTab('ad',this)">📢 اشتہار</button>
       </div>
       <div id="setUsers"></div>
       <div id="setAccess" style="display:none"></div>
       <div id="setPush" style="display:none"></div>
+      <div id="setAd" style="display:none"></div>
     </div>
   </aside>
 

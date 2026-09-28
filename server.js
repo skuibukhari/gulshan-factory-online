@@ -200,7 +200,12 @@ app.post('/api/deploy', express.raw({ type: 'application/json', limit: '1mb' }),
   require('child_process').execFile('git', ['pull', 'origin', 'main'], { cwd: __dirname, timeout: 60000 }, (err, stdout, stderr) => {
     const out = String(stdout || '') + String(stderr || '');
     if (err) return res.status(500).json({ error: 'pull_failed', log: out.slice(-500) });
-    res.json({ ok: true, server_restart_needed: /server\.js/.test(out), log: out.slice(-300) });
+    const needRestart = /server\.js/.test(out);
+    const needInstall = /package\.json/.test(out);
+    const done = (installLog) => res.json({ ok: true, server_restart_needed: needRestart, npm_install: installLog ? installLog.slice(-300) : undefined, log: out.slice(-300) });
+    if (!needInstall) return done('');
+    require('child_process').execFile('npm', ['install', '--omit=dev', '--no-audit', '--no-fund'], { cwd: __dirname, timeout: 180000 },
+      (e2, so2, se2) => done(String(so2 || '') + String(se2 || '')));
   });
 });
 
@@ -270,6 +275,62 @@ app.post('/api/login', (req, res) => {
   }
   req.session.userId = u.id;
   notifyLogin(u.username, true, u.id);
+  res.json({ ok: true });
+});
+app.post('/api/change-password', requireLogin, (req, res) => {
+  const { current, next } = req.body || {};
+  const u = db.prepare('SELECT * FROM users WHERE id=?').get(req.user.id);
+  if (!u || !bcrypt.compareSync(String(current || ''), u.password_hash))
+    return res.status(400).json({ error: 'wrong_current' });
+  if (!next || String(next).length < 6) return res.status(400).json({ error: 'weak' });
+  db.prepare('UPDATE users SET password_hash=? WHERE id=?').run(bcrypt.hashSync(String(next), 10), u.id);
+  res.json({ ok: true });
+});
+
+// ---------- Splash ads (super_admin uploads image/video shown at app start) ----------
+const AD_DIR = path.join(DATA_DIR, 'ads');
+fs.mkdirSync(AD_DIR, { recursive: true });
+app.use('/ads', express.static(AD_DIR));
+let multerLib = null;
+try { multerLib = require('multer'); } catch (e) { console.warn('[warn] multer not installed — ad uploads disabled until npm install runs.'); }
+const upload = multerLib ? multerLib({
+  storage: multerLib.diskStorage({
+    destination: AD_DIR,
+    filename: (req, file, cb) => cb(null, 'ad-' + Date.now() + path.extname(file.originalname).toLowerCase()),
+  }),
+  limits: { fileSize: 25 * 1024 * 1024 },
+  fileFilter: (req, file, cb) => {
+    if (/^(image|video)\//.test(file.mimetype)) cb(null, true);
+    else cb(new Error('bad_type'));
+  },
+}) : null;
+app.get('/api/ad', (req, res) => {
+  const file = appSetting('ad_file');
+  if (appSetting('ad_enabled') !== '1' || !file || !fs.existsSync(path.join(AD_DIR, file)))
+    return res.json({ enabled: false });
+  res.json({ enabled: true, type: appSetting('ad_type') || 'image', url: '/ads/' + file, duration: parseInt(appSetting('ad_duration') || '4') });
+});
+app.post('/api/ads', requireLogin, (req, res) => {
+  if (req.user.role !== 'super_admin') return res.status(403).json({ error: 'forbidden' });
+  if (!upload) return res.status(500).json({ error: 'ads_not_installed' });
+  upload.single('file')(req, res, (err) => {
+    if (err) return res.status(400).json({ error: 'bad_file' });
+    const old = appSetting('ad_file');
+    if (req.file) {
+      if (old) fs.rmSync(path.join(AD_DIR, old), { force: true });
+      appSetting('ad_file', req.file.filename);
+      appSetting('ad_type', req.file.mimetype.startsWith('video') ? 'video' : 'image');
+    }
+    appSetting('ad_enabled', req.body.enabled === '1' ? '1' : '0');
+    appSetting('ad_duration', String(Math.min(10, Math.max(2, parseInt(req.body.duration) || 4))));
+    res.json({ ok: true });
+  });
+});
+app.delete('/api/ads', requireLogin, (req, res) => {
+  if (req.user.role !== 'super_admin') return res.status(403).json({ error: 'forbidden' });
+  const old = appSetting('ad_file');
+  if (old) fs.rmSync(path.join(AD_DIR, old), { force: true });
+  appSetting('ad_file', ''); appSetting('ad_enabled', '0');
   res.json({ ok: true });
 });
 app.post('/api/logout', (req, res) => req.session.destroy(() => res.json({ ok: true })));
