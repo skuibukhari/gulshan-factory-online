@@ -291,19 +291,39 @@ app.post('/api/change-password', requireLogin, (req, res) => {
 const AD_DIR = path.join(DATA_DIR, 'ads');
 fs.mkdirSync(AD_DIR, { recursive: true });
 app.use('/ads', express.static(AD_DIR));
-let multerLib = null;
-try { multerLib = require('multer'); } catch (e) { console.warn('[warn] multer not installed — ad uploads disabled until npm install runs.'); }
-const upload = multerLib ? multerLib({
-  storage: multerLib.diskStorage({
-    destination: AD_DIR,
-    filename: (req, file, cb) => cb(null, 'ad-' + Date.now() + path.extname(file.originalname).toLowerCase()),
-  }),
-  limits: { fileSize: 25 * 1024 * 1024 },
-  fileFilter: (req, file, cb) => {
-    if (/^(image|video)\//.test(file.mimetype)) cb(null, true);
-    else cb(new Error('bad_type'));
-  },
-}) : null;
+let multerLib = null, uploadHandler = null, installRunning = false;
+function loadMulter() {
+  if (multerLib) return true;
+  try { multerLib = require('multer'); return true; }
+  catch (e) {
+    if (!installRunning) {
+      installRunning = true;
+      console.warn('[warn] multer missing — installing in background, ad uploads paused meanwhile...');
+      require('child_process').execFile('npm', ['install', '--omit=dev', '--no-audit', '--no-fund'], { cwd: __dirname, timeout: 300000 }, (err) => {
+        installRunning = false;
+        if (err) { console.warn('[warn] auto npm install failed:', String(err && err.message || err).slice(0, 200)); return; }
+        try { multerLib = require('multer'); console.log('[info] multer installed OK'); }
+        catch (e2) { console.warn('[warn] multer still missing after install'); }
+      });
+    }
+    return false;
+  }
+}
+function getUpload() {
+  if (!loadMulter()) return null;
+  if (!uploadHandler) uploadHandler = multerLib({
+    storage: multerLib.diskStorage({
+      destination: AD_DIR,
+      filename: (req, file, cb) => cb(null, 'ad-' + Date.now() + path.extname(file.originalname).toLowerCase()),
+    }),
+    limits: { fileSize: 25 * 1024 * 1024 },
+    fileFilter: (req, file, cb) => {
+      if (/^(image|video)\//.test(file.mimetype)) cb(null, true);
+      else cb(new Error('bad_type'));
+    },
+  }).single('file');
+  return uploadHandler;
+}
 app.get('/api/ad', (req, res) => {
   const file = appSetting('ad_file');
   if (appSetting('ad_enabled') !== '1' || !file || !fs.existsSync(path.join(AD_DIR, file)))
@@ -312,8 +332,9 @@ app.get('/api/ad', (req, res) => {
 });
 app.post('/api/ads', requireLogin, (req, res) => {
   if (req.user.role !== 'super_admin') return res.status(403).json({ error: 'forbidden' });
-  if (!upload) return res.status(500).json({ error: 'ads_not_installed' });
-  upload.single('file')(req, res, (err) => {
+  const up = getUpload();
+  if (!up) return res.status(500).json({ error: 'ads_not_installed' });
+  up(req, res, (err) => {
     if (err) return res.status(400).json({ error: 'bad_file' });
     const old = appSetting('ad_file');
     if (req.file) {
