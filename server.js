@@ -175,7 +175,18 @@ app.post('/api/login', (req, res) => {
 });
 app.post('/api/logout', (req, res) => req.session.destroy(() => res.json({ ok: true })));
 app.get('/api/me', requireLogin, (req, res) => {
-  res.json({ id: req.user.id, username: req.user.username, role: req.user.role, shop_id: req.user.shop_id, permissions: req.user.role === 'super_admin' ? Object.fromEntries(SECTIONS.map(s => [s, 'full'])) : getPermissions(req.user.id) });
+  const shop = req.user.shop_id ? db.prepare('SELECT id, name FROM shops WHERE id=?').get(req.user.shop_id) : null;
+  res.json({ id: req.user.id, username: req.user.username, role: req.user.role, shop_id: req.user.shop_id, shop_name: shop ? shop.name : null, permissions: req.user.role === 'super_admin' ? Object.fromEntries(SECTIONS.map(s => [s, 'full'])) : getPermissions(req.user.id) });
+});
+
+// Catalog needed to place an order: active categories, products and routes.
+// Any user who may place orders can read it (ordering must not depend on catalog-management permissions).
+app.get('/api/order-catalog', requireLogin, requireSection('orders', 'view'), (req, res) => {
+  const cats = db.prepare('SELECT id, name FROM categories ORDER BY sort, name').all();
+  const products = db.prepare(`SELECT p.id, p.name, p.category_id, u.name AS unit_name
+    FROM products p LEFT JOIN units u ON u.id = p.unit_id WHERE p.active = 1 ORDER BY p.name`).all();
+  const routes = db.prepare('SELECT id, name, supply_date, cutoff_date, cutoff_time FROM routes WHERE active = 1 ORDER BY id DESC').all();
+  res.json({ cats, products, routes });
 });
 
 // ---------- Generic CRUD helper ----------

@@ -183,14 +183,19 @@ let orderDraft = {};
 async function renderOrderForm() {
   await refreshCache();
   const isShop = ME.role === 'shop';
-  const myShop = CACHE.shops.find(s => s.id === ME.shop_id);
+  // Order catalog: every user who may place orders gets it, regardless of catalog-management permissions
+  let catalog = null;
+  try { catalog = await api('GET', '/api/order-catalog'); } catch (e) { catalog = null; }
+  const cats = catalog ? catalog.cats : CACHE.cats;
+  const products = catalog ? catalog.products : CACHE.products.filter(p => p.active);
+  const routes = catalog ? catalog.routes : CACHE.routes.filter(r => r.active);
   const shopOpts = isShop
-    ? `<input type="hidden" id="ofShop" value="${ME.shop_id}"><div class="kbd">🏪 دکان: <b>${esc(myShop ? myShop.name : '')}</b></div>`
+    ? `<input type="hidden" id="ofShop" value="${ME.shop_id}"><div class="kbd">🏪 دکان: <b>${esc(ME.shop_name || '')}</b></div>`
     : `<label>دکان<br><select id="ofShop">${CACHE.shops.filter(s => s.active).map(s => `<option value="${s.id}">${esc(s.name)}</option>`).join('')}</select></label>`;
-  const routeOpts = CACHE.routes.filter(r => r.active).map(r =>
-    `<option value="${r.id}" data-cd="${esc(r.cutoff_date || '')}" data-ct="${esc(r.cutoff_time || '')}">${esc(r.name)}</option>`).join('');
-  const catsHtml = CACHE.cats.map(c => {
-    const prods = CACHE.products.filter(p => p.active && p.category_id === c.id);
+  const routeOpts = routes.map(r =>
+    `<option value="${r.id}" data-sd="${esc(r.supply_date || '')}" data-cd="${esc(r.cutoff_date || '')}" data-ct="${esc(r.cutoff_time || '')}">${esc(r.name)}</option>`).join('');
+  const catsHtml = cats.map(c => {
+    const prods = products.filter(p => p.category_id === c.id);
     if (!prods.length) return '';
     return `<div class="cathead">${esc(c.name)}</div>` + prods.map(p =>
       `<div class="prow"><span class="pn">${esc(p.name)}</span><span class="un">${esc(p.unit_name || '')}</span>
@@ -208,6 +213,7 @@ async function renderOrderForm() {
     ${catsHtml || '<p class="note">کوئی آئٹم نہیں — پہلے آئٹمز شامل کریں</p>'}
     <div class="err" id="ofErr"></div>
     <button class="btn green" onclick="submitOrder()">✅ آرڈر بھیجیں</button>`;
+  if (routes.length === 1) $('#ofRoute').value = routes[0].id;
   orderRouteChanged();
 }
 function orderRouteChanged() {
@@ -216,6 +222,8 @@ function orderRouteChanged() {
   const box = $('#ofCd');
   if (o && o.dataset.cd) startCountdown(o.dataset.cd, o.dataset.ct, o.text, 'ofCd');
   else if (box) box.innerHTML = '';
+  const d = $('#ofDate');
+  if (d && o && o.dataset.sd) d.value = o.dataset.sd;
 }
 async function submitOrder() {
   $('#ofErr').textContent = '';
