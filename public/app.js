@@ -77,7 +77,7 @@ async function refreshCache() {
 const MENU = [
   ['dashboard', '📊 ڈیش بورڈ'], ['order', '🧾 نیا آرڈر'], ['orders', '📦 آرڈرز'],
   ['order_history', '🕘 آرڈر ہسٹری'], ['reports', '🖨 رپورٹس'],
-  ['vehicles', '🚚 گاڑیاں'], ['routes', '🗺 روٹس و شیڈول'], ['categories', '🗂 کیٹیگریز'],
+  ['vehicles', '🚚 گاڑیاں'], ['routes', '🗺 روٹس و شیڈول'], ['cats', '🗂 کیٹیگریز'],
   ['units', '⚖ یونٹس'], ['products', '🍞 آئٹمز'], ['shops', '🏪 دکانیں'],
 ];
 const VIEW_SEC = { dashboard: 'dashboard', order: 'orders', orders: 'orders', order_history: 'order_history', reports: 'reports',
