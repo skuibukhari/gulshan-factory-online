@@ -326,9 +326,13 @@ function getUpload() {
 }
 app.get('/api/ad', (req, res) => {
   const file = appSetting('ad_file');
-  if (appSetting('ad_enabled') !== '1' || !file || !fs.existsSync(path.join(AD_DIR, file)))
-    return res.json({ enabled: false });
-  res.json({ enabled: true, type: appSetting('ad_type') || 'image', url: '/ads/' + file, duration: parseInt(appSetting('ad_duration') || '4') });
+  if (!file || !fs.existsSync(path.join(AD_DIR, file))) return res.json({ enabled: false, hasAd: false });
+  const start = appSetting('ad_start') || '', end = appSetting('ad_end') || '';
+  const now = Date.now();
+  const inWindow = (!start || now >= Date.parse(start)) && (!end || now <= Date.parse(end));
+  const on = appSetting('ad_enabled') === '1';
+  res.json({ enabled: on && inWindow, on, hasAd: true, type: appSetting('ad_type') || 'image',
+    url: '/ads/' + file, duration: parseInt(appSetting('ad_duration') || '4'), start, end });
 });
 app.post('/api/ads', requireLogin, (req, res) => {
   if (req.user.role !== 'super_admin') return res.status(403).json({ error: 'forbidden' });
@@ -344,6 +348,11 @@ app.post('/api/ads', requireLogin, (req, res) => {
     }
     appSetting('ad_enabled', req.body.enabled === '1' ? '1' : '0');
     appSetting('ad_duration', String(Math.min(10, Math.max(2, parseInt(req.body.duration) || 4))));
+    const start = String(req.body.start || ''), end = String(req.body.end || '');
+    const ps = start ? Date.parse(start) : NaN, pe = end ? Date.parse(end) : NaN;
+    if ((start && isNaN(ps)) || (end && isNaN(pe))) return res.status(400).json({ error: 'bad_date' });
+    if (start && end && ps >= pe) return res.status(400).json({ error: 'bad_range' });
+    appSetting('ad_start', start); appSetting('ad_end', end);
     res.json({ ok: true });
   });
 });
@@ -352,6 +361,7 @@ app.delete('/api/ads', requireLogin, (req, res) => {
   const old = appSetting('ad_file');
   if (old) fs.rmSync(path.join(AD_DIR, old), { force: true });
   appSetting('ad_file', ''); appSetting('ad_enabled', '0');
+  appSetting('ad_start', ''); appSetting('ad_end', '');
   res.json({ ok: true });
 });
 app.post('/api/logout', (req, res) => req.session.destroy(() => res.json({ ok: true })));

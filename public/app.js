@@ -24,6 +24,7 @@ function cycleTheme() {
   try { localStorage.setItem('gf-theme', next); } catch (e) {}
   applyTheme();
 }
+function setThemePref(v) { try { localStorage.setItem('gf-theme', v); } catch (e) {} applyTheme(); }
 try { matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => { if (themePref() === 'auto') applyTheme(); }); } catch (e) {}
 applyTheme();
 let ME = null, PERM = {};
@@ -51,6 +52,7 @@ function karachiToday() {
 // ---------- init ----------
 async function init() {
   try {
+    checkVersion();
     const ad = await api('GET', '/api/ad').catch(() => ({ enabled: false }));
     if (ad.enabled && ad.url) await showSplash(ad);
     const st = await api('GET', '/api/status');
@@ -72,6 +74,41 @@ async function doLogin() {
     await api('POST', '/api/login', { username: $('#liUser').value.trim(), password: $('#liPass').value });
     await enterApp();
   } catch (e) { $('#liErr').textContent = 'یوزر نام یا پاس ورڈ غلط ہے'; }
+}
+// ---------- forgot password (OTP to registered mobile) ----------
+function showAuth(id) { for (const v of ['loginView', 'forgotView', 'otpView', 'setupView']) { const el = document.getElementById(v); if (el) el.style.display = v === id ? 'flex' : 'none'; } }
+function showLogin() { showAuth('loginView'); }
+function showForgot() { $('#fpErr').textContent = ''; showAuth('forgotView'); }
+let fpUsername = '';
+async function doForgot() {
+  const u = $('#fpUser').value.trim(), err = $('#fpErr'); err.textContent = '';
+  if (!u) { err.textContent = 'یوزر نام لکھیں'; return; }
+  try {
+    const r = await api('POST', '/api/forgot-password', { username: u });
+    if (!r.sent) { err.textContent = 'اس یوزر کے موبائل پر نوٹیفکیشن رجسٹرڈ نہیں — سپر ایڈمن سے رابطہ کریں'; return; }
+  } catch (e) { err.textContent = e.message === 'too_many' ? 'زیادہ کوششیں — 15 منٹ بعد دوبارہ کوشش کریں' : 'خرابی: ' + e.message; return; }
+  fpUsername = u; $('#otpErr').textContent = ''; $('#otpCode').value = ''; $('#otpPass').value = ''; $('#otpPass2').value = '';
+  showAuth('otpView');
+}
+async function doReset() {
+  const code = $('#otpCode').value.trim(), p1 = $('#otpPass').value, p2 = $('#otpPass2').value;
+  const err = $('#otpErr'); err.textContent = '';
+  if (p1 !== p2) { err.textContent = 'پاس ورڈ دونوں جگہ ایک جیسا لکھیں'; return; }
+  if (p1.length < 6) { err.textContent = 'پاس ورڈ کم از کم 6 حروف کا ہو'; return; }
+  try { await api('POST', '/api/reset-password', { username: fpUsername, code, password: p1 }); }
+  catch (e) { err.textContent = 'OTP غلط یا مدت ختم — نیا OTP بھیجیں'; return; }
+  alert('پاس ورڈ ری سیٹ ہو گیا ✅ اب لاگ اِن کریں');
+  showAuth('loginView');
+}
+// ---------- app version / update notice ----------
+async function checkVersion() {
+  try {
+    const { version } = await api('GET', '/api/version');
+    const seen = localStorage.getItem('gf-ver');
+    const vl = $('#verLine'); if (vl) vl.textContent = 'ورژن ' + version;
+    if (seen && seen !== version) $('#updBar').style.display = 'block';
+    localStorage.setItem('gf-ver', version);
+  } catch (e) {}
 }
 async function doLogout() {
   await api('POST', '/api/logout');
@@ -112,7 +149,7 @@ function urlB64ToKey(b64) {
 }
 async function setupPush() {
   try {
-    if (!('serviceWorker' in navigator) || !('PushManager' in window) || !('Notification' in window)) return;
+    if (!('serviceWorker' in navigator) || !('PushManager' in window) || !('Notification' in window)) return false;
     // all roles subscribe: staff get order/login alerts, everyone gets route/supply updates
     if (Notification.permission === 'denied') return;
     if (Notification.permission !== 'granted') { await Notification.requestPermission(); }
@@ -124,7 +161,12 @@ async function setupPush() {
       sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: urlB64ToKey(publicKey) });
     }
     await api('POST', '/api/push-subscribe', { subscription: sub.toJSON() });
-  } catch (e) { /* push optional — never break the app */ }
+    return true;
+  } catch (e) { /* push optional — never break the app */ return false; }
+}
+async function enablePush() {
+  const ok = await setupPush();
+  alert(ok ? 'نوٹیفکیشن آن ہو گئے ✅' : 'نوٹیفکیشن آن نہیں ہوئے — براؤزر کی پرمیشن چیک کریں');
 }
 
 // ---------- cache ----------
@@ -188,9 +230,13 @@ function toggleMenu(open) {
   if (open) $('#setpanel').classList.remove('on');
 }
 function openSettings() {
-  if (ME.role !== 'super_admin') { alert('صرف سپر ایڈمن'); return; }
   $('#setpanel').classList.add('on'); $('#scrim').classList.add('on');
-  $('#sidemenu').classList.remove('on'); renderSettingsUsers();
+  $('#sidemenu').classList.remove('on');
+  const isSA = ME.role === 'super_admin';
+  document.querySelectorAll('.setpanel .tabs button').forEach(b => {
+    b.style.display = (b.dataset.tab === 'general' || isSA) ? '' : 'none';
+  });
+  setTab('general', document.querySelector('.setpanel .tabs button[data-tab="general"]'));
 }
 function closePanels() {
   $('#sidemenu').classList.remove('on'); $('#setpanel').classList.remove('on'); $('#scrim').classList.remove('on');
@@ -516,13 +562,73 @@ async function loadTotals() {
 }
 
 // ---------- settings: users & access ----------
-let setTabName = 'users';
+let setTabName = 'general';
 function setTab(t, btn) {
   setTabName = t;
   document.querySelectorAll('.setpanel .tabs button').forEach(b => b.classList.remove('active'));
   btn.classList.add('active');
-  for (const k of ['users', 'access', 'push', 'ad']) $('#set' + k[0].toUpperCase() + k.slice(1)).style.display = t === k ? 'block' : 'none';
-  if (t === 'users') renderSettingsUsers(); else if (t === 'access') renderSettingsAccess(); else if (t === 'push') renderSettingsPush(); else renderSettingsAd();
+  for (const k of ['general', 'users', 'access', 'push', 'ad']) $('#set' + k[0].toUpperCase() + k.slice(1)).style.display = t === k ? 'block' : 'none';
+  if (t === 'general') renderSettingsGeneral();
+  else if (t === 'users') renderSettingsUsers(); else if (t === 'access') renderSettingsAccess(); else if (t === 'push') renderSettingsPush(); else renderSettingsAd();
+}
+// ---------- settings: general (one place for everyone's options) ----------
+async function renderSettingsGeneral() {
+  const st = await api('GET', '/api/webauthn/status').catch(() => ({ on: false }));
+  const tp = themePref();
+  $('#setGeneral').innerHTML = `<h3>⚙️ میری سیٹنگ</h3>
+    <div class="formgrid">
+      <label>🎨 تھیم<br><select id="gsTheme" onchange="setThemePref(this.value)">
+        <option value="auto"${tp === 'auto' ? ' selected' : ''}>🖥️ خودکار (سسٹم)</option>
+        <option value="light"${tp === 'light' ? ' selected' : ''}>☀️ لائٹ</option>
+        <option value="dark"${tp === 'dark' ? ' selected' : ''}>🌙 ڈارک</option></select></label>
+      <label>🔐 فنگر پرنٹ / فیس لاگ اِن<br>
+        <button class="btn small ${st.on ? 'ghost' : 'green'}" onclick="bioRegister()">${st.on ? '🔄 دوبارہ سیٹ کریں' : '✅ آن کریں'}</button>
+        ${st.on ? ' <button class="btn small danger" onclick="bioRemove()">بند کریں</button>' : ''}</label>
+      <label>🔔 نوٹیفکیشن<br><button class="btn small" onclick="enablePush()">Allow کریں</button></label>
+      <label>🔑 پاس ورڈ<br><button class="btn small" onclick="document.getElementById('pwModal').style.display='flex'">تبدیل کریں</button></label>
+    </div>
+    <p class="note">👆 فنگر پرنٹ صرف اسی موبائل پر کام کرے گا جس پر آن کیا — لاگ اِن اسکرین پر یوزر نام لکھ کر 👆 دبائیں۔</p>`;
+}
+// ---------- biometric login (WebAuthn: fingerprint / face) ----------
+function b64ToBuf(s) { s = String(s).replace(/-/g, '+').replace(/_/g, '/'); while (s.length % 4) s += '='; const b = atob(s); const u = new Uint8Array(b.length); for (let i = 0; i < b.length; i++) u[i] = b.charCodeAt(i); return u; }
+function bufToB64(buf) { const u = new Uint8Array(buf); let s = ''; for (let i = 0; i < u.length; i++) s += String.fromCharCode(u[i]); return btoa(s).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, ''); }
+function wbnPre(o) {
+  const out = { ...o, challenge: b64ToBuf(o.challenge) };
+  if (out.user) out.user = { ...out.user, id: b64ToBuf(out.user.id) };
+  for (const k of ['excludeCredentials', 'allowCredentials']) if (out[k]) out[k] = out[k].map(c => ({ ...c, id: b64ToBuf(c.id) }));
+  return out;
+}
+function wbnPost(c) {
+  const o = { id: c.id, rawId: bufToB64(c.rawId), type: c.type, response: {} };
+  for (const k of ['clientDataJSON', 'attestationObject', 'authenticatorData', 'signature', 'userHandle']) if (c.response[k]) o.response[k] = bufToB64(c.response[k]);
+  return o;
+}
+async function bioRegister() {
+  if (!window.PublicKeyCredential) { alert('اس براؤزر / موبائل میں فنگر پرنٹ سپورٹ نہیں'); return; }
+  try {
+    const { options } = await api('POST', '/api/webauthn/register-start');
+    const cred = await navigator.credentials.create({ publicKey: wbnPre(options) });
+    await api('POST', '/api/webauthn/register-finish', { cred: wbnPost(cred) });
+    alert('فنگر پرنٹ لاگ اِن آن ہو گیا ✅');
+    renderSettingsGeneral();
+  } catch (e) { alert('ناکام — ' + (e.message || 'دوبارہ کوشش کریں')); }
+}
+async function bioRemove() {
+  if (!confirm('فنگر پرنٹ لاگ اِن بند کریں؟')) return;
+  await api('DELETE', '/api/webauthn');
+  renderSettingsGeneral();
+}
+async function bioLogin() {
+  const err = $('#liErr'); err.textContent = '';
+  if (!window.PublicKeyCredential) { err.textContent = 'اس براؤزر میں فنگر پرنٹ سپورٹ نہیں'; return; }
+  const username = $('#liUser').value.trim();
+  if (!username) { err.textContent = 'پہلے یوزر نام لکھیں'; return; }
+  try {
+    const { options } = await api('POST', '/api/webauthn/login-start', { username });
+    const asrt = await navigator.credentials.get({ publicKey: wbnPre(options) });
+    await api('POST', '/api/webauthn/login-finish', { username, asrt: wbnPost(asrt) });
+    await enterApp();
+  } catch (e) { err.textContent = e.message === 'no_bio' ? 'اس یوزر کے لیے فنگر پرنٹ سیٹ نہیں — پہلے لاگ اِن کر کے سیٹنگ میں آن کریں' : 'فنگر پرنٹ ناکام — دوبارہ کوشش کریں'; }
 }
 async function renderSettingsPush() {
   const st = await api('GET', '/api/push-status');
@@ -537,20 +643,45 @@ async function pushTest() {
   alert(r.sent ? 'ٹیسٹ بھیج دیا گیا! اپنا موبائل چیک کرو 📱' : 'کوئی ڈیوائس رجسٹرڈ نہیں — پہلے موبائل پر نوٹیفکیشن Allow کرو');
 }
 // ---------- settings: splash ad ----------
+function fmtDT(iso) {
+  if (!iso) return '';
+  const d = new Date(iso);
+  return d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' }) + ' ' +
+    d.toLocaleTimeString('en-GB', { hour: 'numeric', minute: '2-digit' });
+}
+function toLocalInput(iso) {
+  if (!iso) return '';
+  const d = new Date(iso), p = n => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}`;
+}
+function adStatusLine(ad) {
+  if (!ad.on) return '⚪ اشتہار بند ہے';
+  const now = Date.now(), s = ad.start ? Date.parse(ad.start) : 0, e = ad.end ? Date.parse(ad.end) : 0;
+  if (s && now < s) return '🕐 ' + fmtDT(ad.start) + ' سے شروع ہوگا';
+  if (e && now > e) return '🔴 مدت ختم (' + fmtDT(ad.end) + ' تک تھا)';
+  if (s && e) return '🟢 چل رہا ہے (' + fmtDT(ad.start) + ' سے ' + fmtDT(ad.end) + ' تک)';
+  if (s) return '🟢 چل رہا ہے (' + fmtDT(ad.start) + ' سے شروع)';
+  if (e) return '🟢 چل رہا ہے (' + fmtDT(ad.end) + ' تک)';
+  return '🟢 چل رہا ہے (ہمیشہ)';
+}
 async function renderSettingsAd() {
   const ad = await api('GET', '/api/ad');
   const durs = [2, 3, 4, 5, 6, 8, 10].map(d => `<option value="${d}"${ad.duration === d ? ' selected' : ''}>${d} سیکنڈ</option>`).join('');
   $('#setAd').innerHTML = `<h3>📢 اشتہار (ایپ کھلنے پر)</h3>
-    ${ad.enabled ? (ad.type === 'video'
+    ${ad.hasAd ? (ad.type === 'video'
       ? `<video src="${ad.url}" style="max-width:100%;max-height:220px;border-radius:10px" controls playsinline></video>`
       : `<img src="${ad.url}" style="max-width:100%;max-height:220px;border-radius:10px">`) : '<p class="note">کوئی اشتہار نہیں لگا</p>'}
+    ${ad.hasAd ? `<p><b>${adStatusLine(ad)}</b></p>` : ''}
     <div class="formgrid">
-      <label>تصویر / ویڈیو<br><input type="file" id="adFile" accept="image/*,video/*"></label>
+      <label>تصویر / ویڈیو ${ad.hasAd ? '(بدلنے کے لیے نئی فائل چنیں)' : ''}<br><input type="file" id="adFile" accept="image/*,video/*"></label>
       <label>دکھانے کی مدت<br><select id="adDur">${durs}</select></label>
-      <label><br><input type="checkbox" id="adOn" ${ad.enabled ? 'checked' : ''} style="width:auto"> اشتہار دکھائیں</label>
+      <label>📅 کب سے دکھائیں<br><input type="datetime-local" id="adStart" value="${toLocalInput(ad.start)}"></label>
+      <label>📅 کب تک دکھائیں<br><input type="datetime-local" id="adEnd" value="${toLocalInput(ad.end)}"></label>
+      <label><br><input type="checkbox" id="adOn" ${ad.on ? 'checked' : ''} style="width:auto"> اشتہار دکھائیں</label>
       <label><br><button class="btn small green" onclick="adSave()">💾 محفوظ کریں</button></label>
     </div>
-    ${ad.enabled ? '<button class="btn small danger" onclick="adDel()">🗑 اشتہار حذف کریں</button>' : ''}`;
+    <p class="note">کب سے / کب تک خالی = ہمیشہ دکھائیں۔ محفوظ کریں سے بغیر فائل بدلے بھی ترمیم ہو جاتی ہے ✏️</p>
+    ${ad.hasAd ? '<button class="btn small danger" onclick="adDel()">🗑 اشتہار حذف کریں</button>' : ''}`;
 }
 async function adSave() {
   const fd = new FormData();
@@ -558,8 +689,15 @@ async function adSave() {
   if (f) fd.append('file', f);
   fd.append('enabled', $('#adOn').checked ? '1' : '0');
   fd.append('duration', $('#adDur').value);
+  const sv = $('#adStart').value, ev = $('#adEnd').value;
+  fd.append('start', sv ? new Date(sv).toISOString() : '');
+  fd.append('end', ev ? new Date(ev).toISOString() : '');
   const r = await fetch('/api/ads', { method: 'POST', body: fd });
-  if (!r.ok) { alert('اپلوڈ ناکام — صرف تصویر یا ویڈیو (زیادہ سے زیادہ 25MB)'); return; }
+  if (!r.ok) {
+    const j = await r.json().catch(() => ({}));
+    alert(j.error === 'bad_range' ? '״کب تک״ »کب سے« کے بعد ہونا چاہیے' : 'اپلوڈ ناکام — صرف تصویر یا ویڈیو (زیادہ سے زیادہ 25MB)');
+    return;
+  }
   alert('اشتہار محفوظ ہو گیا ✅');
   renderSettingsAd();
 }
@@ -588,16 +726,17 @@ async function renderSettingsUsers() {
   const users = await api('GET', '/api/users');
   await refreshCache();
   const rows = users.map(u => `<tr><td>${esc(u.username)}</td><td>${{ super_admin: 'سپر ایڈمن', factory: 'فیکٹری', shop: 'دکان' }[u.role]}</td>
-    <td>${esc(u.shop_name || '—')}</td><td>${u.active ? '<span class="badge">فعال</span>' : '<span class="badge off">بند</span>'}</td>
+    <td>${esc(u.shop_name || '—')}</td><td dir="ltr">${esc(u.phone || '—')}</td><td>${u.active ? '<span class="badge">فعال</span>' : '<span class="badge off">بند</span>'}</td>
     <td><button class="btn small ghost" onclick="userEdit(${u.id})">✏</button>
     ${u.id !== ME.id ? `<button class="btn small danger" onclick="userDel(${u.id})">🗑</button>` : ''}</td></tr>`).join('');
   $('#setUsers').innerHTML = `<h3>👥 یوزرز / دکان اکاؤنٹس</h3>
-    <table><tr><th>یوزر نام</th><th>رول</th><th>دکان</th><th>حالت</th><th></th></tr>${rows}</table>
+    <table><tr><th>یوزر نام</th><th>رول</th><th>دکان</th><th>موبائل</th><th>حالت</th><th></th></tr>${rows}</table>
     <h3>➕ نیا اکاؤنٹ</h3>
     <div class="formgrid">
       <label>یوزر نام<br><input id="nu-name"></label>
       <label>پاس ورڈ<br><input id="nu-pass" type="password"></label>
-      <label>رول<br><select id="nu-role" onchange="$('#nu-shoprow').style.display=this.value==='shop'?'block':'none'">
+      <label>موبائل نمبر<br><input id="nu-phone" dir="ltr" placeholder="03xx-xxxxxxx"></label>
+      <label>رول<br><select id="nu-role" onchange="document.getElementById('nu-shoprow').style.display=this.value==='shop'?'block':'none'">
         <option value="shop">دکان</option><option value="factory">فیکٹری یوزر</option><option value="super_admin">سپر ایڈمن</option></select></label>
       <label id="nu-shoprow">دکان<br><select id="nu-shop">${CACHE.shops.map(s => `<option value="${s.id}">${esc(s.name)}</option>`).join('')}</select></label>
       <label><br><button class="btn small green" onclick="userAdd()">بنائیں</button></label>
@@ -606,7 +745,7 @@ async function renderSettingsUsers() {
 async function userAdd() {
   const role = $('#nu-role').value;
   await api('POST', '/api/users', { username: $('#nu-name').value.trim(), password: $('#nu-pass').value,
-    role, shop_id: role === 'shop' ? Number($('#nu-shop').value) : null });
+    role, shop_id: role === 'shop' ? Number($('#nu-shop').value) : null, phone: $('#nu-phone').value.trim() });
   renderSettingsUsers();
 }
 async function userDel(id) { if (!confirm('یوزر حذف کریں؟')) return; await api('DELETE', '/api/users/' + id); renderSettingsUsers(); }
@@ -614,10 +753,11 @@ async function userEdit(id) {
   const users = await api('GET', '/api/users');
   const u = users.find(x => x.id === id); if (!u) return;
   const role = prompt('رول (super_admin / factory / shop):', u.role); if (role === null) return;
+  const phone = prompt('موبائل نمبر:', u.phone || ''); if (phone === null) return;
   const active = confirm('اکاؤنٹ فعال رکھیں؟ (OK=فعال، Cancel=بند)');
   const pw = prompt('نیا پاس ورڈ (خالی چھوڑیں تو تبدیل نہیں ہوگا):', '');
   await api('PUT', '/api/users/' + id, { role: ['super_admin', 'factory', 'shop'].includes(role) ? role : u.role,
-    shop_id: u.shop_id, active: active ? 1 : 0, ...(pw ? { password: pw } : {}) });
+    shop_id: u.shop_id, active: active ? 1 : 0, phone, ...(pw ? { password: pw } : {}) });
   renderSettingsUsers();
 }
 const SEC_UR = { dashboard: 'ڈیش بورڈ', orders: 'آرڈرز', order_history: 'آرڈر ہسٹری', shops: 'دکانیں', products: 'آئٹمز',

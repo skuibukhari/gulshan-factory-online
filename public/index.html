@@ -44,6 +44,36 @@
     <input id="liPass" type="password" placeholder="پاس ورڈ" autocomplete="current-password">
     <div class="err" id="liErr"></div>
     <button class="btn" onclick="doLogin()">لاگ اِن</button>
+    <button class="btn ghost" onclick="bioLogin()" style="margin-top:8px">👆 فنگر پرنٹ / فیس سے لاگ اِن</button>
+    <div style="margin-top:10px"><a href="#" onclick="showForgot();return false" style="font-size:14px">پاس ورڈ بھول گئے؟</a></div>
+  </div>
+</div>
+
+<!-- ===== Forgot password: step 1 — request OTP ===== -->
+<div id="forgotView" class="auth-wrap" style="display:none">
+  <div class="auth-card">
+    <img class="logo" src="/logo.png" alt="گلشن فیکٹری">
+    <h1>گلشن فیکٹری<span class="en">Gulshan Factory</span></h1>
+    <p class="note">اپنا یوزر نام لکھیں — OTP آپ کے <b>رجسٹرڈ موبائل</b> پر نوٹیفکیشن میں آئے گا</p>
+    <input id="fpUser" placeholder="یوزر نام" autocomplete="username">
+    <div class="err" id="fpErr"></div>
+    <button class="btn" onclick="doForgot()">OTP بھیجیں</button>
+    <div style="margin-top:10px"><a href="#" onclick="showLogin();return false" style="font-size:14px">واپس لاگ اِن پر</a></div>
+  </div>
+</div>
+
+<!-- ===== Forgot password: step 2 — enter OTP + new password ===== -->
+<div id="otpView" class="auth-wrap" style="display:none">
+  <div class="auth-card">
+    <img class="logo" src="/logo.png" alt="گلشن فیکٹری">
+    <h1>گلشن فیکٹری<span class="en">Gulshan Factory</span></h1>
+    <p class="note">موبائل پر آیا <b>6 ہندسوں کا OTP</b> لکھیں (10 منٹ میں کارآمد)</p>
+    <input id="otpCode" placeholder="OTP — مثلاً 482913" inputmode="numeric" autocomplete="one-time-code">
+    <input id="otpPass" type="password" placeholder="نیا پاس ورڈ (کم از کم 6 حروف)" autocomplete="new-password">
+    <input id="otpPass2" type="password" placeholder="نیا پاس ورڈ دوبارہ" autocomplete="new-password">
+    <div class="err" id="otpErr"></div>
+    <button class="btn green" onclick="doReset()">پاس ورڈ ری سیٹ کریں</button>
+    <div style="margin-top:10px"><a href="#" onclick="showLogin();return false" style="font-size:14px">واپس لاگ اِن پر</a></div>
   </div>
 </div>
 
@@ -63,9 +93,10 @@
 
 <!-- ===== App ===== -->
 <div id="appView" style="display:none">
+  <div id="updBar" style="display:none">✨ نیا ورژن دستیاب ہے <button class="btn small green" onclick="location.reload()">ریفریش کریں</button></div>
   <div class="topbar">
     <button class="iconbtn" onclick="toggleMenu(true)" title="مینیو">⋮</button>
-    <img src="/logo.png" alt="logo">
+    <span class="logo-badge"><img src="/logo.png" alt="logo"></span>
     <div class="t"><b>گلشن فیکٹری <span>Gulshan Factory</span></b><small id="meLine"></small></div>
     <button class="iconbtn" id="themeBtn" onclick="cycleTheme()" title="تھیم">🖥️</button>
     <button class="iconbtn" onclick="openSettings()" title="سیٹنگز">⚙</button>
@@ -73,20 +104,23 @@
 
   <div class="scrim" id="scrim" onclick="closePanels()"></div>
   <aside class="sidemenu" id="sidemenu">
-    <div class="mh"><img src="/logo.png"><b>گلشن فیکٹری</b></div>
+    <div class="mh"><span class="logo-badge sm"><img src="/logo.png"></span><b>گلشن فیکٹری</b></div>
     <nav id="menuNav"></nav>
+    <div class="mfoot" id="verLine"></div>
   </aside>
 
   <aside class="setpanel" id="setpanel">
     <div class="sh">⚙ سیٹنگز</div>
     <div class="sb">
       <div class="tabs">
-        <button class="active" onclick="setTab('users',this)">یوزرز</button>
-        <button onclick="setTab('access',this)">رسائی / اختیار</button>
-        <button onclick="setTab('push',this)">🔔 اطلاعات</button>
-        <button onclick="setTab('ad',this)">📢 اشتہار</button>
+        <button data-tab="general" class="active" onclick="setTab('general',this)">⚙️ میری سیٹنگ</button>
+        <button data-tab="users" onclick="setTab('users',this)">یوزرز</button>
+        <button data-tab="access" onclick="setTab('access',this)">رسائی / اختیار</button>
+        <button data-tab="push" onclick="setTab('push',this)">🔔 اطلاعات</button>
+        <button data-tab="ad" onclick="setTab('ad',this)">📢 اشتہار</button>
       </div>
-      <div id="setUsers"></div>
+      <div id="setGeneral"></div>
+      <div id="setUsers" style="display:none"></div>
       <div id="setAccess" style="display:none"></div>
       <div id="setPush" style="display:none"></div>
       <div id="setAd" style="display:none"></div>
