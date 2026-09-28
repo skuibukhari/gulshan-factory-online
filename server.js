@@ -854,11 +854,16 @@ app.get('/api/dashboard', requireLogin, requireSection('dashboard'), (req, res) 
     vehicles: own ? undefined : db.prepare('SELECT COUNT(*) c FROM vehicles WHERE active=1').get().c,
     routes: own ? undefined : db.prepare('SELECT COUNT(*) c FROM routes WHERE active=1').get().c,
     products: own ? undefined : db.prepare('SELECT COUNT(*) c FROM products WHERE active=1').get().c,
-    recent_orders: db.prepare(`SELECT o.id, o.created_at, o.delivery_date, s.name AS shop_name,
+    recent_orders: db.prepare(`SELECT o.id, o.created_at, o.delivery_date, s.name AS shop_name, u.username AS created_by,
       (SELECT COUNT(*) FROM order_items WHERE order_id=o.id) AS items
-      FROM orders o JOIN shops s ON s.id=o.shop_id WHERE 1=1 ${sf} ORDER BY o.id DESC LIMIT 10`).all(),
+      FROM orders o JOIN shops s ON s.id=o.shop_id LEFT JOIN users u ON u.id=o.created_by WHERE 1=1 ${sf} ORDER BY o.id DESC LIMIT 10`).all(),
     upcoming,
   });
+});
+
+// ---------- assetlinks (for future APK/TWA builds via PWABuilder) ----------
+app.get('/.well-known/assetlinks.json', (req, res) => {
+  res.json([]);
 });
 
 // ---------- Printable A4 sheets (server-rendered) ----------

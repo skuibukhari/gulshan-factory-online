@@ -269,38 +269,78 @@ function closePanels() {
 }
 
 // ---------- dashboard ----------
+function timeAgo(s) {
+  try {
+    const t = new Date(String(s || '').replace(' ', 'T') + 'Z').getTime();
+    if (isNaN(t)) return '';
+    const m = Math.floor((Date.now() - t) / 60000);
+    if (m < 1) return 'ابھی';
+    if (m < 60) return m + ' منٹ پہلے';
+    const h = Math.floor(m / 60);
+    if (h < 24) return h + ' گھنٹے پہلے';
+    const d = Math.floor(h / 24);
+    return d + ' دن پہلے';
+  } catch (e) { return ''; }
+}
+function shopAvatar(name) {
+  const ch = String(name || '?').trim().charAt(0) || '?';
+  return `<span class="avatar">${esc(ch)}</span>`;
+}
 async function renderDashboard() {
   const d = await api('GET', '/api/dashboard');
-  const cd = d.upcoming.map(r => `
-    <div class="kbd">🚚 <b>${esc(r.name)}</b> — گاڑی: ${esc(r.vehicle_name || '—')}
-    <br>📅 سپلائی: ${esc(r.supply_date || '—')} &nbsp; ⏰ کٹ آف: ${esc(r.cutoff_date || '')} ${esc(r.cutoff_time || '')}</div>`).join('');
   const p2 = n => String(n).padStart(2, '0');
+  const cd = d.upcoming.map(r => {
+    const locked = cutoffPassedClient(r.cutoff_date, r.cutoff_time);
+    const badge = !r.cutoff_date ? '' : locked
+      ? '<span class="badge off">🔒 بند</span>'
+      : '<span class="badge on">🟢 کھلا</span>';
+    return `<div class="supcard">
+      <div class="suphead">🚚 <b>${esc(r.name)}</b> ${badge}</div>
+      <div class="supmeta">🚛 ${esc(r.vehicle_name || '—')}</div>
+      <div class="supmeta">📅 سپلائی: <b>${esc(r.supply_date || '—')}</b></div>
+      <div class="supmeta">⏰ کٹ آف: <b>${esc(r.cutoff_date || '')} ${esc(r.cutoff_time || '')}</b></div>
+    </div>`;
+  }).join('');
   const ro = (d.recent_orders || []).map(o => {
     const dt = new Date(String(o.created_at || '').replace(' ', 'T') + 'Z'); // stored UTC -> viewer local time
-    const when = isNaN(dt) ? esc(o.created_at || '') : `${p2(dt.getDate())}-${p2(dt.getMonth() + 1)} ${p2(dt.getHours())}:${p2(dt.getMinutes())}`;
-    return `<div class="kbd">🕐 <b>${when}</b> — 🏪 ${esc(o.shop_name)} — ${o.items} آئٹمز<br>📅 ڈیلیوری: ${esc(o.delivery_date || '—')}</div>`;
+    const when = isNaN(dt) ? '' : `${p2(dt.getDate())}-${p2(dt.getMonth() + 1)} ${p2(dt.getHours())}:${p2(dt.getMinutes())}`;
+    const ago = timeAgo(o.created_at);
+    return `<div class="ordrow">
+      ${shopAvatar(o.shop_name)}
+      <div class="ordmain">
+        <div class="ordtitle">${esc(o.shop_name)} <span class="ordn">#${o.id}</span></div>
+        <div class="ordsub">📦 ${o.items} آئٹمز • 📅 ${esc(o.delivery_date || '—')}${o.created_by ? ` • 👤 ${esc(o.created_by)}` : ''}</div>
+      </div>
+      <div class="ordtime">${esc(ago)}<br><small>${esc(when)}</small></div>
+    </div>`;
   }).join('');
+  const stat = (icon, n, l, cls) => `<div class="stat ${cls || ''}"><div class="sicon">${icon}</div><div><div class="sn">${n}</div><div class="sl">${l}</div></div></div>`;
   const cards = d.scope === 'shop'
-    ? `<div class="card"><div class="n">🏪</div><div class="l">${esc(d.shop_name || 'میری دکان')}</div></div>
-      <div class="card"><div class="n">${d.today_orders}</div><div class="l">آج کے آرڈر</div></div>
-      <div class="card"><div class="n">${d.total_orders}</div><div class="l">کل آرڈر</div></div>`
-    : `<div class="card"><div class="n">${d.today_orders}</div><div class="l">آج کے آرڈر</div></div>
-      <div class="card"><div class="n">${d.total_orders}</div><div class="l">کل آرڈر</div></div>
-      <div class="card"><div class="n">${d.shops}</div><div class="l">دکانیں</div></div>
-      <div class="card"><div class="n">${d.vehicles}</div><div class="l">گاڑیاں</div></div>
-      <div class="card"><div class="n">${d.routes}</div><div class="l">روٹس</div></div>
-      <div class="card"><div class="n">${d.products}</div><div class="l">آئٹمز</div></div>`;
+    ? stat('🏪', esc(d.shop_name || 'میری دکان'), 'میری دکان', 'wide')
+      + stat('📦', d.today_orders, 'آج کے آرڈر')
+      + stat('🧾', d.total_orders, 'کل آرڈر')
+    : stat('📦', d.today_orders, 'آج کے آرڈر')
+      + stat('🧾', d.total_orders, 'کل آرڈر')
+      + stat('🏪', d.shops, 'دکانیں')
+      + stat('🗂', d.products, 'آئٹمز')
+      + stat('🚚', d.vehicles, 'گاڑیاں')
+      + stat('🛣', d.routes, 'روٹس');
   $('#v-dashboard').innerHTML = `
-    <div class="clock">🕐 <span id="liveClock"></span></div>
-    <div id="cdBox"></div>
-    <h2 class="st">📊 <span>ڈیش بورڈ</span></h2>
-    <div class="cards">
-      ${cards}
+    <div class="hero">
+      <div class="herotxt">
+        <div class="herotitle">🏭 گلشن فیکٹری</div>
+        <div class="herosub">خوش آمدید، <b>${esc(ME.username || '')}</b></div>
+        <div class="heroclock">🕐 <span id="liveClock"></span></div>
+      </div>
+      <div id="cdBox" class="herocd"></div>
     </div>
-    <h2 class="st">🗓 <span>آنے والی سپلائی</span></h2>${cd || '<p class="note">کوئی شیڈول نہیں</p>'}
-    <h2 class="st">📋 <span>${d.scope === 'shop' ? 'میرے تازہ ترین آرڈرز' : 'تازہ ترین آرڈرز — کب، کس دکان سے'}</span></h2>${ro || '<p class="note">ابھی کوئی آرڈر نہیں</p>'}
-    <div style="margin-top:14px">
-      ${can('orders', 'full') ? '<button class="btn" onclick="showView(\'order\')">🧾 نیا آرڈر</button> ' : ''}
+    <div class="stats">${cards}</div>
+    <h2 class="st">🗓 <span>آنے والی سپلائی</span></h2>
+    <div class="supgrid">${cd || '<p class="note">کوئی شیڈول نہیں</p>'}</div>
+    <h2 class="st">📋 <span>${d.scope === 'shop' ? 'میرے تازہ ترین آرڈرز' : 'تازہ ترین آرڈرز'}</span></h2>
+    <div class="ordlist">${ro || '<p class="note">ابھی کوئی آرڈر نہیں</p>'}</div>
+    <div style="margin-top:14px;display:flex;gap:8px;flex-wrap:wrap">
+      ${can('orders', 'full') ? '<button class="btn" onclick="showView(\'order\')">🧾 نیا آرڈر</button>' : ''}
       ${can('reports') ? '<button class="btn green" onclick="showView(\'reports\')">🖨 پروڈکشن شیٹ</button>' : ''}
     </div>`;
   tickClock();
@@ -363,9 +403,31 @@ async function renderOrderForm() {
   if (routes.length === 1) $('#ofRoute').value = routes[0].id;
   orderRouteChanged();
 }
+function cutoffPassedClient(cdate, ctime) {
+  if (!cdate) return false;
+  return Date.now() > new Date(`${cdate}T${ctime || '23:59'}:00+05:00`).getTime();
+}
+function lockOrderForm(locked, label) {
+  document.querySelectorAll('#v-order input[data-pid]').forEach(i => { i.disabled = locked; if (locked) i.value = ''; });
+  const btn = document.querySelector('#v-order button.btn.green');
+  if (btn) btn.disabled = locked;
+  let bar = $('#ofLock');
+  if (locked && !bar) {
+    bar = document.createElement('div');
+    bar.id = 'ofLock';
+    bar.className = 'lockbar';
+    $('#v-order').prepend(bar);
+  }
+  if (bar) {
+    bar.style.display = locked ? 'block' : 'none';
+    if (locked) bar.innerHTML = `🔒 <b>${esc(label || '')}</b> کا کٹ آف وقت گزر چکا ہے — اس روٹ پر آرڈر بند ہے`;
+  }
+}
 function orderRouteChanged() {
   const sel = $('#ofRoute'); if (!sel) return;
   const o = sel.options[sel.selectedIndex];
+  const locked = !!(o && o.value && cutoffPassedClient(o.dataset.cd, o.dataset.ct));
+  lockOrderForm(locked, o ? o.text : '');
   const box = $('#ofCd');
   if (o && o.dataset.cd) startCountdown(o.dataset.cd, o.dataset.ct, o.text, 'ofCd');
   else if (box) box.innerHTML = '';
@@ -393,28 +455,34 @@ async function submitOrder() {
 }
 
 // ---------- orders list ----------
+function orderCard(o) {
+  const items = o.items.map(i => `<div class="oitem"><span>${esc(i.product_name)}${i.category_name ? ` <small>(${esc(i.category_name)})</small>` : ''}</span><b>${esc(i.quantity)} ${esc(i.unit_name || '')}</b></div>`).join('');
+  const acts = can('orders', 'full')
+    ? `<div class="oacts"><button class="btn small ghost" onclick="editOrder(${o.id})">✏ ترمیم</button>
+       <button class="btn small danger" onclick="delOrder(${o.id})">🗑 حذف</button></div>` : '';
+  return `<div class="ocard">
+    <div class="ochead">${shopAvatar(o.shop_name)}
+      <div class="ocmain"><div class="octitle">${esc(o.shop_name)} <span class="ordn">#${o.id}</span></div>
+      <div class="ocsub">📅 ${esc(o.delivery_date || '—')}${o.route_name ? ` • 🛣 ${esc(o.route_name)}` : ''}</div></div>
+    </div>
+    <div class="oitems">${items || '<p class="note">کوئی آئٹم نہیں</p>'}</div>
+    ${acts}
+  </div>`;
+}
 async function renderOrders() {
   const q = `date=${karachiToday()}`;
   const list = await api('GET', '/api/orders?' + q);
-  const rows = list.map(o => `<tr><td>${o.id}</td><td>${esc(o.shop_name)}</td><td>${esc(o.route_name || '—')}</td>
-    <td>${esc(o.delivery_date)}</td><td>${o.items.map(i => esc(i.product_name) + ': ' + esc(i.quantity) + ' ' + esc(i.unit_name || '')).join('<br>')}</td>
-    <td>${can('orders', 'full') ? `<button class="btn small ghost" onclick="editOrder(${o.id})">✏</button>
-    <button class="btn small danger" onclick="delOrder(${o.id})">🗑</button>` : ''}</td></tr>`).join('');
   $('#v-orders').innerHTML = `<h2 class="st">📦 <span>آرڈرز</span> <small class="note">(آج)</small></h2>
     <div class="formgrid"><label>تاریخ<br><input type="date" id="olDate" value="${karachiToday()}"></label>
     <label>روٹ<br><select id="olRoute"><option value="">تمام</option>${CACHE.routes.map(r => `<option value="${r.id}">${esc(r.name)}</option>`).join('')}</select></label>
     <label><br><button class="btn small dark" onclick="filterOrders()">🔍 دیکھیں</button></label></div>
-    <div id="olBody"><table><tr><th>#</th><th>دکان</th><th>روٹ</th><th>تاریخ</th><th>آئٹمز</th><th></th></tr>${rows || '<tr><td colspan=6>کوئی آرڈر نہیں</td></tr>'}</table></div>
+    <div id="olBody" class="ocards">${list.map(orderCard).join('') || '<p class="note">کوئی آرڈر نہیں</p>'}</div>
     ${can('orders', 'full') ? '<button class="btn" onclick="showView(\'order\')">🧾 نیا آرڈر</button>' : ''}`;
 }
 async function filterOrders() {
   const d = $('#olDate').value, r = $('#olRoute').value;
   const list = await api('GET', `/api/orders?date=${d}${r ? '&route_id=' + r : ''}`);
-  const rows = list.map(o => `<tr><td>${o.id}</td><td>${esc(o.shop_name)}</td><td>${esc(o.route_name || '—')}</td>
-    <td>${esc(o.delivery_date)}</td><td>${o.items.map(i => esc(i.product_name) + ': ' + esc(i.quantity) + ' ' + esc(i.unit_name || '')).join('<br>')}</td>
-    <td>${can('orders', 'full') ? `<button class="btn small ghost" onclick="editOrder(${o.id})">✏</button>
-    <button class="btn small danger" onclick="delOrder(${o.id})">🗑</button>` : ''}</td></tr>`).join('');
-  $('#olBody').innerHTML = `<table><tr><th>#</th><th>دکان</th><th>روٹ</th><th>تاریخ</th><th>آئٹمز</th><th></th></tr>${rows || '<tr><td colspan=6>کوئی آرڈر نہیں</td></tr>'}</table>`;
+  $('#olBody').innerHTML = list.map(orderCard).join('') || '<p class="note">کوئی آرڈر نہیں</p>';
 }
 async function delOrder(id) {
   if (!confirm('آرڈر حذف کریں؟')) return;
