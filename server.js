@@ -759,7 +759,9 @@ app.post('/api/orders', requireLogin, requireSection('orders', 'full'), (req, re
   const own = scopedShopId(req);
   if (own) shop_id = own; // shop users can only order for themselves
   if (!shop_id || !b.delivery_date || !Array.isArray(b.items)) return res.status(400).json({ error: 'bad_input' });
-  const route = b.route_id ? db.prepare('SELECT * FROM routes WHERE id=?').get(b.route_id) : null;
+  if (!b.route_id) return res.status(400).json({ error: 'route_required' }); // cutoff is per-route: route is mandatory
+  const route = db.prepare('SELECT * FROM routes WHERE id=?').get(b.route_id);
+  if (!route) return res.status(400).json({ error: 'route_required' });
   const override = req.user.role === 'super_admin' && b.override_cutoff;
   if (route && cutoffPassed(route) && !override) return res.status(400).json({ error: 'cutoff_passed' });
   const ins = db.transaction(() => {

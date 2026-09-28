@@ -379,14 +379,16 @@ async function submitOrder() {
     .filter(i => i.quantity > 0);
   if (!items.length) { $('#ofErr').textContent = 'کم از کم ایک آئٹم کی مقدار لکھیں'; return; }
   try {
+    const routeId = Number($('#ofRoute').value) || null;
+    if (!routeId) { $('#ofErr').textContent = 'روٹ منتخب کریں'; return; }
     await api('POST', '/api/orders', {
-      shop_id: Number($('#ofShop').value), route_id: Number($('#ofRoute').value) || null,
+      shop_id: Number($('#ofShop').value), route_id: routeId,
       delivery_date: $('#ofDate').value, note: $('#ofNote').value, items,
     });
     alert('آرڈر محفوظ ہو گیا ✅');
     document.querySelectorAll('#v-order input[data-pid]').forEach(i => i.value = '');
   } catch (e) {
-    $('#ofErr').textContent = e.message === 'cutoff_passed' ? '⏰ کٹ آف وقت گزر چکا — آرڈر بند ہے' : 'خرابی: ' + e.message;
+    $('#ofErr').textContent = e.message === 'cutoff_passed' ? '⏰ کٹ آف وقت گزر چکا — آرڈر بند ہے' : e.message === 'route_required' ? 'روٹ منتخب کریں' : 'خرابی: ' + e.message;
   }
 }
 
