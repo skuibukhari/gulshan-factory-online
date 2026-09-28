@@ -316,9 +316,11 @@ async function renderDashboard() {
       </div>
     </div>`;
   }).join('');
-  const stat = (icon, n, l) => `<div class="dstat"><div class="dsi">${icon}</div><div class="dsn">${n}</div><div class="dsl">${l}</div></div>`;
+  const gcls = ['g1', 'g2', 'g3', 'g4', 'g5', 'g6'];
+  let gi = 0;
+  const stat = (icon, n, l) => { const c = gcls[gi++ % gcls.length]; return `<div class="gcard ${c}"><div class="gsi">${icon}</div><div class="gsn">${n}</div><div class="gsl">${l}</div></div>`; };
   const cards = d.scope === 'shop'
-    ? `<div class="dstat wide"><div class="dsi">🏪</div><div class="dsn">${esc(d.shop_name || 'میری دکان')}</div><div class="dsl">میری دکان</div></div>`
+    ? `<div class="gcard g1 wide"><div class="gsi">🏪</div><div class="gsn">${esc(d.shop_name || 'میری دکان')}</div><div class="gsl">میری دکان</div></div>`
       + stat('📦', d.today_orders, 'آج کے آرڈر')
       + stat('🧾', d.total_orders, 'کل آرڈر')
     : stat('📦', d.today_orders, 'آج کے آرڈر')
