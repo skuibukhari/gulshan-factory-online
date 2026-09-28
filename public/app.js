@@ -474,9 +474,20 @@ function setTab(t, btn) {
   setTabName = t;
   document.querySelectorAll('.setpanel .tabs button').forEach(b => b.classList.remove('active'));
   btn.classList.add('active');
-  $('#setUsers').style.display = t === 'users' ? 'block' : 'none';
-  $('#setAccess').style.display = t === 'access' ? 'block' : 'none';
-  if (t === 'users') renderSettingsUsers(); else renderSettingsAccess();
+  for (const k of ['users', 'access', 'push']) $('#set' + k[0].toUpperCase() + k.slice(1)).style.display = t === k ? 'block' : 'none';
+  if (t === 'users') renderSettingsUsers(); else if (t === 'access') renderSettingsAccess(); else renderSettingsPush();
+}
+async function renderSettingsPush() {
+  const st = await api('GET', '/api/push-status');
+  $('#setPush').innerHTML = `<h3>🔔 اطلاعات (Notifications)</h3>
+    <p>رجسٹرڈ ڈیوائسز: <b>${st.count}</b></p>
+    ${st.devices.map(d => `<div>📱 ${esc(d.username)} — ${esc(d.created_at)}</div>`).join('') || '<p>ابھی کوئی ڈیوائس رجسٹرڈ نہیں۔</p>'}
+    <button class="btn green" onclick="pushTest()">ٹیسٹ نوٹیفکیشن بھیجو</button>
+    <p style="color:var(--muted);font-size:14px">نوٹ: ہر موبائل پر ایک دفعہ ایپ کھول کر لاگ اِن کریں اور "Allow notifications" دبائیں۔</p>`;
+}
+async function pushTest() {
+  const r = await api('POST', '/api/push-test');
+  alert(r.sent ? 'ٹیسٹ بھیج دیا گیا! اپنا موبائل چیک کرو 📱' : 'کوئی ڈیوائس رجسٹرڈ نہیں — پہلے موبائل پر نوٹیفکیشن Allow کرو');
 }
 async function renderSettingsUsers() {
   const users = await api('GET', '/api/users');

@@ -286,6 +286,20 @@ app.post('/api/push-unsubscribe', requireLogin, (req, res) => {
   if (ep) db.prepare('DELETE FROM push_subscriptions WHERE user_id=? AND endpoint=?').run(req.user.id, ep);
   res.json({ ok: true });
 });
+app.get('/api/push-status', requireLogin, (req, res) => {
+  if (req.user.role !== 'super_admin') return res.status(403).json({ error: 'forbidden' });
+  const subs = db.prepare(`SELECT ps.created_at, u.username FROM push_subscriptions ps
+    JOIN users u ON u.id=ps.user_id WHERE u.role='super_admin' ORDER BY ps.created_at DESC`).all();
+  res.json({ count: subs.length, devices: subs });
+});
+app.post('/api/push-test', requireLogin, (req, res) => {
+  if (req.user.role !== 'super_admin') return res.status(403).json({ error: 'forbidden' });
+  const payload = JSON.stringify({ title: '🔔 ٹیسٹ نوٹیفکیشن', body: 'مبارک ہو! اطلاعات کا نظام کام کر رہا ہے۔', url: '/' });
+  const subs = db.prepare(`SELECT ps.* FROM push_subscriptions ps JOIN users u ON u.id=ps.user_id
+    WHERE u.active=1 AND u.role='super_admin'`).all();
+  pushTo(subs, payload);
+  res.json({ ok: true, sent: subs.length });
+});
 
 // Catalog needed to place an order: active categories, products and routes.
 // Any user who may place orders can read it (ordering must not depend on catalog-management permissions).
