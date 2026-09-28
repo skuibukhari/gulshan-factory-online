@@ -1,0 +1,9 @@
+services:
+  - type: web
+    name: gulshan-factory-online
+    runtime: docker
+    plan: free
+    healthCheckPath: /api/status
+    envVars:
+      - key: SESSION_SECRET
+        generateValue: true

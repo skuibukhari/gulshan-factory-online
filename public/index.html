@@ -1,0 +1,82 @@
+<!DOCTYPE html>
+<html lang="ur" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>گلشن فیکٹری — Gulshan Factory</title>
+<link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+
+<!-- ===== Login ===== -->
+<div id="loginView" class="auth-wrap" style="display:none">
+  <div class="auth-card">
+    <img class="logo" src="/logo.png" alt="گلشن فیکٹری">
+    <h1>گلشن فیکٹری<span class="en">Gulshan Factory</span></h1>
+    <div class="welcome">آپ کی آمد سے رونق مکمل ہوئی۔</div>
+    <input id="liUser" placeholder="یوزر نام" autocomplete="username">
+    <input id="liPass" type="password" placeholder="پاس ورڈ" autocomplete="current-password">
+    <div class="err" id="liErr"></div>
+    <button class="btn" onclick="doLogin()">لاگ اِن</button>
+  </div>
+</div>
+
+<!-- ===== First-time setup ===== -->
+<div id="setupView" class="auth-wrap" style="display:none">
+  <div class="auth-card">
+    <img class="logo" src="/logo.png" alt="گلشن فیکٹری">
+    <h1>گلشن فیکٹری<span class="en">Gulshan Factory</span></h1>
+    <div class="welcome">آپ کی آمد سے رونق مکمل ہوئی۔</div>
+    <p class="note">پہلی دفعہ سپر ایڈمن اکاؤنٹ بنائیں</p>
+    <input id="suUser" placeholder="ایڈمن یوزر نام" autocomplete="username">
+    <input id="suPass" type="password" placeholder="پاس ورڈ (کم از کم 4 حرف)" autocomplete="new-password">
+    <div class="err" id="suErr"></div>
+    <button class="btn green" onclick="doSetup()">اکاؤنٹ بنائیں</button>
+  </div>
+</div>
+
+<!-- ===== App ===== -->
+<div id="appView" style="display:none">
+  <div class="topbar">
+    <button class="iconbtn" onclick="toggleMenu(true)" title="مینیو">⋮</button>
+    <img src="/logo.png" alt="logo">
+    <div class="t"><b>گلشن فیکٹری <span>Gulshan Factory</span></b><small id="meLine"></small></div>
+    <button class="iconbtn" onclick="openSettings()" title="سیٹنگز">⚙</button>
+  </div>
+
+  <div class="scrim" id="scrim" onclick="closePanels()"></div>
+  <aside class="sidemenu" id="sidemenu">
+    <div class="mh"><img src="/logo.png"><b>گلشن فیکٹری</b></div>
+    <nav id="menuNav"></nav>
+  </aside>
+
+  <aside class="setpanel" id="setpanel">
+    <div class="sh">⚙ سیٹنگز</div>
+    <div class="sb">
+      <div class="tabs">
+        <button class="active" onclick="setTab('users',this)">یوزرز</button>
+        <button onclick="setTab('access',this)">رسائی / اختیار</button>
+      </div>
+      <div id="setUsers"></div>
+      <div id="setAccess" style="display:none"></div>
+    </div>
+  </aside>
+
+  <main>
+    <section class="view" id="v-dashboard"></section>
+    <section class="view" id="v-order"></section>
+    <section class="view" id="v-orders"></section>
+    <section class="view" id="v-history"></section>
+    <section class="view" id="v-vehicles"></section>
+    <section class="view" id="v-routes"></section>
+    <section class="view" id="v-cats"></section>
+    <section class="view" id="v-units"></section>
+    <section class="view" id="v-products"></section>
+    <section class="view" id="v-shops"></section>
+    <section class="view" id="v-reports"></section>
+  </main>
+</div>
+
+<script src="/app.js"></script>
+</body>
+</html>
