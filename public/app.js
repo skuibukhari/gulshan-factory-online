@@ -1,4 +1,6 @@
 // Gulshan Factory — frontend (Urdu, RTL)
+// Register service worker (makes the app installable on Android; caches nothing)
+if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').catch(() => {});
 const $ = s => document.querySelector(s);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 let ME = null, PERM = {};
