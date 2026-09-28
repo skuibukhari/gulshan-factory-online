@@ -154,6 +154,7 @@ async function enterApp() {
   $('#loginView').style.display = 'none'; $('#setupView').style.display = 'none';
   $('#appView').style.display = 'block';
   $('#meLine').textContent = ME.username + ' — ' + ({ super_admin: 'سپر ایڈمن', factory: 'فیکٹری یوزر', shop: 'دکان' }[ME.role] || ME.role);
+  renderTopbarDp();
   await refreshCache();
   buildMenu();
   showView(firstAllowedView());
@@ -282,41 +283,42 @@ function timeAgo(s) {
     return d + ' دن پہلے';
   } catch (e) { return ''; }
 }
-function shopAvatar(name) {
+function shopAvatar(name, img) {
+  if (img) return `<span class="avatar"><img src="${esc(img)}" alt=""></span>`;
   const ch = String(name || '?').trim().charAt(0) || '?';
   return `<span class="avatar">${esc(ch)}</span>`;
 }
+function userAvatar(username, img) {
+  if (img) return `<span class="avatar sm"><img src="${esc(img)}" alt=""></span>`;
+  const ch = String(username || '?').trim().charAt(0) || '?';
+  return `<span class="avatar sm">${esc(ch)}</span>`;
+}
 async function renderDashboard() {
   const d = await api('GET', '/api/dashboard');
-  const p2 = n => String(n).padStart(2, '0');
-  const cd = d.upcoming.map(r => {
-    const locked = cutoffPassedClient(r.cutoff_date, r.cutoff_time);
-    const badge = !r.cutoff_date ? '' : locked
-      ? '<span class="badge off">🔒 بند</span>'
-      : '<span class="badge on">🟢 کھلا</span>';
-    return `<div class="supcard">
-      <div class="suphead">🚚 <b>${esc(r.name)}</b> ${badge}</div>
-      <div class="supmeta">🚛 ${esc(r.vehicle_name || '—')}</div>
-      <div class="supmeta">📅 سپلائی: <b>${esc(r.supply_date || '—')}</b></div>
+  const cd = d.upcoming.map(r => `
+    <div class="supcard">
+      <div class="suphead">🚚 <b>${esc(r.name)}</b></div>
+      <div class="supmeta">🚛 ${esc(r.vehicle_name || '—')} &nbsp; 📅 سپلائی: <b>${esc(r.supply_date || '—')}</b></div>
       <div class="supmeta">⏰ کٹ آف: <b>${esc(r.cutoff_date || '')} ${esc(r.cutoff_time || '')}</b></div>
-    </div>`;
-  }).join('');
+    </div>`).join('');
+  const p2 = n => String(n).padStart(2, '0');
   const ro = (d.recent_orders || []).map(o => {
     const dt = new Date(String(o.created_at || '').replace(' ', 'T') + 'Z'); // stored UTC -> viewer local time
     const when = isNaN(dt) ? '' : `${p2(dt.getDate())}-${p2(dt.getMonth() + 1)} ${p2(dt.getHours())}:${p2(dt.getMinutes())}`;
-    const ago = timeAgo(o.created_at);
-    return `<div class="ordrow">
-      ${shopAvatar(o.shop_name)}
-      <div class="ordmain">
-        <div class="ordtitle">${esc(o.shop_name)} <span class="ordn">#${o.id}</span></div>
-        <div class="ordsub">📦 ${o.items} آئٹمز • 📅 ${esc(o.delivery_date || '—')}${o.created_by ? ` • 👤 ${esc(o.created_by)}` : ''}</div>
+    const simg = o.shop_image ? '/images/' + o.shop_image : null;
+    const uimg = o.user_avatar ? '/images/' + o.user_avatar : null;
+    return `<div class="drow">
+      ${shopAvatar(o.shop_name, simg)}
+      <div class="drmain">
+        <div class="drshop">${esc(o.shop_name)} <span class="ordn">#${o.id}</span></div>
+        <div class="drmeta">📦 ${o.items} آئٹمز • 📅 ${esc(o.delivery_date || '—')}</div>
+        <div class="drmeta">🕐 ${esc(when)}${o.created_by ? ` • ${userAvatar(o.created_by, uimg)} <b>${esc(o.created_by)}</b>` : ''}</div>
       </div>
-      <div class="ordtime">${esc(ago)}<br><small>${esc(when)}</small></div>
     </div>`;
   }).join('');
-  const stat = (icon, n, l, cls) => `<div class="stat ${cls || ''}"><div class="sicon">${icon}</div><div><div class="sn">${n}</div><div class="sl">${l}</div></div></div>`;
+  const stat = (icon, n, l) => `<div class="dstat"><div class="dsi">${icon}</div><div class="dsn">${n}</div><div class="dsl">${l}</div></div>`;
   const cards = d.scope === 'shop'
-    ? stat('🏪', esc(d.shop_name || 'میری دکان'), 'میری دکان', 'wide')
+    ? `<div class="dstat wide"><div class="dsi">🏪</div><div class="dsn">${esc(d.shop_name || 'میری دکان')}</div><div class="dsl">میری دکان</div></div>`
       + stat('📦', d.today_orders, 'آج کے آرڈر')
       + stat('🧾', d.total_orders, 'کل آرڈر')
     : stat('📦', d.today_orders, 'آج کے آرڈر')
@@ -326,19 +328,13 @@ async function renderDashboard() {
       + stat('🚚', d.vehicles, 'گاڑیاں')
       + stat('🛣', d.routes, 'روٹس');
   $('#v-dashboard').innerHTML = `
-    <div class="hero">
-      <div class="herotxt">
-        <div class="herotitle">🏭 گلشن فیکٹری</div>
-        <div class="herosub">خوش آمدید، <b>${esc(ME.username || '')}</b></div>
-        <div class="heroclock">🕐 <span id="liveClock"></span></div>
-      </div>
-      <div id="cdBox" class="herocd"></div>
-    </div>
-    <div class="stats">${cards}</div>
+    <div class="dhead"><div class="dclock">🕐 <span id="liveClock"></span></div></div>
+    <div id="cdBox"></div>
+    <div class="dstats">${cards}</div>
     <h2 class="st">🗓 <span>آنے والی سپلائی</span></h2>
     <div class="supgrid">${cd || '<p class="note">کوئی شیڈول نہیں</p>'}</div>
     <h2 class="st">📋 <span>${d.scope === 'shop' ? 'میرے تازہ ترین آرڈرز' : 'تازہ ترین آرڈرز'}</span></h2>
-    <div class="ordlist">${ro || '<p class="note">ابھی کوئی آرڈر نہیں</p>'}</div>
+    <div class="drows">${ro || '<p class="note">ابھی کوئی آرڈر نہیں</p>'}</div>
     <div style="margin-top:14px;display:flex;gap:8px;flex-wrap:wrap">
       ${can('orders', 'full') ? '<button class="btn" onclick="showView(\'order\')">🧾 نیا آرڈر</button>' : ''}
       ${can('reports') ? '<button class="btn green" onclick="showView(\'reports\')">🖨 پروڈکشن شیٹ</button>' : ''}
@@ -456,12 +452,13 @@ async function submitOrder() {
 
 // ---------- orders list ----------
 function orderCard(o) {
+  const simg = o.shop_image ? '/images/' + o.shop_image : null;
   const items = o.items.map(i => `<div class="oitem"><span>${esc(i.product_name)}${i.category_name ? ` <small>(${esc(i.category_name)})</small>` : ''}</span><b>${esc(i.quantity)} ${esc(i.unit_name || '')}</b></div>`).join('');
   const acts = can('orders', 'full')
     ? `<div class="oacts"><button class="btn small ghost" onclick="editOrder(${o.id})">✏ ترمیم</button>
        <button class="btn small danger" onclick="delOrder(${o.id})">🗑 حذف</button></div>` : '';
   return `<div class="ocard">
-    <div class="ochead">${shopAvatar(o.shop_name)}
+    <div class="ochead">${shopAvatar(o.shop_name, simg)}
       <div class="ocmain"><div class="octitle">${esc(o.shop_name)} <span class="ordn">#${o.id}</span></div>
       <div class="ocsub">📅 ${esc(o.delivery_date || '—')}${o.route_name ? ` • 🛣 ${esc(o.route_name)}` : ''}</div></div>
     </div>
@@ -536,7 +533,9 @@ async function renderMaster(key) {
   const endpoint = conf.api || key;
   const sec = VIEW_SEC[key] || key;
   const list = await api('GET', '/api/' + endpoint);
-  const rows = list.map(r => `<tr>${conf.fields.map(([f]) => `<td>${esc(r[f])}</td>`).join('')}
+  const isShops = key === 'shops';
+  const rows = list.map(r => `<tr>${isShops ? `<td>${r.image ? `<img class="shimg" src="/images/${esc(r.image)}" alt="">` : '<span class="note">—</span>'}
+    ${can(sec, 'full') ? `<br><label class="btn small ghost" style="cursor:pointer">🖼 <input type="file" accept="image/*" style="display:none" onchange="uploadShopImage(${r.id},this)"></label>` : ''}</td>` : ''}${conf.fields.map(([f]) => `<td>${esc(r[f])}</td>`).join('')}
     <td>${r.active === 0 ? '<span class="badge off">بند</span>' : '<span class="badge">فعال</span>'}
     ${can(sec, 'full') ? ` <button class="btn small ghost" onclick="masterEdit('${key}','${endpoint}',${r.id})">✏</button>
     <button class="btn small danger" onclick="masterDel('${endpoint}',${r.id},'${key}')">🗑</button>` : ''}</td></tr>`).join('');
@@ -546,7 +545,17 @@ async function renderMaster(key) {
       <label><br><button class="btn small green" onclick="masterAdd('${key}','${endpoint}')">➕ شامل کریں</button></label>
     </div>` : '';
   $('#v-' + key).innerHTML = `<h2 class="st">${conf.title}</h2>${form}
-    <table><tr>${conf.cols.map(c => `<th>${c}</th>`).join('')}<th>حالت</th></tr>${rows || `<tr><td colspan=5>خالی</td></tr>`}</table>`;
+    <table><tr>${isShops ? '<th>تصویر</th>' : ''}${conf.cols.map(c => `<th>${c}</th>`).join('')}<th>حالت</th></tr>${rows || `<tr><td colspan=5>خالی</td></tr>`}</table>`;
+}
+async function uploadShopImage(id, input) {
+  const f = input.files && input.files[0]; if (!f) return;
+  try {
+    const fd = new FormData(); fd.append('file', f);
+    const r = await fetch('/api/shops/' + id + '/image', { method: 'POST', body: fd });
+    const j = await r.json();
+    if (!j.ok) throw new Error(j.error || 'failed');
+    renderMaster('shops');
+  } catch (e) { alert('تصویر اپ لوڈ ناکام — صرف تصویر (زیادہ سے زیادہ 5MB)'); }
 }
 async function masterAdd(key, endpoint) {
   const conf = MASTER_CONF[key]; const body = {};
@@ -671,7 +680,15 @@ function setTab(t, btn) {
 async function renderSettingsGeneral() {
   const st = await api('GET', '/api/webauthn/status').catch(() => ({ on: false }));
   const tp = themePref();
+  const myDp = ME.avatar ? `<img src="${esc(ME.avatar)}" class="bigdp" alt="">` : userAvatar(ME.username, null);
   $('#setGeneral').innerHTML = `<h3>⚙️ میری سیٹنگ</h3>
+    <div class="profsec">
+      ${myDp}
+      <div><div class="profname">${esc(ME.username)}</div>
+      <label class="btn small ghost" style="cursor:pointer">🖼 تصویر لگائیں
+        <input type="file" id="dpFile" accept="image/*" style="display:none" onchange="uploadMyAvatar(this)"></label>
+      <div class="err" id="dpErr"></div></div>
+    </div>
     <div class="formgrid">
       <label>🎨 تھیم<br><select id="gsTheme" onchange="setThemePref(this.value)">
         <option value="auto"${tp === 'auto' ? ' selected' : ''}>🖥️ خودکار (سسٹم)</option>
@@ -684,6 +701,23 @@ async function renderSettingsGeneral() {
       <label>🔑 پاس ورڈ<br><button class="btn small" onclick="document.getElementById('pwModal').style.display='flex'">تبدیل کریں</button></label>
     </div>
     <p class="note">👆 فنگر پرنٹ صرف اسی موبائل پر کام کرے گا جس پر آن کیا — لاگ اِن اسکرین پر یوزر نام لکھ کر 👆 دبائیں۔</p>`;
+}
+async function uploadMyAvatar(input) {
+  const f = input.files && input.files[0]; if (!f) return;
+  $('#dpErr').textContent = '⏳ اپ لوڈ ہو رہی ہے...';
+  try {
+    const fd = new FormData(); fd.append('file', f);
+    const r = await fetch('/api/my-avatar', { method: 'POST', body: fd });
+    const j = await r.json();
+    if (!j.ok) throw new Error(j.error || 'failed');
+    ME.avatar = j.avatar;
+    renderTopbarDp();
+    renderSettingsGeneral();
+  } catch (e) { $('#dpErr').textContent = 'ناکام — صرف تصویر (زیادہ سے زیادہ 5MB)'; }
+}
+function renderTopbarDp() {
+  const w = $('#meDpWrap'); if (!w) return;
+  w.innerHTML = ME.avatar ? `<img src="${esc(ME.avatar)}" class="medp" alt="">` : '';
 }
 // ---------- biometric login (WebAuthn: fingerprint / face) ----------
 function b64ToBuf(s) { s = String(s).replace(/-/g, '+').replace(/_/g, '/'); while (s.length % 4) s += '='; const b = atob(s); const u = new Uint8Array(b.length); for (let i = 0; i < b.length; i++) u[i] = b.charCodeAt(i); return u; }

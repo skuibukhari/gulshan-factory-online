@@ -116,6 +116,8 @@ CREATE TABLE IF NOT EXISTS webauthn_creds (
 );
 `);
 try { db.exec(`ALTER TABLE users ADD COLUMN phone TEXT DEFAULT ''`); } catch (e) {}
+try { db.exec(`ALTER TABLE users ADD COLUMN avatar TEXT DEFAULT ''`); } catch (e) {}
+try { db.exec(`ALTER TABLE shops ADD COLUMN image TEXT DEFAULT ''`); } catch (e) {}
 
 const SECTIONS = ['dashboard','orders','order_history','shops','products','categories','units','vehicles','routes','schedule','reports','users'];
 
@@ -442,6 +444,47 @@ app.get('/api/webauthn-debug', requireLogin, (req, res) => {
 const AD_DIR = path.join(DATA_DIR, 'ads');
 fs.mkdirSync(AD_DIR, { recursive: true });
 app.use('/ads', express.static(AD_DIR));
+// ---------- profile / shop images ----------
+const IMG_DIR = path.join(DATA_DIR, 'images');
+fs.mkdirSync(IMG_DIR, { recursive: true });
+app.use('/images', express.static(IMG_DIR));
+function imageUpload(prefix) {
+  if (!loadMulter()) return null;
+  return multerLib({
+    storage: multerLib.diskStorage({
+      destination: IMG_DIR,
+      filename: (req, file, cb) => cb(null, prefix + '-' + Date.now() + path.extname(file.originalname).toLowerCase()),
+    }),
+    limits: { fileSize: 5 * 1024 * 1024 },
+    fileFilter: (req, file, cb) => {
+      if (/^image\//.test(file.mimetype)) cb(null, true);
+      else cb(new Error('bad_type'));
+    },
+  }).single('file');
+}
+app.post('/api/my-avatar', requireLogin, (req, res) => {
+  const up = imageUpload('av');
+  if (!up) return res.status(500).json({ error: 'upload_not_ready' });
+  up(req, res, (err) => {
+    if (err || !req.file) return res.status(400).json({ error: 'bad_file' });
+    const old = (db.prepare('SELECT avatar FROM users WHERE id=?').get(req.user.id) || {}).avatar;
+    if (old) fs.rmSync(path.join(IMG_DIR, old), { force: true });
+    db.prepare('UPDATE users SET avatar=? WHERE id=?').run(req.file.filename, req.user.id);
+    res.json({ ok: true, avatar: '/images/' + req.file.filename });
+  });
+});
+app.post('/api/shops/:id/image', requireLogin, (req, res) => {
+  if (!can(req.user, 'shops', 'full')) return res.status(403).json({ error: 'forbidden' });
+  const up = imageUpload('shop');
+  if (!up) return res.status(500).json({ error: 'upload_not_ready' });
+  up(req, res, (err) => {
+    if (err || !req.file) return res.status(400).json({ error: 'bad_file' });
+    const old = (db.prepare('SELECT image FROM shops WHERE id=?').get(req.params.id) || {}).image;
+    if (old) fs.rmSync(path.join(IMG_DIR, old), { force: true });
+    db.prepare('UPDATE shops SET image=? WHERE id=?').run(req.file.filename, req.params.id);
+    res.json({ ok: true, image: '/images/' + req.file.filename });
+  });
+});
 // ---------- dependencies: self-install any missing npm package in background (no SSH needed) ----------
 let installRunning = false;
 function ensureDeps() {
@@ -539,8 +582,12 @@ app.delete('/api/ads', requireLogin, (req, res) => {
 });
 app.post('/api/logout', (req, res) => req.session.destroy(() => res.json({ ok: true })));
 app.get('/api/me', requireLogin, (req, res) => {
-  const shop = req.user.shop_id ? db.prepare('SELECT id, name FROM shops WHERE id=?').get(req.user.shop_id) : null;
-  res.json({ id: req.user.id, username: req.user.username, role: req.user.role, shop_id: req.user.shop_id, shop_name: shop ? shop.name : null, permissions: req.user.role === 'super_admin' ? Object.fromEntries(SECTIONS.map(s => [s, 'full'])) : getPermissions(req.user.id) });
+  const shop = req.user.shop_id ? db.prepare('SELECT id, name, image FROM shops WHERE id=?').get(req.user.shop_id) : null;
+  const me = db.prepare('SELECT avatar FROM users WHERE id=?').get(req.user.id) || {};
+  res.json({ id: req.user.id, username: req.user.username, role: req.user.role, shop_id: req.user.shop_id,
+    shop_name: shop ? shop.name : null, shop_image: shop && shop.image ? '/images/' + shop.image : null,
+    avatar: me.avatar ? '/images/' + me.avatar : null,
+    permissions: req.user.role === 'super_admin' ? Object.fromEntries(SECTIONS.map(s => [s, 'full'])) : getPermissions(req.user.id) });
 });
 app.get('/api/vapid-public-key', (req, res) => {
   res.json({ publicKey: appSetting('vapid_public') });
@@ -738,7 +785,7 @@ function cutoffPassed(route) {
 // ---------- Orders ----------
 app.get('/api/orders', requireLogin, requireSection('orders', 'view'), (req, res) => {
   const { date, route_id } = req.query;
-  let sql = `SELECT o.*, s.name AS shop_name, r.name AS route_name FROM orders o
+  let sql = `SELECT o.*, s.name AS shop_name, s.image AS shop_image, r.name AS route_name FROM orders o
     JOIN shops s ON s.id=o.shop_id LEFT JOIN routes r ON r.id=o.route_id WHERE 1=1`;
   const args = [];
   const own = scopedShopId(req);
@@ -854,7 +901,8 @@ app.get('/api/dashboard', requireLogin, requireSection('dashboard'), (req, res) 
     vehicles: own ? undefined : db.prepare('SELECT COUNT(*) c FROM vehicles WHERE active=1').get().c,
     routes: own ? undefined : db.prepare('SELECT COUNT(*) c FROM routes WHERE active=1').get().c,
     products: own ? undefined : db.prepare('SELECT COUNT(*) c FROM products WHERE active=1').get().c,
-    recent_orders: db.prepare(`SELECT o.id, o.created_at, o.delivery_date, s.name AS shop_name, u.username AS created_by,
+    recent_orders: db.prepare(`SELECT o.id, o.created_at, o.delivery_date, s.name AS shop_name,
+      s.image AS shop_image, u.username AS created_by, u.avatar AS user_avatar,
       (SELECT COUNT(*) FROM order_items WHERE order_id=o.id) AS items
       FROM orders o JOIN shops s ON s.id=o.shop_id LEFT JOIN users u ON u.id=o.created_by WHERE 1=1 ${sf} ORDER BY o.id DESC LIMIT 10`).all(),
     upcoming,
