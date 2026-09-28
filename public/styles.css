@@ -2,12 +2,13 @@
 :root{
   --orange:#e8721c; --orange-d:#c85f12; --black:#191919; --green:#2e7d32; --green-d:#1f5c22;
   --cream:#fff8ef; --card:#ffffff; --muted:#6b6b6b; --border:#e8dcc8; --danger:#c0392b;
+  --ink:#191919;
 }
 *{box-sizing:border-box}
 html,body{margin:0;padding:0}
 body{
   font-family:'Noto Nastaliq Urdu','Jameel Noori Nastaleeq',serif;
-  background:var(--cream); color:var(--black); direction:rtl; line-height:2.1;
+  background:var(--cream); color:var(--ink); direction:rtl; line-height:2.1;
 }
 a{color:var(--green)}
 button{font-family:inherit;cursor:pointer}
@@ -40,7 +41,7 @@ button{font-family:inherit;cursor:pointer}
 .btn:hover{background:var(--orange-d)}
 .btn.green{background:var(--green)} .btn.green:hover{background:var(--green-d)}
 .btn.dark{background:var(--black)} .btn.small{padding:5px 14px;font-size:14px}
-.btn.ghost{background:#f1ece1;color:var(--black)}
+.btn.ghost{background:#f1ece1;color:var(--ink)}
 .btn.danger{background:var(--danger)}
 .err{color:var(--danger);min-height:28px}
 /* ---------- app shell ---------- */
@@ -61,7 +62,7 @@ button{font-family:inherit;cursor:pointer}
 .sidemenu .mh img{height:40px}
 .sidemenu nav{padding:10px;overflow:auto;flex:1}
 .sidemenu nav button{display:block;width:100%;text-align:right;background:none;border:none;padding:10px 12px;
-  font-size:17px;border-radius:8px;color:var(--black)}
+  font-size:17px;border-radius:8px;color:var(--ink)}
 .sidemenu nav button:hover{background:var(--cream);color:var(--orange-d)}
 .sidemenu nav button.active{background:var(--orange);color:#fff}
 /* settings slide panel */
@@ -81,7 +82,7 @@ main{padding:16px;max-width:1100px;margin:0 auto}
 .card{background:var(--card);border:1px solid var(--border);border-radius:14px;padding:14px;text-align:center;box-shadow:0 2px 8px rgba(0,0,0,.05)}
 .card .n{font-size:30px;font-weight:700;color:var(--orange)}
 .card .l{color:var(--muted);font-size:15px}
-h2.st{color:var(--black);border-right:5px solid var(--orange);padding-right:10px;font-size:23px}
+h2.st{color:var(--ink);border-right:5px solid var(--orange);padding-right:10px;font-size:23px}
 h2.st span{color:var(--green)}
 table{width:100%;border-collapse:collapse;background:#fff;border-radius:10px;overflow:hidden;font-size:15px;margin:10px 0}
 th{background:var(--black);color:#fff;padding:8px} td{border-bottom:1px solid #eee;padding:7px 10px}
@@ -106,3 +107,22 @@ input:focus,select:focus{border-color:var(--orange);outline:none}
 .note{font-size:14px;color:var(--muted)}
 .kbd{background:#fff;border:1px solid var(--border);border-radius:8px;padding:10px 14px;margin:8px 0}
 @media(max-width:600px){ .topbar .t small{display:none} main{padding:10px} }
+
+/* ---------- dark mode ---------- */
+[data-theme="dark"]{
+  color-scheme:dark;
+  --ink:#f1ebdf; --cream:#161310; --card:#211c16; --muted:#a79b84; --border:#3b332a;
+}
+[data-theme="dark"] .sidemenu,[data-theme="dark"] .setpanel,[data-theme="dark"] table,
+[data-theme="dark"] .formgrid,[data-theme="dark"] .prow,[data-theme="dark"] .permgrid,
+[data-theme="dark"] .kbd{background:var(--card)}
+[data-theme="dark"] td{border-bottom-color:var(--border)}
+[data-theme="dark"] tr:nth-child(even) td{background:#26211a}
+[data-theme="dark"] input,[data-theme="dark"] select,[data-theme="dark"] textarea{background:#2b251d;color:var(--ink);border-color:var(--border)}
+[data-theme="dark"] .btn.ghost{background:#3a3226}
+[data-theme="dark"] .tabs button{background:#2b251d;color:var(--ink)}
+[data-theme="dark"] .sidemenu nav button:hover{background:#2b251d}
+[data-theme="dark"] .auth-card{background:#221d16}
+[data-theme="dark"] .auth-card input{background:#2b251d}
+[data-theme="dark"] .topbar{background:#0e0c0a}
+[data-theme="dark"] a{color:#8fce91}

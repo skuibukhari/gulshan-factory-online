@@ -3,6 +3,29 @@
 if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').catch(() => {});
 const $ = s => document.querySelector(s);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+
+// ---------- theme: auto (system) / light / dark ----------
+const THEME_META = { auto: ['🖥️', 'تھیم: خودکار (سسٹم)'], light: ['☀️', 'تھیم: لائٹ'], dark: ['🌙', 'تھیم: ڈارک'] };
+function themePref() { try { return localStorage.getItem('gf-theme') || 'auto'; } catch (e) { return 'auto'; } }
+function effectiveTheme() {
+  const p = themePref();
+  if (p !== 'auto') return p;
+  try { return matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'; } catch (e) { return 'light'; }
+}
+function applyTheme() {
+  if (effectiveTheme() === 'dark') document.documentElement.setAttribute('data-theme', 'dark');
+  else document.documentElement.removeAttribute('data-theme');
+  const b = $('#themeBtn'), m = THEME_META[themePref()] || THEME_META.auto;
+  if (b) { b.textContent = m[0]; b.title = m[1]; }
+}
+function cycleTheme() {
+  const order = ['auto', 'light', 'dark'];
+  const next = order[(order.indexOf(themePref()) + 1) % order.length];
+  try { localStorage.setItem('gf-theme', next); } catch (e) {}
+  applyTheme();
+}
+try { matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => { if (themePref() === 'auto') applyTheme(); }); } catch (e) {}
+applyTheme();
 let ME = null, PERM = {};
 let CACHE = { cats: [], units: [], products: [], vehicles: [], routes: [], shops: [] };
 let countdownTimer = null;
