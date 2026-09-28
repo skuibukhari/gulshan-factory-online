@@ -136,6 +136,12 @@ function appSetting(k, v) {
   webpush.setVapidDetails('mailto:gulshan-factory@local', appSetting('vapid_public'), appSetting('vapid_private'));
 })();
 // Send a push to every subscribed staff member (super_admin + factory), except the order creator.
+function pushTo(subs, payload) {
+  for (const s of subs) {
+    webpush.sendNotification({ endpoint: s.endpoint, keys: { p256dh: s.p256dh, auth: s.auth } }, payload)
+      .catch(e => { if (e.statusCode === 404 || e.statusCode === 410) db.prepare('DELETE FROM push_subscriptions WHERE id=?').run(s.id); });
+  }
+}
 function notifyNewOrder(orderId, shopId, deliveryDate, itemCount, creatorId) {
   const shop = db.prepare('SELECT name FROM shops WHERE id=?').get(shopId);
   const payload = JSON.stringify({
@@ -145,10 +151,24 @@ function notifyNewOrder(orderId, shopId, deliveryDate, itemCount, creatorId) {
   });
   const subs = db.prepare(`SELECT ps.* FROM push_subscriptions ps JOIN users u ON u.id=ps.user_id
     WHERE u.active=1 AND u.role IN ('super_admin','factory') AND u.id != ?`).all(creatorId || 0);
-  for (const s of subs) {
-    webpush.sendNotification({ endpoint: s.endpoint, keys: { p256dh: s.p256dh, auth: s.auth } }, payload)
-      .catch(e => { if (e.statusCode === 404 || e.statusCode === 410) db.prepare('DELETE FROM push_subscriptions WHERE id=?').run(s.id); });
+  pushTo(subs, payload);
+}
+// Login alerts -> only super_admins. Failed attempts throttled: max 1 alert per username per 10 min.
+const lastFailAlert = {};
+function notifyLogin(username, ok, excludeUserId) {
+  if (!ok) {
+    const now = Date.now();
+    if (lastFailAlert[username] && now - lastFailAlert[username] < 10 * 60 * 1000) return;
+    lastFailAlert[username] = now;
   }
+  const payload = JSON.stringify({
+    title: ok ? '🔑 لاگ اِن الرٹ' : '⚠️ ناکام لاگ اِن کوشش',
+    body: ok ? `${username} نے لاگ اِن کیا` : `${username} — غلط یوزر نیم یا پاسورڈ`,
+    url: '/',
+  });
+  const subs = db.prepare(`SELECT ps.* FROM push_subscriptions ps JOIN users u ON u.id=ps.user_id
+    WHERE u.active=1 AND u.role='super_admin' AND u.id != ?`).all(excludeUserId || 0);
+  pushTo(subs, payload);
 }
 
 // ---------- App ----------
@@ -236,9 +256,14 @@ app.post('/api/setup', (req, res) => {
 });
 app.post('/api/login', (req, res) => {
   const { username, password } = req.body || {};
-  const u = db.prepare('SELECT * FROM users WHERE username=? AND active=1').get(String(username || '').trim());
-  if (!u || !bcrypt.compareSync(String(password || ''), u.password_hash)) return res.status(401).json({ error: 'bad_credentials' });
+  const uname = String(username || '').trim();
+  const u = db.prepare('SELECT * FROM users WHERE username=? AND active=1').get(uname);
+  if (!u || !bcrypt.compareSync(String(password || ''), u.password_hash)) {
+    notifyLogin(uname || 'نامعلوم', false, 0);
+    return res.status(401).json({ error: 'bad_credentials' });
+  }
   req.session.userId = u.id;
+  notifyLogin(u.username, true, u.id);
   res.json({ ok: true });
 });
 app.post('/api/logout', (req, res) => req.session.destroy(() => res.json({ ok: true })));
