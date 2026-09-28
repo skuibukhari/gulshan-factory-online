@@ -98,7 +98,24 @@ CREATE TABLE IF NOT EXISTS app_settings (
   key TEXT PRIMARY KEY,
   value TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS otps (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  code_hash TEXT NOT NULL,
+  expires_at INTEGER NOT NULL,
+  used INTEGER NOT NULL DEFAULT 0,
+  created_at INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS webauthn_creds (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  cred_id TEXT NOT NULL UNIQUE,
+  public_key TEXT NOT NULL,
+  counter INTEGER NOT NULL DEFAULT 0,
+  created_at INTEGER NOT NULL
+);
 `);
+try { db.exec(`ALTER TABLE users ADD COLUMN phone TEXT DEFAULT ''`); } catch (e) {}
 
 const SECTIONS = ['dashboard','orders','order_history','shops','products','categories','units','vehicles','routes','schedule','reports','users'];
 
@@ -175,6 +192,14 @@ function notifyLogin(username, ok, excludeUserId) {
   const subs = db.prepare(`SELECT ps.* FROM push_subscriptions ps JOIN users u ON u.id=ps.user_id
     WHERE u.active=1 AND u.role='super_admin' AND u.id != ?`).all(excludeUserId || 0);
   pushTo(subs, payload);
+}
+
+// Push to one specific user (all their subscribed devices).
+function pushToUser(userId, payload) {
+  const subs = db.prepare(`SELECT ps.* FROM push_subscriptions ps JOIN users u ON u.id=ps.user_id
+    WHERE u.active=1 AND u.id=?`).all(userId);
+  pushTo(subs, payload);
+  return subs.length;
 }
 
 // ---------- App ----------
@@ -286,29 +311,166 @@ app.post('/api/change-password', requireLogin, (req, res) => {
   db.prepare('UPDATE users SET password_hash=? WHERE id=?').run(bcrypt.hashSync(String(next), 10), u.id);
   res.json({ ok: true });
 });
+// ---------- OTP password reset (code goes to the user's registered mobile via push) ----------
+app.post('/api/forgot-password', (req, res) => {
+  const { username } = req.body || {};
+  const u = db.prepare('SELECT id, active FROM users WHERE username=?').get(String(username || '').trim());
+  if (!u || !u.active) return res.json({ ok: true, sent: false }); // don't reveal
+  const recent = db.prepare('SELECT COUNT(*) c FROM otps WHERE user_id=? AND created_at>?').get(u.id, Date.now() - 15 * 60 * 1000).c;
+  if (recent >= 3) return res.status(429).json({ error: 'too_many' });
+  const code = String(Math.floor(100000 + Math.random() * 900000));
+  db.prepare('INSERT INTO otps (user_id, code_hash, expires_at, used, created_at) VALUES (?,?,?,?,?)')
+    .run(u.id, bcrypt.hashSync(code, 10), Date.now() + 10 * 60 * 1000, 0, Date.now());
+  const n = pushToUser(u.id, JSON.stringify({
+    title: '🔑 پاس ورڈ ری سیٹ — گلشن فیکٹری',
+    body: `آپ کا OTP: ${code} — 10 منٹ میں استعمال کریں`,
+    url: '/',
+  }));
+  res.json({ ok: true, sent: n > 0 });
+});
+app.post('/api/reset-password', (req, res) => {
+  const { username, code, password } = req.body || {};
+  if (!password || String(password).length < 6) return res.status(400).json({ error: 'weak' });
+  const u = db.prepare('SELECT id, active FROM users WHERE username=?').get(String(username || '').trim());
+  if (!u || !u.active) return res.status(400).json({ error: 'bad_code' });
+  const otp = db.prepare('SELECT * FROM otps WHERE user_id=? AND used=0 ORDER BY id DESC LIMIT 1').get(u.id);
+  if (!otp || otp.expires_at < Date.now() || !bcrypt.compareSync(String(code || ''), otp.code_hash))
+    return res.status(400).json({ error: 'bad_code' });
+  db.prepare('UPDATE otps SET used=1 WHERE id=?').run(otp.id);
+  db.prepare('UPDATE users SET password_hash=? WHERE id=?').run(bcrypt.hashSync(String(password), 10), u.id);
+  res.json({ ok: true });
+});
+// ---------- WebAuthn biometric login (fingerprint / face) ----------
+app.post('/api/webauthn/register-start', requireLogin, async (req, res) => {
+  const wbn = loadWbn();
+  if (!wbn) return res.status(500).json({ error: 'not_installed' });
+  try {
+    const existing = db.prepare('SELECT cred_id FROM webauthn_creds WHERE user_id=?').all(req.user.id);
+    const opts = await wbn.generateRegistrationOptions({
+      rpName: 'Gulshan Factory', rpID: rpIDOf(req),
+      userID: new TextEncoder().encode('gf-' + req.user.id),
+      userName: req.user.username,
+      attestationType: 'none',
+      authenticatorSelection: { authenticatorAttachment: 'platform', userVerification: 'preferred' },
+      excludeCredentials: existing.map(r => ({ id: r.cred_id })),
+    });
+    req.session.wbnChallenge = opts.challenge;
+    res.json({ options: opts });
+  } catch (e) { res.status(500).json({ error: 'failed' }); }
+});
+app.post('/api/webauthn/register-finish', requireLogin, async (req, res) => {
+  const wbn = loadWbn();
+  if (!wbn) return res.status(500).json({ error: 'not_installed' });
+  try {
+    const { verified, registrationInfo } = await wbn.verifyRegistrationResponse({
+      response: req.body.cred,
+      expectedChallenge: req.session.wbnChallenge,
+      expectedOrigin: originOf(req),
+      expectedRPID: rpIDOf(req),
+    });
+    if (!verified || !registrationInfo) return res.status(400).json({ error: 'verify_failed' });
+    const ncred = registrationInfo.credential || {};
+    db.prepare(`INSERT OR REPLACE INTO webauthn_creds (user_id, cred_id, public_key, counter, created_at)
+      VALUES (?,?,?,?,?)`).run(req.user.id, ncred.id,
+      b64uE(ncred.publicKey), ncred.counter || 0, Date.now());
+    delete req.session.wbnChallenge;
+    res.json({ ok: true });
+  } catch (e) { res.status(400).json({ error: 'bad_request' }); }
+});
+app.post('/api/webauthn/login-start', async (req, res) => {
+  const wbn = loadWbn();
+  if (!wbn) return res.status(500).json({ error: 'not_installed' });
+  const u = db.prepare('SELECT id, active FROM users WHERE username=?').get(String((req.body || {}).username || '').trim());
+  if (!u || !u.active) return res.status(400).json({ error: 'no_bio' });
+  const creds = db.prepare('SELECT cred_id FROM webauthn_creds WHERE user_id=?').all(u.id);
+  if (!creds.length) return res.status(400).json({ error: 'no_bio' });
+  try {
+    const opts = await wbn.generateAuthenticationOptions({
+      rpID: rpIDOf(req),
+      allowCredentials: creds.map(c => ({ id: c.cred_id })),
+      userVerification: 'preferred',
+    });
+    req.session.wbnChallenge = opts.challenge;
+    req.session.wbnUser = u.id;
+    res.json({ options: opts });
+  } catch (e) { res.status(500).json({ error: 'failed' }); }
+});
+app.post('/api/webauthn/login-finish', async (req, res) => {
+  const wbn = loadWbn();
+  if (!wbn) return res.status(500).json({ error: 'not_installed' });
+  try {
+    const { username, asrt } = req.body || {};
+    const u = db.prepare('SELECT * FROM users WHERE username=?').get(String(username || '').trim());
+    const cred = u && asrt && db.prepare('SELECT * FROM webauthn_creds WHERE user_id=? AND cred_id=?').get(u.id, asrt.id);
+    if (!u || !u.active || !cred || req.session.wbnUser !== u.id || !req.session.wbnChallenge)
+      return res.status(400).json({ error: 'bad_request' });
+    const { verified, authenticationInfo } = await wbn.verifyAuthenticationResponse({
+      response: asrt,
+      expectedChallenge: req.session.wbnChallenge,
+      expectedOrigin: originOf(req),
+      expectedRPID: rpIDOf(req),
+      credential: { id: cred.cred_id, publicKey: b64uD(cred.public_key), counter: cred.counter },
+    });
+    if (!verified) return res.status(400).json({ error: 'verify_failed' });
+    db.prepare('UPDATE webauthn_creds SET counter=? WHERE id=?').run(authenticationInfo.newCounter, cred.id);
+    req.session.userId = u.id;
+    delete req.session.wbnChallenge; delete req.session.wbnUser;
+    res.json({ ok: true });
+  } catch (e) { res.status(400).json({ error: 'bad_request' }); }
+});
+app.get('/api/webauthn/status', requireLogin, (req, res) => {
+  const n = db.prepare('SELECT COUNT(*) c FROM webauthn_creds WHERE user_id=?').get(req.user.id).c;
+  res.json({ on: n > 0 });
+});
+app.delete('/api/webauthn', requireLogin, (req, res) => {
+  db.prepare('DELETE FROM webauthn_creds WHERE user_id=?').run(req.user.id);
+  res.json({ ok: true });
+});
 
 // ---------- Splash ads (super_admin uploads image/video shown at app start) ----------
 const AD_DIR = path.join(DATA_DIR, 'ads');
 fs.mkdirSync(AD_DIR, { recursive: true });
 app.use('/ads', express.static(AD_DIR));
-let multerLib = null, uploadHandler = null, installRunning = false;
+// ---------- dependencies: self-install any missing npm package in background (no SSH needed) ----------
+let installRunning = false;
+function ensureDeps() {
+  let missing = [];
+  try {
+    const deps = Object.keys(require('./package.json').dependencies || {});
+    missing = deps.filter(d => { try { require.resolve(d); return false; } catch (e) { return true; } });
+  } catch (e) {}
+  if (!missing.length || installRunning) return false;
+  installRunning = true;
+  console.warn('[warn] missing deps: ' + missing.join(',') + ' — installing in background...');
+  require('child_process').execFile('npm', ['install', '--omit=dev', '--no-audit', '--no-fund'], { cwd: __dirname, timeout: 300000 }, (err) => {
+    installRunning = false;
+    if (err) console.warn('[warn] auto npm install failed:', String(err && err.message || err).slice(0, 200));
+    else console.log('[info] deps installed OK');
+  });
+  return true;
+}
+ensureDeps();
+let multerLib = null, uploadHandler = null;
 function loadMulter() {
   if (multerLib) return true;
   try { multerLib = require('multer'); return true; }
-  catch (e) {
-    if (!installRunning) {
-      installRunning = true;
-      console.warn('[warn] multer missing — installing in background, ad uploads paused meanwhile...');
-      require('child_process').execFile('npm', ['install', '--omit=dev', '--no-audit', '--no-fund'], { cwd: __dirname, timeout: 300000 }, (err) => {
-        installRunning = false;
-        if (err) { console.warn('[warn] auto npm install failed:', String(err && err.message || err).slice(0, 200)); return; }
-        try { multerLib = require('multer'); console.log('[info] multer installed OK'); }
-        catch (e2) { console.warn('[warn] multer still missing after install'); }
-      });
-    }
-    return false;
-  }
+  catch (e) { ensureDeps(); return false; }
 }
+let wbnLib = null;
+function loadWbn() {
+  if (wbnLib) return wbnLib;
+  try { wbnLib = require('@simplewebauthn/server'); }
+  catch (e) { ensureDeps(); }
+  return wbnLib;
+}
+// base64url helpers
+const b64uE = (buf) => Buffer.from(buf).toString('base64url');
+const b64uD = (s) => Buffer.from(String(s), 'base64url');
+function originOf(req) {
+  const proto = String(req.get('x-forwarded-proto') || req.protocol).split(',')[0].trim();
+  return proto + '://' + req.get('host');
+}
+function rpIDOf(req) { return String(req.get('host')).split(':')[0]; }
 function getUpload() {
   if (!loadMulter()) return null;
   if (!uploadHandler) uploadHandler = multerLib({
@@ -488,27 +650,30 @@ app.delete('/api/products/:id', requireLogin, requireSection('products', 'full')
 
 // ---------- Users & permissions (super admin) ----------
 app.get('/api/users', requireLogin, isAdmin, (req, res) => {
-  const users = db.prepare(`SELECT u.id, u.username, u.role, u.shop_id, u.active, u.created_at, s.name AS shop_name
+  const users = db.prepare(`SELECT u.id, u.username, u.role, u.shop_id, u.active, u.created_at, u.phone, s.name AS shop_name
     FROM users u LEFT JOIN shops s ON s.id=u.shop_id ORDER BY u.id`).all();
   res.json(users.map(u => ({ ...u, permissions: u.role === 'super_admin' ? Object.fromEntries(SECTIONS.map(s => [s, 'full'])) : getPermissions(u.id) })));
 });
+// Public app version — clients detect updates against this.
+app.get('/api/version', (req, res) => res.json({ version: require('./package.json').version }));
 app.post('/api/users', requireLogin, isAdmin, (req, res) => {
-  const { username, password, role, shop_id } = req.body || {};
+  const { username, password, role, shop_id, phone } = req.body || {};
   if (!username || !password || !['super_admin', 'factory', 'shop'].includes(role)) return res.status(400).json({ error: 'bad_input' });
   try {
-    const r = db.prepare('INSERT INTO users (username, password_hash, role, shop_id) VALUES (?,?,?,?)')
-      .run(String(username).trim(), bcrypt.hashSync(String(password), 10), role, shop_id || null);
+    const r = db.prepare('INSERT INTO users (username, password_hash, role, shop_id, phone) VALUES (?,?,?,?,?)')
+      .run(String(username).trim(), bcrypt.hashSync(String(password), 10), role, shop_id || null, String(phone || ''));
     if (role !== 'super_admin') seedPermissions(r.lastInsertRowid, role);
     res.json({ ok: true, id: r.lastInsertRowid });
   } catch (e) { res.status(400).json({ error: 'username_taken' }); }
 });
 app.put('/api/users/:id', requireLogin, isAdmin, (req, res) => {
-  const { role, shop_id, active, password } = req.body || {};
+  const { role, shop_id, active, password, phone } = req.body || {};
   const u = db.prepare('SELECT * FROM users WHERE id=?').get(req.params.id);
   if (!u) return res.status(404).json({ error: 'not_found' });
   if (role) db.prepare('UPDATE users SET role=?, shop_id=? WHERE id=?').run(role, shop_id || null, u.id);
   if (active !== undefined) db.prepare('UPDATE users SET active=? WHERE id=?').run(active ? 1 : 0, u.id);
   if (password) db.prepare('UPDATE users SET password_hash=? WHERE id=?').run(bcrypt.hashSync(String(password), 10), u.id);
+  if (phone !== undefined) db.prepare('UPDATE users SET phone=? WHERE id=?').run(String(phone), u.id);
   res.json({ ok: true });
 });
 app.delete('/api/users/:id', requireLogin, isAdmin, (req, res) => {
