@@ -83,17 +83,33 @@ function showLogin() {
   try { const lu = localStorage.getItem('gf-lastuser'); if (lu && !$('#liUser').value) $('#liUser').value = lu; } catch (e) {}
   showAuth('loginView');
 }
-function showForgot() { $('#fpErr').textContent = ''; showAuth('forgotView'); }
+function showForgot() { $('#fpErr').textContent = ''; const sb = $('#fpSubBox'); if (sb) sb.style.display = 'none'; showAuth('forgotView'); }
 let fpUsername = '';
 async function doForgot() {
   const u = $('#fpUser').value.trim(), err = $('#fpErr'); err.textContent = '';
   if (!u) { err.textContent = 'یوزر نام لکھیں'; return; }
   try {
     const r = await api('POST', '/api/forgot-password', { username: u });
-    if (!r.sent) { err.textContent = 'اس یوزر کے موبائل پر نوٹیفکیشن رجسٹرڈ نہیں — سپر ایڈمن سے رابطہ کریں'; return; }
+    if (!r.sent) { $('#fpSubBox').style.display = 'block'; err.textContent = 'پہلے نیچے سے اس موبائل پر اطلاع آن کریں'; return; }
   } catch (e) { err.textContent = e.message === 'too_many' ? 'زیادہ کوششیں — 15 منٹ بعد دوبارہ کوشش کریں' : 'خرابی: ' + e.message; return; }
   fpUsername = u; $('#otpErr').textContent = ''; $('#otpCode').value = ''; $('#otpPass').value = ''; $('#otpPass2').value = '';
   showAuth('otpView');
+}
+async function doForgotSubscribe() {
+  const u = $('#fpUser').value.trim(), phone = $('#fpPhone').value.trim(), err = $('#fpSubErr');
+  err.textContent = '';
+  if (!u) { err.textContent = 'اوپر یوزر نام لکھیں'; return; }
+  if (!phone) { err.textContent = 'رجسٹرڈ موبائل نمبر لکھیں'; return; }
+  try {
+    err.textContent = '⏳ اجازت طلب کی جا رہی ہے...';
+    const sub = await getPushSubscription();
+    if (!sub) { err.textContent = 'نوٹیفکیشن کی اجازت نہیں ملی — براؤزر سیٹنگ چیک کریں'; return; }
+    await api('POST', '/api/push-subscribe-forgot', { username: u, phone, subscription: sub.toJSON() });
+    err.textContent = '';
+    alert('اطلاع آن ہو گئی ✅ — اب "OTP بھیجیں" دبائیں');
+  } catch (e) {
+    err.textContent = e.message === 'phone_mismatch' ? 'موبائل نمبر رجسٹرڈ نمبر سے نہیں ملتا' : e.message === 'too_many' ? 'زیادہ کوششیں — بعد میں کوشش کریں' : 'خرابی: ' + e.message;
+  }
 }
 async function doReset() {
   const code = $('#otpCode').value.trim(), p1 = $('#otpPass').value, p2 = $('#otpPass2').value;
@@ -152,19 +168,24 @@ function urlB64ToKey(b64) {
   for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
   return out;
 }
+async function getPushSubscription() {
+  if (!('serviceWorker' in navigator) || !('PushManager' in window) || !('Notification' in window)) return null;
+  if (Notification.permission === 'denied') return null;
+  if (Notification.permission !== 'granted') { await Notification.requestPermission(); }
+  if (Notification.permission !== 'granted') return null;
+  const reg = await navigator.serviceWorker.ready;
+  let sub = await reg.pushManager.getSubscription();
+  if (!sub) {
+    const { publicKey } = await api('GET', '/api/vapid-public-key');
+    sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: urlB64ToKey(publicKey) });
+  }
+  return sub;
+}
 async function setupPush() {
   try {
-    if (!('serviceWorker' in navigator) || !('PushManager' in window) || !('Notification' in window)) return false;
     // all roles subscribe: staff get order/login alerts, everyone gets route/supply updates
-    if (Notification.permission === 'denied') return;
-    if (Notification.permission !== 'granted') { await Notification.requestPermission(); }
-    if (Notification.permission !== 'granted') return;
-    const reg = await navigator.serviceWorker.ready;
-    let sub = await reg.pushManager.getSubscription();
-    if (!sub) {
-      const { publicKey } = await api('GET', '/api/vapid-public-key');
-      sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: urlB64ToKey(publicKey) });
-    }
+    const sub = await getPushSubscription();
+    if (!sub) return false;
     await api('POST', '/api/push-subscribe', { subscription: sub.toJSON() });
     return true;
   } catch (e) { /* push optional — never break the app */ return false; }

@@ -542,8 +542,29 @@ app.get('/api/me', requireLogin, (req, res) => {
   const shop = req.user.shop_id ? db.prepare('SELECT id, name FROM shops WHERE id=?').get(req.user.shop_id) : null;
   res.json({ id: req.user.id, username: req.user.username, role: req.user.role, shop_id: req.user.shop_id, shop_name: shop ? shop.name : null, permissions: req.user.role === 'super_admin' ? Object.fromEntries(SECTIONS.map(s => [s, 'full'])) : getPermissions(req.user.id) });
 });
-app.get('/api/vapid-public-key', requireLogin, (req, res) => {
+app.get('/api/vapid-public-key', (req, res) => {
   res.json({ publicKey: appSetting('vapid_public') });
+});
+// Forgot-password device subscription (no login): user proves identity with their
+// registered phone number, then this mobile can receive the OTP push.
+const forgotSubHits = new Map();
+app.post('/api/push-subscribe-forgot', (req, res) => {
+  const now = Date.now();
+  const hits = (forgotSubHits.get(req.ip) || []).filter(t => now - t < 3600000);
+  if (hits.length >= 8) return res.status(429).json({ error: 'too_many' });
+  hits.push(now); forgotSubHits.set(req.ip, hits);
+  const { username, phone, subscription } = req.body || {};
+  const s = subscription || {};
+  if (!s.endpoint || !s.keys || !s.keys.p256dh || !s.keys.auth) return res.status(400).json({ error: 'bad_input' });
+  const u = db.prepare('SELECT id, active, phone FROM users WHERE username=?').get(String(username || '').trim());
+  if (!u || !u.active) return res.json({ ok: true }); // don't reveal
+  const regPhone = String(u.phone || '').replace(/\D/g, '');
+  const givenPhone = String(phone || '').replace(/\D/g, '');
+  if (!regPhone || !givenPhone || regPhone.slice(-10) !== givenPhone.slice(-10))
+    return res.status(400).json({ error: 'phone_mismatch' });
+  db.prepare(`INSERT OR REPLACE INTO push_subscriptions (user_id, endpoint, p256dh, auth) VALUES (?,?,?,?)`)
+    .run(u.id, s.endpoint, s.keys.p256dh, s.keys.auth);
+  res.json({ ok: true });
 });
 app.post('/api/push-subscribe', requireLogin, (req, res) => {
   const s = (req.body || {}).subscription || req.body || {};

@@ -59,6 +59,12 @@
     <input id="fpUser" placeholder="یوزر نام" autocomplete="username">
     <div class="err" id="fpErr"></div>
     <button class="btn" onclick="doForgot()">OTP بھیجیں</button>
+    <div id="fpSubBox" style="display:none;margin-top:12px;padding-top:12px;border-top:1px dashed #ccc">
+      <p class="note">اس موبائل پر اطلاع رجسٹرڈ نہیں — اپنا <b>رجسٹرڈ موبائل نمبر</b> لکھیں اور اطلاع آن کریں، پھر دوبارہ OTP بھیجیں</p>
+      <input id="fpPhone" placeholder="رجسٹرڈ موبائل نمبر" inputmode="tel" dir="ltr" style="text-align:center">
+      <div class="err" id="fpSubErr"></div>
+      <button class="btn ghost" onclick="doForgotSubscribe()">📲 اس موبائل پر اطلاع آن کریں</button>
+    </div>
     <div style="margin-top:10px"><a href="#" onclick="showLogin();return false" style="font-size:14px">واپس لاگ اِن پر</a></div>
   </div>
 </div>
