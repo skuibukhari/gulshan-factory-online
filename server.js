@@ -892,15 +892,25 @@ app.get('/api/dashboard', requireLogin, requireSection('dashboard'), (req, res) 
         WHERE r.active=1 ORDER BY r.supply_date LIMIT 5`).all(own)
     : db.prepare(`SELECT r.*, v.name AS vehicle_name FROM routes r LEFT JOIN vehicles v ON v.id=r.vehicle_id
         WHERE r.active=1 ORDER BY r.supply_date LIMIT 5`).all();
+  const dailyRows = db.prepare(`SELECT date(created_at, '+5 hours') d, COUNT(*) c FROM orders
+    WHERE date(created_at, '+5 hours') >= date('now', '+5 hours', '-6 days') ${sf} GROUP BY d`).all();
+  const daily = [];
+  for (let i = 6; i >= 0; i--) {
+    const key = new Date(Date.now() + 5 * 3600e3 - i * 864e5).toISOString().slice(0, 10);
+    const r = dailyRows.find(x => x.d === key);
+    daily.push(r ? r.c : 0);
+  }
   res.json({
     scope: own ? 'shop' : 'admin',
     shop_name: shopName,
+    daily,
     today_orders: db.prepare(`SELECT COUNT(*) c FROM orders WHERE delivery_date=? ${sf}`).get(today).c,
     total_orders: db.prepare(`SELECT COUNT(*) c FROM orders WHERE 1=1 ${sf}`).get().c,
     shops: own ? undefined : db.prepare('SELECT COUNT(*) c FROM shops WHERE active=1').get().c,
     vehicles: own ? undefined : db.prepare('SELECT COUNT(*) c FROM vehicles WHERE active=1').get().c,
     routes: own ? undefined : db.prepare('SELECT COUNT(*) c FROM routes WHERE active=1').get().c,
     products: own ? undefined : db.prepare('SELECT COUNT(*) c FROM products WHERE active=1').get().c,
+    users: own ? undefined : db.prepare('SELECT COUNT(*) c FROM users WHERE active=1').get().c,
     recent_orders: db.prepare(`SELECT o.id, o.created_at, o.delivery_date, s.name AS shop_name,
       s.image AS shop_image, u.username AS created_by, u.avatar AS user_avatar,
       (SELECT COUNT(*) FROM order_items WHERE order_id=o.id) AS items
@@ -926,15 +936,12 @@ app.get('/.well-known/assetlinks.json', (req, res) => {
 // ?type=shops  — shop-wise packing slips (har dukan alag A4 page)
 function esc(s) { return String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c])); }
 app.get('/print', requireLogin, (req, res) => {
-  if (!can(req.user, 'reports', 'view')) return res.status(403).send('forbidden');
-  const { date, route_id, type } = req.query;
-  const mode = type === 'shops' ? 'shops' : 'totals';
-  let f = 'WHERE 1=1'; const args = [];
-  if (date) { f += ' AND o.delivery_date=?'; args.push(date); }
-  if (route_id) { f += ' AND o.route_id=?'; args.push(route_id); }
-  const routeName = route_id ? (db.prepare('SELECT name FROM routes WHERE id=?').get(route_id) || {}).name : 'تمام روٹس';
-  const dateLabel = date || 'تمام';
-  const head = (title) => `<div class="head"><img src="/logo.png" alt="logo"><div><h1>گلشن فیکٹری <span>Gulshan Factory</span></h1><div class="meta">${esc(title)} — تاریخ: ${esc(dateLabel)} | روٹ: ${esc(routeName)}</div></div></div>`;
+  const { date, route_id, type, shop_id } = req.query;
+  const own = scopedShopId(req);
+  const isHistory = type === 'shop_history' || type === 'date_history';
+  if (isHistory) {
+    if (!can(req.user, 'reports', 'view') && !can(req.user, 'order_history', 'view')) return res.status(403).send('forbidden');
+  } else if (!can(req.user, 'reports', 'view')) return res.status(403).send('forbidden');
   const printBtn = `<br><button class="printbtn" onclick="window.print()" style="padding:10px 24px;font-size:16px">پرنٹ کریں</button>`;
   const css = `<style>
  @page{size:A4;margin:10mm} *{box-sizing:border-box}
@@ -948,22 +955,76 @@ app.get('/print', requireLogin, (req, res) => {
  .slip{break-inside:avoid}
  .slip h2.shopname{font-size:24px;color:#e8721c;margin:0 0 4px}
  .slip .smeta{color:#555;font-size:14px;margin-bottom:8px}
+ .hdate{background:#1a1a1a;color:#fff;font-size:18px;padding:6px 14px;border-radius:8px;margin:16px 0 8px;break-after:avoid}
+ .hshop{font-size:19px;color:#b3540e;margin:10px 0 4px;border-bottom:2px solid #e8721c;padding-bottom:2px;break-after:avoid}
  .sig{display:flex;justify-content:space-between;margin-top:26px;font-size:14px}
  .sig div{border-top:1px solid #333;padding-top:4px;width:40%;text-align:center}
  .note{background:#fdf3e7;border:1px dashed #e8721c;padding:6px 10px;margin:8px 0;font-size:13px}
  @media print{ .printbtn{display:none} .pagebreak{break-after:page} }
 </style>`;
+  const head = (title, extra) => `<div class="head"><img src="/logo.png" alt="logo"><div><h1>گلشن فیکٹری <span>Gulshan Factory</span></h1><div class="meta">${esc(title)}${extra ? ' — ' + esc(extra) : ''}</div></div></div>`;
+  const itemsByOrder = db.prepare(`SELECT p.name AS product_name, u.name AS unit_name, oi.quantity
+    FROM order_items oi JOIN products p ON p.id=oi.product_id LEFT JOIN units u ON u.id=p.unit_id WHERE oi.order_id=? ORDER BY p.name`);
+  const orderTable = (o) => {
+    const its = itemsByOrder.all(o.id);
+    const rows = its.map((it, i) => `<tr><td>${i + 1}</td><td>${esc(it.product_name)}</td><td><b>${esc(it.quantity)} ${esc(it.unit_name || '')}</b></td></tr>`).join('')
+      || '<tr><td colspan=3>کوئی آئٹم نہیں</td></tr>';
+    return `<table><tr><th style="width:40px">#</th><th>آئٹم</th><th>مقدار</th></tr>${rows}</table>${o.note ? `<div class="note">نوٹ: ${esc(o.note)}</div>` : ''}`;
+  };
+  // ---------- shop-wise full order history (grouped by date) ----------
+  if (type === 'shop_history') {
+    const sid = own || parseInt(shop_id, 10) || 0;
+    if (!sid) return res.status(400).send('shop_required');
+    const shop = db.prepare('SELECT name FROM shops WHERE id=?').get(sid);
+    if (!shop) return res.status(404).send('shop_not_found');
+    const dates = db.prepare(`SELECT DISTINCT delivery_date FROM orders WHERE shop_id=? ORDER BY delivery_date DESC`).all(sid);
+    const ordersByDate = db.prepare(`SELECT o.id, o.delivery_date, o.note, r.name AS route_name FROM orders o
+      LEFT JOIN routes r ON r.id=o.route_id WHERE o.shop_id=? AND o.delivery_date=? ORDER BY o.id DESC`);
+    const body = dates.map((d, di) => {
+      const orders = ordersByDate.all(sid, d.delivery_date);
+      return `<div class="hdate">📅 ${esc(d.delivery_date)}</div>` + orders.map((o, oi) =>
+        `<div class="slip${(di < dates.length - 1 || oi < orders.length - 1) ? ' pagebreak' : ''}">
+          <div class="hshop">🧾 آرڈر #${o.id} ${o.route_name ? '| روٹ: ' + esc(o.route_name) : ''}</div>
+          ${orderTable(o)}
+        </div>`).join('');
+    }).join('');
+    return res.send(`<!DOCTYPE html><html lang="ur" dir="rtl"><head><meta charset="utf-8"><title>آرڈر ہسٹری — ${esc(shop.name)}</title>${css}</head><body>
+${head('دکان وائز آرڈر ہسٹری', shop.name)}${body || '<p>کوئی آرڈر نہیں</p>'}${printBtn}</body></html>`);
+  }
+  // ---------- date-wise order history (grouped by shop) ----------
+  if (type === 'date_history') {
+    if (!date) return res.status(400).send('date_required');
+    const sf = own ? 'AND o.shop_id=' + own : '';
+    const shops = db.prepare(`SELECT DISTINCT s.id, s.name FROM orders o JOIN shops s ON s.id=o.shop_id
+      WHERE o.delivery_date=? ${sf} ORDER BY s.name`).all(date);
+    const ordersByShop = db.prepare(`SELECT o.id, o.delivery_date, o.note, r.name AS route_name FROM orders o
+      LEFT JOIN routes r ON r.id=o.route_id WHERE o.shop_id=? AND o.delivery_date=? ${sf} ORDER BY o.id DESC`);
+    const body = shops.map((s, si) => {
+      const orders = ordersByShop.all(s.id, date);
+      return `<div class="hshop">🏪 ${esc(s.name)}</div>` + orders.map((o, oi) =>
+        `<div class="slip${(si < shops.length - 1 || oi < orders.length - 1) ? ' pagebreak' : ''}">
+          <div class="smeta">🧾 آرڈر #${o.id}${o.route_name ? ' | روٹ: ' + esc(o.route_name) : ''}</div>
+          ${orderTable(o)}
+        </div>`).join('');
+    }).join('');
+    return res.send(`<!DOCTYPE html><html lang="ur" dir="rtl"><head><meta charset="utf-8"><title>آرڈر ہسٹری — ${esc(date)}</title>${css}</head><body>
+${head('تاریخ وائز آرڈر ہسٹری', 'تاریخ: ' + date)}${body || '<p>کوئی آرڈر نہیں</p>'}${printBtn}</body></html>`);
+  }
+  const mode = type === 'shops' ? 'shops' : 'totals';
+  let f = 'WHERE 1=1'; const args = [];
+  if (date) { f += ' AND o.delivery_date=?'; args.push(date); }
+  if (route_id) { f += ' AND o.route_id=?'; args.push(route_id); }
+  const routeName = route_id ? (db.prepare('SELECT name FROM routes WHERE id=?').get(route_id) || {}).name : 'تمام روٹس';
+  const dateLabel = date || 'تمام';
   if (mode === 'shops') {
     const orders = db.prepare(`SELECT o.id, o.delivery_date, o.note, s.name AS shop_name, r.name AS route_name FROM orders o
       JOIN shops s ON s.id=o.shop_id LEFT JOIN routes r ON r.id=o.route_id ${f} ORDER BY s.name`).all(...args);
-    const itemsByOrder = db.prepare(`SELECT p.name AS product_name, u.name AS unit_name, oi.quantity
-      FROM order_items oi JOIN products p ON p.id=oi.product_id LEFT JOIN units u ON u.id=p.unit_id WHERE oi.order_id=? ORDER BY p.name`);
     const slips = orders.map((o, idx) => {
       const its = itemsByOrder.all(o.id);
       const rows = its.map((it, i) => `<tr><td>${i + 1}</td><td>${esc(it.product_name)}</td><td><b>${esc(it.quantity)} ${esc(it.unit_name || '')}</b></td><td style="width:70px">☐</td></tr>`).join('')
         || '<tr><td colspan=4>کوئی آئٹم نہیں</td></tr>';
       return `<div class="slip${idx < orders.length - 1 ? ' pagebreak' : ''}">
-        ${head('ڈیلیوری سلپ')}
+        ${head('ڈیلیوری سلپ', 'تاریخ: ' + dateLabel + ' | روٹ: ' + routeName)}
         <h2 class="shopname">${esc(o.shop_name)}</h2>
         <div class="smeta">تاریخ: ${esc(o.delivery_date)} | روٹ: ${esc(o.route_name || '—')}</div>
         <table><tr><th>#</th><th>آئٹم</th><th>مقدار</th><th>پیک ✓</th></tr>${rows}</table>
@@ -980,7 +1041,7 @@ app.get('/print', requireLogin, (req, res) => {
     ${f} GROUP BY p.id ORDER BY c.sort, c.id, p.name`).all(...args);
   const rows = totals.map(t => `<tr><td>${esc(t.category_name || '')}</td><td>${esc(t.product_name)}</td><td><b>${esc(t.total_qty)} ${esc(t.unit_name || '')}</b></td><td>${t.shop_count} دکان</td></tr>`).join('');
   res.send(`<!DOCTYPE html><html lang="ur" dir="rtl"><head><meta charset="utf-8"><title>پروڈکشن شیٹ — گلشن فیکٹری</title>${css}</head><body>
-${head('پروڈکشن شیٹ — آئٹم وائز کل مقدار')}
+${head('پروڈکشن شیٹ — آئٹم وائز کل مقدار', 'تاریخ: ' + dateLabel + ' | روٹ: ' + routeName)}
 <table><tr><th>کیٹیگری</th><th>آئٹم</th><th>کل مقدار</th><th>دکانیں</th></tr>${rows || '<tr><td colspan=4>کوئی آرڈر نہیں</td></tr>'}</table>
 ${printBtn}</body></html>`);
 });
