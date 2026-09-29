@@ -909,9 +909,16 @@ app.get('/api/dashboard', requireLogin, requireSection('dashboard'), (req, res) 
   });
 });
 
-// ---------- assetlinks (for future APK/TWA builds via PWABuilder) ----------
+// ---------- assetlinks (PWABuilder APK: net.alwaysdata.kashf.twa) ----------
 app.get('/.well-known/assetlinks.json', (req, res) => {
-  res.json([]);
+  res.json([{
+    relation: ['delegate_permission/common.handle_all_urls'],
+    target: {
+      namespace: 'android_app',
+      package_name: 'net.alwaysdata.kashf.twa',
+      sha256_cert_fingerprints: ['D5:15:E3:01:60:5D:D8:A3:C4:52:A8:AC:2C:1C:68:47:DD:53:78:DC:24:02:44:38:C7:F2:8B:02:C4:4E:3E:1E']
+    }
+  }]);
 });
 
 // ---------- Printable A4 sheets (server-rendered) ----------
