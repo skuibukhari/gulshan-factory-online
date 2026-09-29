@@ -390,7 +390,7 @@ function startCountdown(cdate, ctime, label, boxId) {
 // ---------- order form (shop / admin) ----------
 let orderDraft = {};
 // ---------- supply calendar (super_admin + factory) ----------
-let calYear = null, calMonth = null, CALDAYS = [];
+let calYear = null, calMonth = null, CALDAYS = [], CALDEF = '20:00';
 async function renderSupplyCalendar() {
   const now = new Date();
   if (calYear == null) { calYear = now.getFullYear(); calMonth = now.getMonth(); }
@@ -399,6 +399,7 @@ async function renderSupplyCalendar() {
   const lastDay = new Date(calYear, calMonth + 1, 0).getDate();
   const to = `${calYear}-${p2(calMonth + 1)}-${lastDay}`;
   try { CALDAYS = await api('GET', `/api/supply-days?from=${from}&to=${to}`); } catch (e) { CALDAYS = []; }
+  try { const sd = await api('GET', '/api/supply-default'); if (sd && sd.cutoff_time) CALDEF = sd.cutoff_time; } catch (e) {}
   const byDate = {}; CALDAYS.forEach(d => { byDate[d.supply_date] = d; });
   const monthName = new Intl.DateTimeFormat('ur-PK', { month: 'long', year: 'numeric' }).format(new Date(calYear, calMonth, 1));
   const todayS = karachiToday();
@@ -433,7 +434,7 @@ function calNav(d) {
 }
 async function calTap(ds, id) {
   if (!id) {
-    if (!confirm(`📅 ${ds} کو سپلائی day بنائیں؟\n⏰ کٹ آف: پچھلے دن رات 8:00 بجے`)) return;
+    if (!confirm(`📅 ${ds} کو سپلائی day بنائیں؟\n⏰ کٹ آف: پچھلے دن رات ${CALDEF} بجے`)) return;
     try { await api('POST', '/api/supply-days', { date: ds }); }
     catch (e) { alert('خرابی: ' + (e.message === 'already_exists' ? 'یہ دن پہلے سے لگا ہے' : e.message)); return; }
     renderSupplyCalendar(); return;

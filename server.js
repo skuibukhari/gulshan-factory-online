@@ -664,12 +664,17 @@ app.get('/api/supply-days', requireLogin, (req, res) => {
   if (!from || !to) return res.status(400).json({ error: 'range_required' });
   res.json(supplyDayInfo(from, to));
 });
+app.get('/api/supply-default', requireLogin, requireSection('routes', 'full'), (req, res) => {
+  res.json({ cutoff_time: appSetting('default_cutoff_time') || '20:00' });
+});
 app.post('/api/supply-days', requireLogin, requireSection('routes', 'full'), (req, res) => {
   const { date, cutoff_time } = req.body || {};
   if (!date || !/^\d{4}-\d{2}-\d{2}$/.test(String(date))) return res.status(400).json({ error: 'bad_date' });
   if (db.prepare('SELECT id FROM routes WHERE active=1 AND supply_date=?').get(date))
     return res.status(400).json({ error: 'already_exists' });
-  const ct = cutoff_time && /^\d{2}:\d{2}$/.test(String(cutoff_time)) ? cutoff_time : '20:00';
+  const given = cutoff_time && /^\d{2}:\d{2}$/.test(String(cutoff_time)) ? cutoff_time : null;
+  const ct = given || appSetting('default_cutoff_time') || '20:00';
+  if (given) appSetting('default_cutoff_time', given); // remember last saved time
   const cd = new Date(date + 'T12:00:00'); cd.setDate(cd.getDate() - 1);
   const cutoff_date = cd.toISOString().slice(0, 10);
   const veh = db.prepare('SELECT id FROM vehicles WHERE active=1 ORDER BY id LIMIT 1').get();
@@ -682,6 +687,7 @@ app.put('/api/supply-days/:id', requireLogin, requireSection('routes', 'full'), 
   const { cutoff_time } = req.body || {};
   if (!cutoff_time || !/^\d{2}:\d{2}$/.test(String(cutoff_time))) return res.status(400).json({ error: 'bad_time' });
   db.prepare('UPDATE routes SET cutoff_time=? WHERE id=?').run(cutoff_time, req.params.id);
+  appSetting('default_cutoff_time', cutoff_time); // remember last saved time
   const r = db.prepare('SELECT supply_date, cutoff_date FROM routes WHERE id=?').get(req.params.id);
   if (r) notifyAll('⏰ کٹ آف اپڈیٹ — گلشن فیکٹری', `سپلائی ${r.supply_date} کا کٹ آف: ${r.cutoff_date} ${cutoff_time}`);
   res.json({ ok: true });
