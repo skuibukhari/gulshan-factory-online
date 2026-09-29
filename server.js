@@ -650,6 +650,56 @@ app.get('/api/order-catalog', requireLogin, requireSection('orders', 'view'), (r
   res.json({ cats, products, routes });
 });
 
+// ---------- Supply calendar ----------
+// Supply days are routes with a supply_date. Admin/factory tap calendar days to announce them;
+// shops get a push and order against the nearest open supply day (no date picking).
+function supplyDayInfo(from, to) {
+  return db.prepare(`SELECT r.*, v.name AS vehicle_name,
+    (SELECT COUNT(*) FROM orders o WHERE o.route_id=r.id) AS order_count
+    FROM routes r LEFT JOIN vehicles v ON v.id=r.vehicle_id
+    WHERE r.active=1 AND r.supply_date >= ? AND r.supply_date <= ? ORDER BY r.supply_date`).all(from, to);
+}
+app.get('/api/supply-days', requireLogin, (req, res) => {
+  const { from, to } = req.query;
+  if (!from || !to) return res.status(400).json({ error: 'range_required' });
+  res.json(supplyDayInfo(from, to));
+});
+app.post('/api/supply-days', requireLogin, requireSection('routes', 'full'), (req, res) => {
+  const { date, cutoff_time } = req.body || {};
+  if (!date || !/^\d{4}-\d{2}-\d{2}$/.test(String(date))) return res.status(400).json({ error: 'bad_date' });
+  if (db.prepare('SELECT id FROM routes WHERE active=1 AND supply_date=?').get(date))
+    return res.status(400).json({ error: 'already_exists' });
+  const ct = cutoff_time && /^\d{2}:\d{2}$/.test(String(cutoff_time)) ? cutoff_time : '20:00';
+  const cd = new Date(date + 'T12:00:00'); cd.setDate(cd.getDate() - 1);
+  const cutoff_date = cd.toISOString().slice(0, 10);
+  const veh = db.prepare('SELECT id FROM vehicles WHERE active=1 ORDER BY id LIMIT 1').get();
+  const r = db.prepare(`INSERT INTO routes (name, vehicle_id, supply_date, cutoff_date, cutoff_time, active)
+    VALUES (?,?,?,?,?,1)`).run('🚚 سپلائی ' + date, veh ? veh.id : null, date, cutoff_date, ct);
+  notifyAll('🗓 نئی سپلائی — گلشن فیکٹری', `سپلائی: ${date} | کٹ آف: ${cutoff_date} ${ct} — آرڈر بنا لیں`);
+  res.json({ ok: true, id: r.lastInsertRowid });
+});
+app.put('/api/supply-days/:id', requireLogin, requireSection('routes', 'full'), (req, res) => {
+  const { cutoff_time } = req.body || {};
+  if (!cutoff_time || !/^\d{2}:\d{2}$/.test(String(cutoff_time))) return res.status(400).json({ error: 'bad_time' });
+  db.prepare('UPDATE routes SET cutoff_time=? WHERE id=?').run(cutoff_time, req.params.id);
+  const r = db.prepare('SELECT supply_date, cutoff_date FROM routes WHERE id=?').get(req.params.id);
+  if (r) notifyAll('⏰ کٹ آف اپڈیٹ — گلشن فیکٹری', `سپلائی ${r.supply_date} کا کٹ آف: ${r.cutoff_date} ${cutoff_time}`);
+  res.json({ ok: true });
+});
+app.delete('/api/supply-days/:id', requireLogin, requireSection('routes', 'full'), (req, res) => {
+  const id = Number(req.params.id);
+  const moveTo = Number(req.query.move_to) || 0;
+  const n = db.prepare('SELECT COUNT(*) c FROM orders WHERE route_id=?').get(id).c;
+  if (n > 0 && !moveTo) return res.status(400).json({ error: 'has_orders', count: n });
+  if (n > 0 && moveTo) {
+    const t = db.prepare('SELECT supply_date FROM routes WHERE id=? AND active=1').get(moveTo);
+    if (!t) return res.status(400).json({ error: 'bad_target' });
+    db.prepare('UPDATE orders SET route_id=?, delivery_date=? WHERE route_id=?').run(moveTo, t.supply_date, id);
+  }
+  db.prepare('UPDATE routes SET active=0 WHERE id=?').run(id);
+  res.json({ ok: true, moved: n });
+});
+
 // ---------- Generic CRUD helper ----------
 function cleanVals(table_cols, body) {
   return table_cols.map(c => {
@@ -886,11 +936,14 @@ app.get('/api/dashboard', requireLogin, requireSection('dashboard'), (req, res) 
   const today = new Date().toISOString().slice(0, 10);
   const shopName = own ? (db.prepare('SELECT name FROM shops WHERE id=?').get(own) || {}).name || '' : '';
   const upcoming = own
-    ? db.prepare(`SELECT DISTINCT r.*, v.name AS vehicle_name FROM routes r
+    ? db.prepare(`SELECT DISTINCT r.*, v.name AS vehicle_name,
+        (SELECT COUNT(*) FROM orders o WHERE o.route_id=r.id) AS order_count FROM routes r
         LEFT JOIN vehicles v ON v.id=r.vehicle_id
         JOIN orders o ON o.route_id=r.id AND o.shop_id=?
         WHERE r.active=1 ORDER BY r.supply_date LIMIT 5`).all(own)
-    : db.prepare(`SELECT r.*, v.name AS vehicle_name FROM routes r LEFT JOIN vehicles v ON v.id=r.vehicle_id
+    : db.prepare(`SELECT r.*, v.name AS vehicle_name,
+        (SELECT COUNT(*) FROM orders o WHERE o.route_id=r.id) AS order_count FROM routes r
+        LEFT JOIN vehicles v ON v.id=r.vehicle_id
         WHERE r.active=1 ORDER BY r.supply_date LIMIT 5`).all();
   const dailyRows = db.prepare(`SELECT date(created_at, '+5 hours') d, COUNT(*) c FROM orders
     WHERE date(created_at, '+5 hours') >= date('now', '+5 hours', '-6 days') ${sf} GROUP BY d`).all();

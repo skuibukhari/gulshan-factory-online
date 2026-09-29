@@ -210,17 +210,18 @@ async function refreshCache() {
 
 // ---------- menu / views ----------
 const MENU = [
-  ['dashboard', '📊 ڈیش بورڈ'], ['order', '🧾 نیا آرڈر'], ['orders', '📦 آرڈرز'],
+  ['dashboard', '📊 ڈیش بورڈ'], ['supply', '🗓 سپلائی کیلنڈر'], ['order', '🧾 نیا آرڈر'], ['orders', '📦 آرڈرز'],
   ['order_history', '🕘 آرڈر ہسٹری'], ['reports', '🖨 رپورٹس'],
   ['vehicles', '🚚 گاڑیاں'], ['routes', '🗺 روٹس و شیڈول'], ['cats', '🗂 کیٹیگریز'],
   ['units', '⚖ یونٹس'], ['products', '🍞 آئٹمز'], ['shops', '🏪 دکانیں'],
 ];
-const VIEW_SEC = { dashboard: 'dashboard', order: 'orders', orders: 'orders', order_history: 'order_history', reports: 'reports',
+const VIEW_SEC = { dashboard: 'dashboard', supply: 'routes', order: 'orders', orders: 'orders', order_history: 'order_history', reports: 'reports',
   vehicles: 'vehicles', routes: 'routes', cats: 'categories', units: 'units', products: 'products', shops: 'shops' };
 function viewAllowed(key) {
   const sec = VIEW_SEC[key];
   if (!sec) return true;
   if (sec === 'orders' && key === 'order') return can('orders', 'full');
+  if (key === 'supply') return can('routes', 'full');
   return can(sec);
 }
 function firstAllowedView() {
@@ -246,7 +247,7 @@ function showView(name) {
   document.querySelectorAll('.view').forEach(v => v.classList.remove('on'));
   const el = $('#v-' + (name === 'order_history' ? 'history' : name)); if (el) el.classList.add('on');
   document.querySelectorAll('#menuNav button').forEach(b => b.classList.toggle('active', b.dataset.view === name));
-  ({ dashboard: renderDashboard, order: renderOrderForm, orders: renderOrders, order_history: renderHistory,
+  ({ dashboard: renderDashboard, supply: renderSupplyCalendar, order: renderOrderForm, orders: renderOrders, order_history: renderHistory,
      vehicles: () => renderMaster('vehicles'), routes: renderRoutes, cats: () => renderMaster('cats'),
      units: () => renderMaster('units'), products: renderProducts, shops: () => renderMaster('shops'),
      reports: renderReports }[name] || (() => {}))();
@@ -297,7 +298,7 @@ async function renderDashboard() {
   const d = await api('GET', '/api/dashboard');
   const cd = d.upcoming.map(r => `
     <div class="supcard">
-      <div class="suphead">🚚 <b>${esc(r.name)}</b></div>
+      <div class="suphead">🚚 <b>${esc(r.name)}</b>${r.order_count != null ? ` <span class="obadge">🧾 ${r.order_count} آرڈر</span>` : ''}</div>
       <div class="supmeta">🚛 ${esc(r.vehicle_name || '—')} &nbsp; 📅 سپلائی: <b>${esc(r.supply_date || '—')}</b></div>
       <div class="supmeta">⏰ کٹ آف: <b>${esc(r.cutoff_date || '')} ${esc(r.cutoff_time || '')}</b></div>
     </div>`).join('');
@@ -388,6 +389,97 @@ function startCountdown(cdate, ctime, label, boxId) {
 
 // ---------- order form (shop / admin) ----------
 let orderDraft = {};
+// ---------- supply calendar (super_admin + factory) ----------
+let calYear = null, calMonth = null, CALDAYS = [];
+async function renderSupplyCalendar() {
+  const now = new Date();
+  if (calYear == null) { calYear = now.getFullYear(); calMonth = now.getMonth(); }
+  const p2 = n => String(n).padStart(2, '0');
+  const from = `${calYear}-${p2(calMonth + 1)}-01`;
+  const lastDay = new Date(calYear, calMonth + 1, 0).getDate();
+  const to = `${calYear}-${p2(calMonth + 1)}-${lastDay}`;
+  try { CALDAYS = await api('GET', `/api/supply-days?from=${from}&to=${to}`); } catch (e) { CALDAYS = []; }
+  const byDate = {}; CALDAYS.forEach(d => { byDate[d.supply_date] = d; });
+  const monthName = new Intl.DateTimeFormat('ur-PK', { month: 'long', year: 'numeric' }).format(new Date(calYear, calMonth, 1));
+  const todayS = karachiToday();
+  const dows = ['ہفتہ', 'اتوار', 'پیر', 'منگل', 'بدھ', 'جمعرات', 'جمعہ'];
+  const off = (new Date(calYear, calMonth, 1).getDay() + 1) % 7; // Saturday-first
+  let cells = '';
+  for (let i = 0; i < off; i++) cells += '<div class="cald empty"></div>';
+  for (let d = 1; d <= lastDay; d++) {
+    const ds = `${calYear}-${p2(calMonth + 1)}-${p2(d)}`;
+    const s = byDate[ds];
+    const past = ds < todayS;
+    const cls = s ? 'cald sup' : (past ? 'cald past' : 'cald');
+    const clickable = (past && !s) ? '' : `onclick="calTap('${ds}',${s ? s.id : 0})"`;
+    cells += `<div class="${cls}" ${clickable}><span class="cdn">${d}</span>${s ? `<span class="cbo">🧾 ${s.order_count}</span>` : ''}</div>`;
+  }
+  $('#v-supply').innerHTML = `
+    <h2 class="st">🗓 <span>سپلائی کیلنڈر</span></h2>
+    <div class="calhead">
+      <button class="btn small ghost" onclick="calNav(-1)">‹</button>
+      <b>${monthName}</b>
+      <button class="btn small ghost" onclick="calNav(1)">›</button>
+    </div>
+    <div class="calgrid">${dows.map(w => `<div class="cald dow">${w}</div>`).join('')}${cells}</div>
+    <p class="note">🟢 سبز دن = سپلائی | خالی دن پر tap = نیا سپلائی day | سبز دن پر tap = کٹ آف بدلیں / ہٹائیں</p>
+    <div id="calDetail"></div>`;
+}
+function calNav(d) {
+  calMonth += d;
+  if (calMonth < 0) { calMonth = 11; calYear--; }
+  if (calMonth > 11) { calMonth = 0; calYear++; }
+  renderSupplyCalendar();
+}
+async function calTap(ds, id) {
+  if (!id) {
+    if (!confirm(`📅 ${ds} کو سپلائی day بنائیں؟\n⏰ کٹ آف: پچھلے دن رات 8:00 بجے`)) return;
+    try { await api('POST', '/api/supply-days', { date: ds }); }
+    catch (e) { alert('خرابی: ' + (e.message === 'already_exists' ? 'یہ دن پہلے سے لگا ہے' : e.message)); return; }
+    renderSupplyCalendar(); return;
+  }
+  const s = CALDAYS.find(x => x.id === id); if (!s) return;
+  $('#calDetail').innerHTML = `
+    <div class="caldetail">
+      <h3>🚚 سپلائی: ${esc(s.supply_date)}</h3>
+      <div class="supmeta">🧾 ${s.order_count} آرڈر &nbsp; ⏰ کٹ آف: <b>${esc(s.cutoff_date || '')} ${esc(s.cutoff_time || '')}</b></div>
+      <div class="formgrid">
+        <label>کٹ آف ٹائم بدلیں<br><input type="time" id="calCt" value="${esc(s.cutoff_time || '20:00')}"></label>
+        <label><br><button class="btn small green" onclick="calSaveCt(${s.id})">💾 محفوظ کریں</button></label>
+      </div>
+      <button class="btn small danger" onclick="calRemove(${s.id},${s.order_count})">🗑 یہ سپلائی ہٹائیں</button>
+      <div id="calMove"></div>
+    </div>`;
+  $('#calDetail').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+}
+async function calSaveCt(id) {
+  const t = $('#calCt').value;
+  if (!t) { alert('ٹائم لکھیں'); return; }
+  try { await api('PUT', '/api/supply-days/' + id, { cutoff_time: t }); }
+  catch (e) { alert('خرابی: ' + e.message); return; }
+  alert('کٹ آف ٹائم اپڈیٹ ہو گیا ✅');
+  renderSupplyCalendar();
+}
+async function calRemove(id, n) {
+  if (n > 0) {
+    const others = CALDAYS.filter(x => x.id !== id);
+    if (!others.length) { alert('کوئی دوسرا سپلائی day نہیں — پہلے نیا دن لگائیں'); return; }
+    $('#calMove').innerHTML = `<div class="formgrid" style="margin-top:10px">
+      <label>آرڈرز کس دن منتقل کریں؟<br><select id="calMoveTo">${others.map(o => `<option value="${o.id}">${esc(o.supply_date)} (${o.order_count} آرڈر)</option>`).join('')}</select></label>
+      <label><br><button class="btn small dark" onclick="calRemoveGo(${id})">⏭ منتقل کریں اور ہٹائیں</button></label></div>`;
+    return;
+  }
+  if (!confirm('یہ سپلائی day ہٹائیں؟')) return;
+  await api('DELETE', '/api/supply-days/' + id);
+  renderSupplyCalendar();
+}
+async function calRemoveGo(id) {
+  const to = $('#calMoveTo').value;
+  try { await api('DELETE', `/api/supply-days/${id}?move_to=${to}`); }
+  catch (e) { alert('خرابی: ' + e.message); return; }
+  alert('آرڈرز منتقل ہو گئے ✅');
+  renderSupplyCalendar();
+}
 async function renderOrderForm() {
   await refreshCache();
   const isShop = ME.role === 'shop';
@@ -400,8 +492,11 @@ async function renderOrderForm() {
   const shopOpts = isShop
     ? `<input type="hidden" id="ofShop" value="${ME.shop_id}"><div class="kbd">🏪 دکان: <b>${esc(ME.shop_name || '')}</b></div>`
     : `<label>دکان<br><select id="ofShop">${CACHE.shops.filter(s => s.active).map(s => `<option value="${s.id}">${esc(s.name)}</option>`).join('')}</select></label>`;
-  const routeOpts = routes.map(r =>
-    `<option value="${r.id}" data-sd="${esc(r.supply_date || '')}" data-cd="${esc(r.cutoff_date || '')}" data-ct="${esc(r.cutoff_time || '')}">${esc(r.name)}</option>`).join('');
+  // Nearest OPEN supply day is auto-selected — shop never picks a date.
+  const open = routes
+    .filter(r => r.supply_date && !cutoffPassedClient(r.cutoff_date, r.cutoff_time))
+    .sort((a, b) => String(a.supply_date).localeCompare(String(b.supply_date)));
+  const sup = open[0] || null;
   const catsHtml = cats.map(c => {
     const prods = products.filter(p => p.category_id === c.id);
     if (!prods.length) return '';
@@ -411,18 +506,21 @@ async function renderOrderForm() {
   }).join('');
   $('#v-order').innerHTML = `
     <h2 class="st">🧾 <span>نیا آرڈر</span></h2>
-    <div id="ofCd"></div>
+    ${sup ? `
+    <input type="hidden" id="ofRoute" value="${sup.id}">
+    <input type="hidden" id="ofDate" value="${esc(sup.supply_date || '')}">
+    <div class="supbanner">🚚 <b>سپلائی: ${esc(sup.supply_date || '')}</b> &nbsp; ⏰ کٹ آف: <b>${esc(sup.cutoff_date || '')} ${esc(sup.cutoff_time || '')}</b></div>
+    <div id="ofCd"></div>`
+    : `<div class="lockbar">📢 ابھی کوئی سپلائی announce نہیں ہوئی — اعلان کا انتظار کریں</div>
+       <input type="hidden" id="ofRoute" value=""><input type="hidden" id="ofDate" value="">`}
     <div class="formgrid">
       ${shopOpts}
-      <label>روٹ<br><select id="ofRoute" onchange="orderRouteChanged()"><option value="">—</option>${routeOpts}</select></label>
-      <label>ڈیلیوری تاریخ<br><input type="date" id="ofDate" value="${karachiToday()}"></label>
       <label>نوٹ<br><input id="ofNote" placeholder="اختیاری"></label>
     </div>
     ${catsHtml || '<p class="note">کوئی آئٹم نہیں — پہلے آئٹمز شامل کریں</p>'}
     <div class="err" id="ofErr"></div>
-    <button class="btn green" onclick="submitOrder()">✅ آرڈر بھیجیں</button>`;
-  if (routes.length === 1) $('#ofRoute').value = routes[0].id;
-  orderRouteChanged();
+    <button class="btn green" onclick="submitOrder()"${sup ? '' : ' disabled'}>✅ آرڈر بھیجیں</button>`;
+  if (sup) startCountdown(sup.cutoff_date, sup.cutoff_time, sup.name, 'ofCd');
 }
 function cutoffPassedClient(cdate, ctime) {
   if (!cdate) return false;
