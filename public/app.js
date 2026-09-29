@@ -314,33 +314,56 @@ async function renderDashboard() {
         <div class="drmeta">📦 ${o.items} آئٹمز • 📅 ${esc(o.delivery_date || '—')}</div>
         <div class="drmeta">🕐 ${esc(when)}${o.created_by ? ` • ${userAvatar(o.created_by, uimg)} <b>${esc(o.created_by)}</b>` : ''}</div>
       </div>
+      <span class="chev">‹</span>
     </div>`;
   }).join('');
-  const gcls = ['g1', 'g2', 'g3', 'g4', 'g5', 'g6'];
-  let gi = 0;
-  const stat = (icon, n, l) => { const c = gcls[gi++ % gcls.length]; return `<div class="gcard ${c}"><div class="gsi">${icon}</div><div class="gsn">${n}</div><div class="gsl">${l}</div></div>`; };
+  const pcls = ['p4', 'p1', 'p2', 'p3', 'p5', 'p6'];
+  let pi = 0;
+  const stat = (icon, n, l) => { const c = pcls[pi++ % pcls.length]; return `<div class="pcard ${c}"><div class="pic">${icon}</div><div class="pnum">${n}</div><div class="plbl">${l}</div></div>`; };
   const cards = d.scope === 'shop'
-    ? `<div class="gcard g1 wide"><div class="gsi">🏪</div><div class="gsn">${esc(d.shop_name || 'میری دکان')}</div><div class="gsl">میری دکان</div></div>`
-      + stat('📦', d.today_orders, 'آج کے آرڈر')
-      + stat('🧾', d.total_orders, 'کل آرڈر')
-    : stat('📦', d.today_orders, 'آج کے آرڈر')
-      + stat('🧾', d.total_orders, 'کل آرڈر')
-      + stat('🏪', d.shops, 'دکانیں')
-      + stat('🗂', d.products, 'آئٹمز')
-      + stat('🚚', d.vehicles, 'گاڑیاں')
-      + stat('🛣', d.routes, 'روٹس');
+    ? `<div class="pcard p3 wide"><div class="pic">🏪</div><div class="pnum">${esc(d.shop_name || 'میری دکان')}</div><div class="plbl">میری دکان</div></div>`
+      + stat('🧾', d.today_orders, 'نئے آرڈرز (آج)')
+      + stat('📦', d.total_orders, 'کل آرڈرز')
+    : stat('🧾', d.today_orders, 'نئے آرڈرز (آج)')
+      + stat('📦', d.total_orders, 'کل آرڈرز')
+      + stat('🏪', d.shops, 'شاپس')
+      + stat('🗂', d.products, 'پروڈکٹس')
+      + stat('👥', d.users, 'کل صارفین')
+      + stat('🚚', d.vehicles, 'گاڑیاں');
+  // 7-day bar chart (oldest -> today)
+  const daily = d.daily || [0, 0, 0, 0, 0, 0, 0];
+  const mx = Math.max(1, ...daily);
+  const wdf = new Intl.DateTimeFormat('ur-PK', { weekday: 'short' });
+  const bars = daily.map((v, i) => {
+    const lbl = wdf.format(new Date(Date.now() - (6 - i) * 864e5));
+    return `<div class="bcol"><div class="bval">${v}</div><div class="bar" style="height:${Math.max(6, Math.round(v / mx * 110))}px"></div><div class="bday">${lbl}</div></div>`;
+  }).join('');
+  const me = (typeof ME !== 'undefined' && ME && ME.username) || '';
+  const qaBtns = [
+    can('orders', 'full') ? '<button class="qbtn" onclick="showView(\'order\')"><span class="qic">🧾</span>نیا آرڈر</button>' : '',
+    can('products', 'full') ? '<button class="qbtn" onclick="showView(\'products\')"><span class="qic">🗂</span>پروڈکٹ شامل کریں</button>' : '',
+    can('shops', 'full') ? '<button class="qbtn" onclick="showView(\'shops\')"><span class="qic">🏪</span>شاپ شامل کریں</button>' : '',
+    can('reports') ? '<button class="qbtn" onclick="showView(\'reports\')"><span class="qic">📊</span>رپورٹ دیکھیں</button>' : '',
+  ].join('');
   $('#v-dashboard').innerHTML = `
+    <div class="hero">
+      <div class="hw">
+        <div class="htitle">👋 خوش آمدید${me ? '، ' + esc(me) : ''}!</div>
+        <div class="hsub">آپ کے بیکری سسٹم کا ڈیش بورڈ</div>
+        <div class="htag">تازہ مصنوعات، خوش ذائقہ، آپ کے لیے</div>
+      </div>
+      <img class="hlogo" src="/logo.png" alt="گلشن">
+    </div>
     <div class="dhead"><div class="dclock">🕐 <span id="liveClock"></span></div></div>
     <div id="cdBox"></div>
     <div class="dstats">${cards}</div>
+    ${qaBtns ? `<h2 class="st">⚡ <span>فوری کارروائی</span></h2><div class="qagrid">${qaBtns}</div>` : ''}
+    <h2 class="st">📊 <span>آرڈرز کا خلاصہ</span> <small class="stsmall">یہ ہفتہ</small></h2>
+    <div class="chart">${bars}</div>
     <h2 class="st">🗓 <span>آنے والی سپلائی</span></h2>
     <div class="supgrid">${cd || '<p class="note">کوئی شیڈول نہیں</p>'}</div>
     <h2 class="st">📋 <span>${d.scope === 'shop' ? 'میرے تازہ ترین آرڈرز' : 'تازہ ترین آرڈرز'}</span></h2>
-    <div class="drows">${ro || '<p class="note">ابھی کوئی آرڈر نہیں</p>'}</div>
-    <div style="margin-top:14px;display:flex;gap:8px;flex-wrap:wrap">
-      ${can('orders', 'full') ? '<button class="btn" onclick="showView(\'order\')">🧾 نیا آرڈر</button>' : ''}
-      ${can('reports') ? '<button class="btn green" onclick="showView(\'reports\')">🖨 پروڈکشن شیٹ</button>' : ''}
-    </div>`;
+    <div class="drows">${ro || '<p class="note">ابھی کوئی آرڈر نہیں</p>'}</div>`;
   tickClock();
   const soon = d.upcoming.find(r => r.cutoff_date);
   if (soon) startCountdown(soon.cutoff_date, soon.cutoff_time, soon.name);
@@ -517,10 +540,36 @@ async function saveEditOrder(id) {
 async function renderHistory() {
   const g = await api('GET', '/api/order-history');
   const dates = Object.keys(g).sort().reverse();
-  $('#v-history').innerHTML = `<h2 class="st">🕘 <span>آرڈر ہسٹری</span></h2>` + (dates.map(d =>
+  const isShopUser = !!(typeof ME !== 'undefined' && ME && ME.shop_id);
+  let shopSel = '';
+  if (!isShopUser && can('shops', 'view')) {
+    const shops = await api('GET', '/api/shops').catch(() => []);
+    shopSel = `<label>دکان<br><select id="hsShop">${shops.map(s => `<option value="${s.id}">${esc(s.name)}</option>`).join('')}</select></label>`;
+  }
+  $('#v-history').innerHTML = `<h2 class="st">🕘 <span>آرڈر ہسٹری</span></h2>
+    <div class="formgrid">
+      ${shopSel}
+      <label>تاریخ<br><input type="date" id="hsDate" value="${karachiToday()}"></label>
+    </div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px">
+      <button class="btn small green" onclick="printShopHistory()">🖨 دکان وائز ہسٹری پرنٹ کریں</button>
+      <button class="btn small dark" onclick="printDateHistory()">🖨 تاریخ وائز ہسٹری پرنٹ کریں</button>
+    </div>`
+    + (dates.map(d =>
     `<div class="histdate">📅 ${esc(d)}</div>` + g[d].map(o =>
       `<div class="kbd"><b>${esc(o.shop_name)}</b> — ${o.items.map(i => esc(i.product_name) + ': ' + esc(i.quantity) + ' ' + esc(i.unit_name || '')).join('، ')}</div>`
     ).join('')).join('') || '<p class="note">کوئی ہسٹری نہیں</p>');
+}
+function printShopHistory() {
+  const sel = document.getElementById('hsShop');
+  const sid = sel ? sel.value : ((typeof ME !== 'undefined' && ME && ME.shop_id) || '');
+  if (!sid) { alert('دکان منتخب کریں'); return; }
+  window.open('/print?type=shop_history&shop_id=' + encodeURIComponent(sid), '_blank');
+}
+function printDateHistory() {
+  const d = (document.getElementById('hsDate') || {}).value;
+  if (!d) { alert('تاریخ منتخب کریں'); return; }
+  window.open('/print?type=date_history&date=' + encodeURIComponent(d), '_blank');
 }
 
 // ---------- masters ----------
@@ -665,7 +714,8 @@ async function loadTotals() {
   const rows = t.map(x => `<tr><td>${esc(x.category_name || '')}</td><td>${esc(x.product_name)}</td><td><b>${esc(x.total_qty)} ${esc(x.unit_name || '')}</b></td><td>${x.shop_count} دکان</td></tr>`).join('');
   $('#rpBody').innerHTML = `<table><tr><th>کیٹیگری</th><th>آئٹم</th><th>کل مقدار</th><th>دکانیں</th></tr>${rows || '<tr><td colspan=4>کوئی آرڈر نہیں</td></tr>'}</table>`;
   $('#rpPrint').innerHTML = `<a class="btn green" target="_blank" href="/print?type=totals&date=${d}${r ? '&route_id=' + r : ''}">🖨 آئٹم وائز ٹوٹل پرنٹ کریں</a>
-  <a class="btn dark" target="_blank" href="/print?type=shops&date=${d}${r ? '&route_id=' + r : ''}">🧾 دکان وائز سلپ پرنٹ کریں (ہر دکان الگ صفحہ)</a>`;
+  <a class="btn dark" target="_blank" href="/print?type=shops&date=${d}${r ? '&route_id=' + r : ''}">🧾 دکان وائز سلپ پرنٹ کریں (ہر دکان الگ صفحہ)</a>
+  <a class="btn" target="_blank" href="/print?type=date_history&date=${d}">📜 اس تاریخ کی مکمل ہسٹری پرنٹ کریں</a>`;
 }
 
 // ---------- settings: users & access ----------
