@@ -217,7 +217,7 @@ button[disabled]{opacity:.45}
 .htitle{font-size:22px;font-weight:800;color:#3d3225}
 .hsub{font-size:14px;color:#8a7a63}
 .htag{font-size:12px;color:#b3540e;margin-top:4px}
-.hlogo{width:76px;height:76px;object-fit:contain;flex:none;filter:drop-shadow(0 3px 6px rgba(0,0,0,.12))}
+.hlogo{width:76px;height:76px;object-fit:contain;flex:none;background:#fff;border-radius:18px;padding:6px;border:2px solid #e8721c;box-shadow:0 3px 8px rgba(0,0,0,.12)}
 .hero .dclock{flex:none}
 .qagrid{display:grid;grid-template-columns:repeat(2,1fr);gap:10px;margin-bottom:6px}
 .qagrid .qbtn{flex-direction:row;justify-content:flex-start;padding:14px}
