@@ -300,7 +300,7 @@ async function renderDashboard() {
     <div class="supcard">
       <div class="suphead">🚚 <b>${esc(r.name)}</b>${r.order_count != null ? ` <span class="obadge">🧾 ${r.order_count} آرڈر</span>` : ''}</div>
       <div class="supmeta">🚛 ${esc(r.vehicle_name || '—')} &nbsp; 📅 سپلائی: <b>${esc(r.supply_date || '—')}</b></div>
-      <div class="supmeta">⏰ کٹ آف: <b>${esc(r.cutoff_date || '')} ${esc(r.cutoff_time || '')}</b></div>
+      <div class="supmeta">⏰ کٹ آف: <b>${esc(r.cutoff_date || '')} ${esc(r.cutoff_time || '')}</b> &nbsp; 🕙 کھلے گا: <b>${esc(r.open_time || '10:00')}</b></div>
     </div>`).join('');
   const p2 = n => String(n).padStart(2, '0');
   const ro = (d.recent_orders || []).map(o => {
@@ -374,15 +374,19 @@ function tickClock() {
   const f = () => { el.textContent = new Intl.DateTimeFormat('ur-PK', { timeZone: 'Asia/Karachi', hour: '2-digit', minute: '2-digit', second: '2-digit' }).format(new Date()); };
   f(); setInterval(f, 1000);
 }
-function startCountdown(cdate, ctime, label, boxId) {
+function startCountdown(cdate, ctime, label, boxId, opts) {
+  opts = opts || {};
   if (countdownTimer) clearInterval(countdownTimer);
   const box = document.getElementById(boxId || 'cdBox'); if (!box || !cdate) return;
   const target = new Date(`${cdate}T${ctime || '23:59'}:00+05:00`).getTime();
   const f = () => {
     const ms = target - Date.now();
-    if (ms <= 0) { box.innerHTML = `<div class="countdown">⏰ <b>${esc(label)}</b> کا کٹ آف وقت گزر چکا ہے</div>`; clearInterval(countdownTimer); return; }
+    if (ms <= 0) {
+      if (opts.onDone) { clearInterval(countdownTimer); opts.onDone(); return; }
+      box.innerHTML = `<div class="countdown">⏰ <b>${esc(label)}</b> کا کٹ آف وقت گزر چکا ہے</div>`; clearInterval(countdownTimer); return;
+    }
     const h = Math.floor(ms / 36e5), m = Math.floor(ms % 36e5 / 6e4), s = Math.floor(ms % 6e4 / 1e3);
-    box.innerHTML = `<div class="countdown"><small>⏰ کٹ آف تک باقی وقت — ${esc(label)}</small><div class="t">${h}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}</div></div>`;
+    box.innerHTML = `<div class="countdown"><small>${esc(opts.cap || '⏰ کٹ آف تک باقی وقت')} — ${esc(label)}</small><div class="t">${h}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}</div></div>`;
   };
   f(); countdownTimer = setInterval(f, 1000);
 }
@@ -390,7 +394,7 @@ function startCountdown(cdate, ctime, label, boxId) {
 // ---------- order form (shop / admin) ----------
 let orderDraft = {};
 // ---------- supply calendar (super_admin + factory) ----------
-let calYear = null, calMonth = null, CALDAYS = [], CALDEF = '20:00';
+let calYear = null, calMonth = null, CALDAYS = [], CALDEF = { cutoff: '20:00', open: '10:00' };
 async function renderSupplyCalendar() {
   const now = new Date();
   if (calYear == null) { calYear = now.getFullYear(); calMonth = now.getMonth(); }
@@ -399,7 +403,7 @@ async function renderSupplyCalendar() {
   const lastDay = new Date(calYear, calMonth + 1, 0).getDate();
   const to = `${calYear}-${p2(calMonth + 1)}-${lastDay}`;
   try { CALDAYS = await api('GET', `/api/supply-days?from=${from}&to=${to}`); } catch (e) { CALDAYS = []; }
-  try { const sd = await api('GET', '/api/supply-default'); if (sd && sd.cutoff_time) CALDEF = sd.cutoff_time; } catch (e) {}
+  try { const sd = await api('GET', '/api/supply-default'); if (sd) { if (sd.cutoff_time) CALDEF.cutoff = sd.cutoff_time; if (sd.open_time) CALDEF.open = sd.open_time; } } catch (e) {}
   const byDate = {}; CALDAYS.forEach(d => { byDate[d.supply_date] = d; });
   const monthName = new Intl.DateTimeFormat('ur-PK', { month: 'long', year: 'numeric' }).format(new Date(calYear, calMonth, 1));
   const todayS = karachiToday();
@@ -434,7 +438,7 @@ function calNav(d) {
 }
 async function calTap(ds, id) {
   if (!id) {
-    if (!confirm(`📅 ${ds} کو سپلائی day بنائیں؟\n⏰ کٹ آف: پچھلے دن رات ${CALDEF} بجے`)) return;
+    if (!confirm(`📅 ${ds} کو سپلائی day بنائیں؟\n🕙 آرڈر: پچھلے دن ${CALDEF.open} سے\n⏰ کٹ آف: پچھلے دن ${CALDEF.cutoff} بجے`)) return;
     try { await api('POST', '/api/supply-days', { date: ds }); }
     catch (e) { alert('خرابی: ' + (e.message === 'already_exists' ? 'یہ دن پہلے سے لگا ہے' : e.message)); return; }
     renderSupplyCalendar(); return;
@@ -443,22 +447,27 @@ async function calTap(ds, id) {
   $('#calDetail').innerHTML = `
     <div class="caldetail">
       <h3>🚚 سپلائی: ${esc(s.supply_date)}</h3>
-      <div class="supmeta">🧾 ${s.order_count} آرڈر &nbsp; ⏰ کٹ آف: <b>${esc(s.cutoff_date || '')} ${esc(s.cutoff_time || '')}</b></div>
+      <div class="supmeta">🧾 ${s.order_count} آرڈر</div>
+      <div class="supmeta">🕙 آرڈر کھلے گا: <b>${esc(s.cutoff_date || '')} ${esc(s.open_time || CALDEF.open)}</b></div>
+      <div class="supmeta">⏰ کٹ آف: <b>${esc(s.cutoff_date || '')} ${esc(s.cutoff_time || '')}</b></div>
       <div class="formgrid">
-        <label>کٹ آف ٹائم بدلیں<br><input type="time" id="calCt" value="${esc(s.cutoff_time || '20:00')}"></label>
-        <label><br><button class="btn small green" onclick="calSaveCt(${s.id})">💾 محفوظ کریں</button></label>
+        <label>آرڈر کھلنے کا ٹائم<br><input type="time" id="calOt" value="${esc(s.open_time || CALDEF.open)}"></label>
+        <label>کٹ آف ٹائم<br><input type="time" id="calCt" value="${esc(s.cutoff_time || CALDEF.cutoff)}"></label>
       </div>
-      <button class="btn small danger" onclick="calRemove(${s.id},${s.order_count})">🗑 یہ سپلائی ہٹائیں</button>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;margin:8px 0">
+        <button class="btn small green" onclick="calSaveCt(${s.id})">💾 ٹائم محفوظ کریں</button>
+        <button class="btn small danger" onclick="calRemove(${s.id},${s.order_count})">🗑 یہ سپلائی ہٹائیں</button>
+      </div>
       <div id="calMove"></div>
     </div>`;
   $('#calDetail').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
 }
 async function calSaveCt(id) {
-  const t = $('#calCt').value;
-  if (!t) { alert('ٹائم لکھیں'); return; }
-  try { await api('PUT', '/api/supply-days/' + id, { cutoff_time: t }); }
+  const t = $('#calCt').value, o = $('#calOt').value;
+  if (!t || !o) { alert('ٹائم لکھیں'); return; }
+  try { await api('PUT', '/api/supply-days/' + id, { cutoff_time: t, open_time: o }); }
   catch (e) { alert('خرابی: ' + e.message); return; }
-  alert('کٹ آف ٹائم اپڈیٹ ہو گیا ✅');
+  alert('ٹائم اپڈیٹ ہو گیا ✅');
   renderSupplyCalendar();
 }
 async function calRemove(id, n) {
@@ -493,11 +502,17 @@ async function renderOrderForm() {
   const shopOpts = isShop
     ? `<input type="hidden" id="ofShop" value="${ME.shop_id}"><div class="kbd">🏪 دکان: <b>${esc(ME.shop_name || '')}</b></div>`
     : `<label>دکان<br><select id="ofShop">${CACHE.shops.filter(s => s.active).map(s => `<option value="${s.id}">${esc(s.name)}</option>`).join('')}</select></label>`;
-  // Nearest OPEN supply day is auto-selected — shop never picks a date.
-  const open = routes
-    .filter(r => r.supply_date && !cutoffPassedClient(r.cutoff_date, r.cutoff_time))
-    .sort((a, b) => String(a.supply_date).localeCompare(String(b.supply_date)));
+  // Order window: opens at open_time on cutoff_date, closes at cutoff_time.
+  // Nearest currently-OPEN supply day is auto-selected — shop never picks a date.
+  const winTs = r => ({
+    open: r.cutoff_date ? new Date(`${r.cutoff_date}T${r.open_time || '10:00'}:00+05:00`).getTime() : 0,
+    cut: r.cutoff_date ? new Date(`${r.cutoff_date}T${r.cutoff_time || '23:59'}:00+05:00`).getTime() : Infinity,
+  });
+  const nowTs = Date.now();
+  const bySup = (a, b) => String(a.supply_date).localeCompare(String(b.supply_date));
+  const open = routes.filter(r => { if (!r.supply_date) return false; const w = winTs(r); return nowTs >= w.open && nowTs <= w.cut; }).sort(bySup);
   const sup = open[0] || null;
+  const nextUp = routes.filter(r => { if (!r.supply_date) return false; return winTs(r).open > nowTs; }).sort(bySup)[0] || null;
   const catsHtml = cats.map(c => {
     const prods = products.filter(p => p.category_id === c.id);
     if (!prods.length) return '';
@@ -512,6 +527,10 @@ async function renderOrderForm() {
     <input type="hidden" id="ofDate" value="${esc(sup.supply_date || '')}">
     <div class="supbanner">🚚 <b>سپلائی: ${esc(sup.supply_date || '')}</b> &nbsp; ⏰ کٹ آف: <b>${esc(sup.cutoff_date || '')} ${esc(sup.cutoff_time || '')}</b></div>
     <div id="ofCd"></div>`
+    : nextUp ? `
+    <input type="hidden" id="ofRoute" value=""><input type="hidden" id="ofDate" value="">
+    <div class="lockbar">🕙 اگلی سپلائی (<b>${esc(nextUp.supply_date || '')}</b>) کے آرڈر <b>${esc(nextUp.cutoff_date || '')} ${esc(nextUp.open_time || '10:00')}</b> بجے کھلیں گے</div>
+    <div id="ofCd"></div>`
     : `<div class="lockbar">📢 ابھی کوئی سپلائی announce نہیں ہوئی — اعلان کا انتظار کریں</div>
        <input type="hidden" id="ofRoute" value=""><input type="hidden" id="ofDate" value="">`}
     <div class="formgrid">
@@ -522,6 +541,8 @@ async function renderOrderForm() {
     <div class="err" id="ofErr"></div>
     <button class="btn green" onclick="submitOrder()"${sup ? '' : ' disabled'}>✅ آرڈر بھیجیں</button>`;
   if (sup) startCountdown(sup.cutoff_date, sup.cutoff_time, sup.name, 'ofCd');
+  else if (nextUp) startCountdown(nextUp.cutoff_date, nextUp.open_time || '10:00', nextUp.name, 'ofCd',
+    { cap: '🕙 آرڈر کھلنے میں باقی وقت', onDone: () => renderOrderForm() });
 }
 function cutoffPassedClient(cdate, ctime) {
   if (!cdate) return false;
@@ -570,7 +591,7 @@ async function submitOrder() {
     alert('آرڈر محفوظ ہو گیا ✅');
     document.querySelectorAll('#v-order input[data-pid]').forEach(i => i.value = '');
   } catch (e) {
-    $('#ofErr').textContent = e.message === 'cutoff_passed' ? '⏰ کٹ آف وقت گزر چکا — آرڈر بند ہے' : e.message === 'route_required' ? 'روٹ منتخب کریں' : 'خرابی: ' + e.message;
+    $('#ofErr').textContent = e.message === 'cutoff_passed' ? '⏰ کٹ آف وقت گزر چکا — آرڈر بند ہے' : e.message === 'not_open_yet' ? '🕙 آرڈر ابھی نہیں کھلا — مقررہ وقت کا انتظار کریں' : e.message === 'route_required' ? 'روٹ منتخب کریں' : 'خرابی: ' + e.message;
   }
 }
 
