@@ -118,6 +118,7 @@ CREATE TABLE IF NOT EXISTS webauthn_creds (
 try { db.exec(`ALTER TABLE users ADD COLUMN phone TEXT DEFAULT ''`); } catch (e) {}
 try { db.exec(`ALTER TABLE users ADD COLUMN avatar TEXT DEFAULT ''`); } catch (e) {}
 try { db.exec(`ALTER TABLE shops ADD COLUMN image TEXT DEFAULT ''`); } catch (e) {}
+try { db.exec(`ALTER TABLE routes ADD COLUMN open_time TEXT DEFAULT '10:00'`); } catch (e) {}
 
 const SECTIONS = ['dashboard','orders','order_history','shops','products','categories','units','vehicles','routes','schedule','reports','users'];
 
@@ -646,7 +647,7 @@ app.get('/api/order-catalog', requireLogin, requireSection('orders', 'view'), (r
   const cats = db.prepare('SELECT id, name FROM categories ORDER BY sort, name').all();
   const products = db.prepare(`SELECT p.id, p.name, p.category_id, u.name AS unit_name
     FROM products p LEFT JOIN units u ON u.id = p.unit_id WHERE p.active = 1 ORDER BY p.name`).all();
-  const routes = db.prepare('SELECT id, name, supply_date, cutoff_date, cutoff_time FROM routes WHERE active = 1 ORDER BY id DESC').all();
+  const routes = db.prepare('SELECT id, name, supply_date, cutoff_date, cutoff_time, open_time FROM routes WHERE active = 1 ORDER BY id DESC').all();
   res.json({ cats, products, routes });
 });
 
@@ -665,31 +666,44 @@ app.get('/api/supply-days', requireLogin, (req, res) => {
   res.json(supplyDayInfo(from, to));
 });
 app.get('/api/supply-default', requireLogin, requireSection('routes', 'full'), (req, res) => {
-  res.json({ cutoff_time: appSetting('default_cutoff_time') || '20:00' });
+  res.json({ cutoff_time: appSetting('default_cutoff_time') || '20:00',
+             open_time: appSetting('default_open_time') || '10:00' });
 });
 app.post('/api/supply-days', requireLogin, requireSection('routes', 'full'), (req, res) => {
-  const { date, cutoff_time } = req.body || {};
+  const { date, cutoff_time, open_time } = req.body || {};
   if (!date || !/^\d{4}-\d{2}-\d{2}$/.test(String(date))) return res.status(400).json({ error: 'bad_date' });
   if (db.prepare('SELECT id FROM routes WHERE active=1 AND supply_date=?').get(date))
     return res.status(400).json({ error: 'already_exists' });
   const given = cutoff_time && /^\d{2}:\d{2}$/.test(String(cutoff_time)) ? cutoff_time : null;
   const ct = given || appSetting('default_cutoff_time') || '20:00';
   if (given) appSetting('default_cutoff_time', given); // remember last saved time
+  const givenOpen = open_time && /^\d{2}:\d{2}$/.test(String(open_time)) ? open_time : null;
+  const ot = givenOpen || appSetting('default_open_time') || '10:00';
+  if (givenOpen) appSetting('default_open_time', givenOpen); // remember last saved time
   const cd = new Date(date + 'T12:00:00'); cd.setDate(cd.getDate() - 1);
   const cutoff_date = cd.toISOString().slice(0, 10);
   const veh = db.prepare('SELECT id FROM vehicles WHERE active=1 ORDER BY id LIMIT 1').get();
-  const r = db.prepare(`INSERT INTO routes (name, vehicle_id, supply_date, cutoff_date, cutoff_time, active)
-    VALUES (?,?,?,?,?,1)`).run('🚚 سپلائی ' + date, veh ? veh.id : null, date, cutoff_date, ct);
-  notifyAll('🗓 نئی سپلائی — گلشن فیکٹری', `سپلائی: ${date} | کٹ آف: ${cutoff_date} ${ct} — آرڈر بنا لیں`);
+  const r = db.prepare(`INSERT INTO routes (name, vehicle_id, supply_date, cutoff_date, cutoff_time, open_time, active)
+    VALUES (?,?,?,?,?,?,1)`).run('🚚 سپلائی ' + date, veh ? veh.id : null, date, cutoff_date, ct, ot);
+  notifyAll('🗓 نئی سپلائی — گلشن فیکٹری', `سپلائی: ${date} | آرڈر: ${cutoff_date} ${ot} سے | کٹ آف: ${cutoff_date} ${ct} — آرڈر بنا لیں`);
   res.json({ ok: true, id: r.lastInsertRowid });
 });
 app.put('/api/supply-days/:id', requireLogin, requireSection('routes', 'full'), (req, res) => {
-  const { cutoff_time } = req.body || {};
-  if (!cutoff_time || !/^\d{2}:\d{2}$/.test(String(cutoff_time))) return res.status(400).json({ error: 'bad_time' });
-  db.prepare('UPDATE routes SET cutoff_time=? WHERE id=?').run(cutoff_time, req.params.id);
-  appSetting('default_cutoff_time', cutoff_time); // remember last saved time
-  const r = db.prepare('SELECT supply_date, cutoff_date FROM routes WHERE id=?').get(req.params.id);
-  if (r) notifyAll('⏰ کٹ آف اپڈیٹ — گلشن فیکٹری', `سپلائی ${r.supply_date} کا کٹ آف: ${r.cutoff_date} ${cutoff_time}`);
+  const { cutoff_time, open_time } = req.body || {};
+  const sets = [], args = [];
+  if (cutoff_time && /^\d{2}:\d{2}$/.test(String(cutoff_time))) {
+    sets.push('cutoff_time=?'); args.push(cutoff_time);
+    appSetting('default_cutoff_time', cutoff_time); // remember last saved time
+  }
+  if (open_time && /^\d{2}:\d{2}$/.test(String(open_time))) {
+    sets.push('open_time=?'); args.push(open_time);
+    appSetting('default_open_time', open_time); // remember last saved time
+  }
+  if (!sets.length) return res.status(400).json({ error: 'bad_time' });
+  args.push(req.params.id);
+  db.prepare(`UPDATE routes SET ${sets.join(',')} WHERE id=?`).run(...args);
+  const r = db.prepare('SELECT supply_date, cutoff_date, cutoff_time, open_time FROM routes WHERE id=?').get(req.params.id);
+  if (r) notifyAll('⏰ وقت اپڈیٹ — گلشن فیکٹری', `سپلائی ${r.supply_date}: آرڈر ${r.open_time} سے، کٹ آف ${r.cutoff_date} ${r.cutoff_time}`);
   res.json({ ok: true });
 });
 app.delete('/api/supply-days/:id', requireLogin, requireSection('routes', 'full'), (req, res) => {
@@ -837,6 +851,13 @@ function cutoffPassed(route) {
   const dt = new Date(`${route.cutoff_date}T${t}:00+05:00`);
   return Date.now() > dt.getTime();
 }
+function notOpenYet(route) {
+  if (!route || !route.cutoff_date) return false;
+  const t = route.open_time || appSetting('default_open_time') || '10:00';
+  // ordering opens on the cutoff date at open_time (Asia/Karachi)
+  const dt = new Date(`${route.cutoff_date}T${t}:00+05:00`);
+  return Date.now() < dt.getTime();
+}
 
 // ---------- Orders ----------
 app.get('/api/orders', requireLogin, requireSection('orders', 'view'), (req, res) => {
@@ -867,6 +888,7 @@ app.post('/api/orders', requireLogin, requireSection('orders', 'full'), (req, re
   if (!route) return res.status(400).json({ error: 'route_required' });
   const override = req.user.role === 'super_admin' && b.override_cutoff;
   if (route && cutoffPassed(route) && !override) return res.status(400).json({ error: 'cutoff_passed' });
+  if (route && notOpenYet(route) && !override) return res.status(400).json({ error: 'not_open_yet' });
   const ins = db.transaction(() => {
     const r = db.prepare('INSERT INTO orders (shop_id, route_id, delivery_date, note, created_by) VALUES (?,?,?,?,?)')
       .run(shop_id, b.route_id || null, b.delivery_date, b.note || '', req.user.id);
@@ -890,6 +912,7 @@ app.put('/api/orders/:id', requireLogin, requireSection('orders', 'full'), (req,
   const route = b.route_id ? db.prepare('SELECT * FROM routes WHERE id=?').get(b.route_id) : null;
   const override = req.user.role === 'super_admin' && b.override_cutoff;
   if (route && cutoffPassed(route) && !override && req.user.role === 'shop') return res.status(400).json({ error: 'cutoff_passed' });
+  if (route && notOpenYet(route) && !override && req.user.role === 'shop') return res.status(400).json({ error: 'not_open_yet' });
   db.transaction(() => {
     db.prepare('UPDATE orders SET route_id=?, delivery_date=?, note=? WHERE id=?')
       .run(b.route_id ?? o.route_id, b.delivery_date || o.delivery_date, b.note ?? o.note, o.id);
@@ -941,17 +964,18 @@ app.get('/api/dashboard', requireLogin, requireSection('dashboard'), (req, res) 
   const sf = own ? `AND shop_id=${own}` : '';
   const sfj = own ? `AND o.shop_id=${own}` : ''; // JOINed queries (orders+users both have shop_id)
   const today = new Date().toISOString().slice(0, 10);
+  const ktoday = new Date(Date.now() + 5 * 3600e3).toISOString().slice(0, 10); // Karachi date
   const shopName = own ? (db.prepare('SELECT name FROM shops WHERE id=?').get(own) || {}).name || '' : '';
   const upcoming = own
     ? db.prepare(`SELECT DISTINCT r.*, v.name AS vehicle_name,
         (SELECT COUNT(*) FROM orders o WHERE o.route_id=r.id) AS order_count FROM routes r
         LEFT JOIN vehicles v ON v.id=r.vehicle_id
         JOIN orders o ON o.route_id=r.id AND o.shop_id=?
-        WHERE r.active=1 ORDER BY r.supply_date LIMIT 5`).all(own)
+        WHERE r.active=1 AND r.supply_date >= ? ORDER BY r.supply_date LIMIT 5`).all(own, ktoday)
     : db.prepare(`SELECT r.*, v.name AS vehicle_name,
         (SELECT COUNT(*) FROM orders o WHERE o.route_id=r.id) AS order_count FROM routes r
         LEFT JOIN vehicles v ON v.id=r.vehicle_id
-        WHERE r.active=1 ORDER BY r.supply_date LIMIT 5`).all();
+        WHERE r.active=1 AND r.supply_date >= ? ORDER BY r.supply_date LIMIT 5`).all(ktoday);
   const dailyRows = db.prepare(`SELECT date(created_at, '+5 hours') d, COUNT(*) c FROM orders
     WHERE date(created_at, '+5 hours') >= date('now', '+5 hours', '-6 days') ${sf} GROUP BY d`).all();
   const daily = [];

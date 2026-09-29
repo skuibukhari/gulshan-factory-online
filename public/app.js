@@ -366,7 +366,7 @@ async function renderDashboard() {
     <h2 class="st">📋 <span>${d.scope === 'shop' ? 'میرے تازہ ترین آرڈرز' : 'تازہ ترین آرڈرز'}</span></h2>
     <div class="drows">${ro || '<p class="note">ابھی کوئی آرڈر نہیں</p>'}</div>`;
   tickClock();
-  const soon = d.upcoming.find(r => r.cutoff_date);
+  const soon = (d.upcoming || []).find(r => r.cutoff_date && !cutoffPassedClient(r.cutoff_date, r.cutoff_time));
   if (soon) startCountdown(soon.cutoff_date, soon.cutoff_time, soon.name);
 }
 function tickClock() {
