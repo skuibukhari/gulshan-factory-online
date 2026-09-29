@@ -157,7 +157,12 @@ async function enterApp() {
   renderTopbarDp();
   await refreshCache();
   buildMenu();
-  showView(firstAllowedView());
+  const hashView = (location.hash || '').slice(1);
+  _showView(hashView && viewAllowed(hashView) ? hashView : firstAllowedView());
+  try {
+    history.replaceState({ view: 'dashboard' }, '', '#dashboard');
+    if (CUR_VIEW !== 'dashboard') history.pushState({ view: CUR_VIEW }, '', '#' + CUR_VIEW);
+  } catch (e) {}
   setupPush(); // order notifications for staff (non-blocking)
 }
 
@@ -242,8 +247,10 @@ function buildMenu() {
   const out = document.createElement('button');
   out.textContent = '🚪 لاگ آؤٹ'; out.onclick = doLogout; nav.appendChild(out);
 }
-function showView(name) {
+let CUR_VIEW = null;
+function _showView(name) {
   if (!viewAllowed(name)) name = firstAllowedView();
+  CUR_VIEW = name;
   document.querySelectorAll('.view').forEach(v => v.classList.remove('on'));
   const el = $('#v-' + (name === 'order_history' ? 'history' : name)); if (el) el.classList.add('on');
   document.querySelectorAll('#menuNav button').forEach(b => b.classList.toggle('active', b.dataset.view === name));
@@ -252,6 +259,20 @@ function showView(name) {
      units: () => renderMaster('units'), products: renderProducts, shops: () => renderMaster('shops'),
      reports: renderReports }[name] || (() => {}))();
 }
+function showView(name) {
+  _showView(name);
+  // Back hamesha dashboard par laye: dashboard ke upar sirf 1 entry rakho
+  try {
+    const top = history.state && history.state.view;
+    if (CUR_VIEW === 'dashboard' || (top && top !== 'dashboard')) history.replaceState({ view: CUR_VIEW }, '', '#' + CUR_VIEW);
+    else history.pushState({ view: CUR_VIEW }, '', '#' + CUR_VIEW);
+  } catch (e) {}
+}
+// Android back button: pichle tab par wapas, pehle tab se back = app band (normal)
+window.addEventListener('popstate', e => {
+  const v = e.state && e.state.view;
+  _showView(v || firstAllowedView());
+});
 function toggleMenu(open) {
   $('#sidemenu').classList.toggle('on', open);
   $('#scrim').classList.toggle('on', open);
