@@ -298,7 +298,7 @@ async function renderDashboard() {
   const d = await api('GET', '/api/dashboard');
   const cd = d.upcoming.map(r => `
     <div class="supcard">
-      <div class="suphead">🚚 <b>${esc(r.name)}</b>${r.order_count != null ? ` <span class="obadge">🧾 ${r.order_count} آرڈر</span>` : ''}</div>
+      <div class="suphead">🚚 <b>${esc(r.name)}</b>${(d.scope !== 'shop' && r.order_count != null) ? ` <span class="obadge">🧾 ${r.order_count} آرڈر</span>` : ''}</div>
       <div class="supmeta">🚛 ${esc(r.vehicle_name || '—')} &nbsp; 📅 سپلائی: <b>${esc(r.supply_date || '—')}</b></div>
       <div class="supmeta">⏰ کٹ آف: <b>${esc(r.cutoff_date || '')} ${esc(r.cutoff_time || '')}</b> &nbsp; 🕙 کھلے گا: <b>${esc(r.open_time || '10:00')}</b></div>
     </div>`).join('');
@@ -308,7 +308,8 @@ async function renderDashboard() {
     const when = isNaN(dt) ? '' : `${p2(dt.getDate())}-${p2(dt.getMonth() + 1)} ${p2(dt.getHours())}:${p2(dt.getMinutes())}`;
     const simg = o.shop_image ? '/images/' + o.shop_image : null;
     const uimg = o.user_avatar ? '/images/' + o.user_avatar : null;
-    return `<div class="drow">
+    const clickAttr = can('orders', 'full') ? ` onclick="gotoOrder('${esc(o.delivery_date || '')}')" style="cursor:pointer"` : '';
+    return `<div class="drow"${clickAttr}>
       ${shopAvatar(o.shop_name, simg)}
       <div class="drmain">
         <div class="drshop">${esc(o.shop_name)} <span class="ordn">#${o.id}</span></div>
@@ -612,14 +613,20 @@ function orderCard(o) {
   </div>`;
 }
 async function renderOrders() {
-  const q = `date=${karachiToday()}`;
+  const defDate = ORD_FILTER_DATE || karachiToday(); ORD_FILTER_DATE = null;
+  const q = `date=${defDate}`;
   const list = await api('GET', '/api/orders?' + q);
-  $('#v-orders').innerHTML = `<h2 class="st">📦 <span>آرڈرز</span> <small class="note">(آج)</small></h2>
-    <div class="formgrid"><label>تاریخ<br><input type="date" id="olDate" value="${karachiToday()}"></label>
+  $('#v-orders').innerHTML = `<h2 class="st">📦 <span>آرڈرز</span> <small class="note">(${esc(defDate)})</small></h2>
+    <div class="formgrid"><label>تاریخ<br><input type="date" id="olDate" value="${defDate}"></label>
     <label>روٹ<br><select id="olRoute"><option value="">تمام</option>${CACHE.routes.map(r => `<option value="${r.id}">${esc(r.name)}</option>`).join('')}</select></label>
     <label><br><button class="btn small dark" onclick="filterOrders()">🔍 دیکھیں</button></label></div>
     <div id="olBody" class="ocards">${list.map(orderCard).join('') || '<p class="note">کوئی آرڈر نہیں</p>'}</div>
     ${can('orders', 'full') ? '<button class="btn" onclick="showView(\'order\')">🧾 نیا آرڈر</button>' : ''}`;
+}
+let ORD_FILTER_DATE = null;
+function gotoOrder(deliveryDate) {
+  ORD_FILTER_DATE = deliveryDate || karachiToday();
+  showView('orders');
 }
 async function filterOrders() {
   const d = $('#olDate').value, r = $('#olRoute').value;
