@@ -1292,10 +1292,11 @@ async function delDailyOrder(id) {
 async function renderDailyBoard(di) {
   const isAdmin = ME.role === 'super_admin';
   const date = DAILY_VIEW_DATE || di.order_date;
-  const [orders, totals, tracker] = await Promise.all([
+  const [orders, totals, tracker, catalog] = await Promise.all([
     api('GET', '/api/daily/orders?date=' + encodeURIComponent(date)),
     api('GET', '/api/daily/totals?date=' + encodeURIComponent(date)),
     api('GET', '/api/daily/tracker?date=' + encodeURIComponent(date)),
+    api('GET', '/api/daily/catalog'),
   ]);
   const isCurrent = date === di.order_date;
   const rec = tracker.shops.filter(s => s.ordered), pend = tracker.shops.filter(s => !s.ordered);
@@ -1314,7 +1315,20 @@ async function renderDailyBoard(di) {
       ${rec.length ? `<div style="margin:6px 0;font-size:14px"><b>✅ آ گیا:</b> ${rec.map(s => `${esc(s.name)} <small style="opacity:.8">${fmtTime(s.at)} · ${s.items} آئٹم</small>`).join(' ، ')}</div>` : ''}
       ${pend.length ? `<div style="font-size:14px"><b>⏳ باقی:</b> ${pend.map(s => esc(s.name)).join(' ، ')}</div>` : '<div><b>🎉 سب دکانوں کا آرڈر آ گیا!</b></div>'}
     </div>`;
-  // Category-wise cards (RateVault style)
+  // 📋 روزانہ مینیو — selected items/shops (RateVault jaisa), order ho ya na ho
+  const menuCats = catalog.filter(c => c.products.length);
+  const menuHtml = `
+    <div class="supcard">
+      <div class="suphead">📋 <b>روزانہ مینیو</b> <span class="obadge">${menuCats.reduce((n, c) => n + c.products.length, 0)} آئٹم · ${tracker.shops.length} دکانیں</span></div>
+      ${menuCats.map(c => `
+        <div style="margin:10px 0">
+          <div class="cathead">🗂 ${esc(c.name)}</div>
+          ${c.products.map(p => `<div class="prow"><span class="pn">${esc(p.name)}</span><span class="un">${esc(p.unit_name || '')}</span></div>`).join('')}
+        </div>`).join('') || '<p class="note">⚠️ کوئی آئٹم منتخب نہیں — 📦 روزانہ ڈیٹا سے شامل کریں</p>'}
+      <div class="cathead">🏪 دکانیں</div>
+      ${tracker.shops.length ? `<p>${tracker.shops.map(s => `🏪 ${esc(s.name)}`).join(' ، ')}</p>` : '<p class="note">⚠️ کوئی دکان منتخب نہیں — 📦 روزانہ ڈیٹا سے شامل کریں</p>'}
+    </div>`;
+  // Category-wise totals cards
   const cats = {};
   totals.forEach(t => { const k = t.category_name || 'متفرق'; (cats[k] = cats[k] || []).push(t); });
   const totHtml = Object.entries(cats).map(([cn, items]) => `
@@ -1337,6 +1351,7 @@ async function renderDailyBoard(di) {
     ${isCurrent && !di.cutoff_passed ? `<div id="dCd"></div>` : ''}
     ${isCurrent && di.cutoff_passed ? `<div class="lockbar">🔒 کٹ آف (${esc(di.cutoff_time)}) گزر چکا ہے</div>` : ''}
     ${trackerHtml}
+    ${menuHtml}
     <div class="supcard">
       <div class="suphead">🖨 <b>پرنٹس</b></div>
       <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px">
