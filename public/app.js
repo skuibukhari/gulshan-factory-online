@@ -724,9 +724,9 @@ function printDateHistory() {
 // ---------- masters ----------
 const MASTER_CONF = {
   vehicles: { title: '🚚 گاڑیاں', fields: [['name', 'نام'], ['plate', 'نمبر پلیٹ']], cols: ['نام', 'نمبر پلیٹ'] },
-  cats: { title: '🗂 کیٹیگریز', api: 'categories', dailyKind: 'category', fields: [['name', 'نام'], ['sort', 'ترتیب']], cols: ['نام', 'ترتیب'] },
-  units: { title: '⚖ یونٹس', dailyKind: 'unit', fields: [['name', 'نام']], cols: ['نام'] },
-  shops: { title: '🏪 دکانیں', dailyKind: 'shop', fields: [['name', 'نام'], ['phone', 'فون'], ['address', 'پتہ']], cols: ['نام', 'فون', 'پتہ'] },
+  cats: { title: '🗂 کیٹیگریز', api: 'categories', fields: [['name', 'نام'], ['sort', 'ترتیب']], cols: ['نام', 'ترتیب'] },
+  units: { title: '⚖ یونٹس', fields: [['name', 'نام']], cols: ['نام'] },
+  shops: { title: '🏪 دکانیں', fields: [['name', 'نام'], ['phone', 'فون'], ['address', 'پتہ']], cols: ['نام', 'فون', 'پتہ'] },
 };
 // Rozana me kaun hai — tick ki halat ke liye
 let _dailyIds = null;
@@ -747,33 +747,28 @@ async function toggleDaily(kind, id, btn) {
   try {
     await api('POST', `/api/daily/toggle/${kind}/${id}`, { on });
     _dailyIds = null; // refresh
-    const key = { category: 'cats', unit: 'units', shop: 'shops' }[kind];
-    if (key) renderMaster(key); else renderProducts();
+    // jis daily screen par hain wahi dobara
+    ({ category: renderDailyCats, unit: renderDailyUnits, product: renderDailyProducts, shop: renderDailyShops })[kind]();
   } catch (e) {
     alert(e.message === 'in_use' ? '⚠️ Ye rozana me istemal ho raha hai — pehle uska data hatain' : 'خرابی: ' + e.message);
   }
-}
-function dailyTickBtn(kind, id, inDaily) {
-  return `<button class="btn small${inDaily ? ' green' : ' ghost'}" title="روزانہ آرڈر میں ${inDaily ? 'شامل ہے' : 'شامل کریں'}" onclick="toggleDaily('${kind}',${id},this)">📝${inDaily ? '✓' : ''}</button>`;
 }
 async function renderMaster(key) {
   const conf = MASTER_CONF[key];
   const endpoint = conf.api || key;
   const sec = VIEW_SEC[key] || key;
   const list = await api('GET', '/api/' + endpoint);
-  const ids = conf.dailyKind ? await getDailyIds() : null;
   const isShops = key === 'shops';
   const rows = list.map(r => `<tr>${isShops ? `<td>${r.image ? `<img class="shimg" src="/images/${esc(r.image)}" alt="">` : '<span class="note">—</span>'}
     ${can(sec, 'full') ? `<br><label class="btn small ghost" style="cursor:pointer">🖼 <input type="file" accept="image/*" style="display:none" onchange="uploadShopImage(${r.id},this)"></label>` : ''}</td>` : ''}${conf.fields.map(([f]) => `<td>${esc(r[f])}</td>`).join('')}
     <td>${r.active === 0 ? '<span class="badge off">بند</span>' : '<span class="badge">فعال</span>'}
     ${can(sec, 'full') ? ` <button class="btn small ghost" onclick="masterEdit('${key}','${endpoint}',${r.id})">✏</button>
-    ${conf.dailyKind && can('daily', 'full') ? dailyTickBtn(conf.dailyKind, r.id, ids[conf.dailyKind].has(r.id)) : ''}
     <button class="btn small danger" onclick="masterDel('${endpoint}',${r.id},'${key}')">🗑</button>` : ''}</td></tr>`).join('');
   const form = can(sec, 'full') ? `
     <div class="formgrid" id="mf-${key}">
       ${conf.fields.map(([f, l]) => `<label>${l}<br><input id="mf-${key}-${f}"></label>`).join('')}
       <label><br><button class="btn small green" onclick="masterAdd('${key}','${endpoint}')">➕ شامل کریں</button></label>
-    </div>${conf.dailyKind ? '<p class="note">📝✓ = روزانہ آرڈر میں شامل ہے — بٹن دبائیں شامل/نکالنے کے لیے</p>' : ''}` : '';
+    </div>` : '';
   $('#v-' + key).innerHTML = `<h2 class="st">${conf.title}</h2>${form}
     <table><tr>${isShops ? '<th>تصویر</th>' : ''}${conf.cols.map(c => `<th>${c}</th>`).join('')}<th>حالت</th></tr>${rows || `<tr><td colspan=5>خالی</td></tr>`}</table>`;
 }
@@ -850,10 +845,8 @@ async function routeEdit(id) {
 // products
 async function renderProducts() {
   await refreshCache();
-  const ids = can('daily', 'full') ? await getDailyIds() : null;
   const rows = CACHE.products.map(p => `<tr><td>${esc(p.category_name || '—')}</td><td>${esc(p.name)}</td><td>${esc(p.unit_name || '—')}</td>
     <td>${can('products', 'full') ? `<button class="btn small ghost" onclick="prodEdit(${p.id})">✏</button>
-    ${ids ? dailyTickBtn('product', p.id, ids.product.has(p.id)) : ''}
     <button class="btn small danger" onclick="prodDel(${p.id})">🗑</button>` : ''}</td></tr>`).join('');
   const form = can('products', 'full') ? `
     <div class="formgrid">
@@ -861,7 +854,7 @@ async function renderProducts() {
       <label>آئٹم کا نام<br><input id="pf-name" placeholder="مثلاً Milky Bread Small"></label>
       <label>یونٹ<br><select id="pf-unit">${CACHE.units.map(u => `<option value="${u.id}">${esc(u.name)}</option>`).join('')}</select></label>
       <label><br><button class="btn small green" onclick="prodAdd()">➕ شامل کریں</button></label>
-    </div>${ids ? '<p class="note">📝✓ = روزانہ آرڈر میں شامل ہے — بٹن دبائیں شامل/نکالنے کے لیے</p>' : ''}` : '';
+    </div>` : '';
   $('#v-products').innerHTML = `<h2 class="st">🍞 <span>آئٹمز</span></h2>${form}
     <table><tr><th>کیٹیگری</th><th>نام</th><th>یونٹ</th><th></th></tr>${rows || '<tr><td colspan=4>خالی</td></tr>'}</table>`;
 }
@@ -1272,18 +1265,29 @@ async function renderDailyBoard(di) {
   ]);
   const isCurrent = date === di.order_date;
   const rec = tracker.shops.filter(s => s.ordered), pend = tracker.shops.filter(s => !s.ordered);
+  const pct = tracker.total ? Math.round(tracker.received / tracker.total * 100) : 0;
   const trackerHtml = `
-    <div class="supcard">
-      <div class="suphead">📊 <b>آرڈر ٹریکر</b> <span class="obadge">${tracker.received} / ${tracker.total} دکانیں</span></div>
-      ${rec.length ? `<div style="margin:8px 0"><b style="color:#2e7d32">✅ آ گیا:</b> ${rec.map(s => `${esc(s.name)} <small class="note">${fmtTime(s.at)} · ${s.items} آئٹم</small>`).join(' ، ')}</div>` : ''}
-      ${pend.length ? `<div><b style="color:#b3540e">⏳ باقی:</b> ${pend.map(s => esc(s.name)).join(' ، ')}</div>` : '<div><b style="color:#2e7d32">🎉 سب دکانوں کا آرڈر آ گیا!</b></div>'}
+    <div class="supcard" style="background:linear-gradient(135deg,#1b5e20,#2e7d32);color:#fff;border:none">
+      <div style="display:flex;justify-content:space-between;align-items:center">
+        <div><div style="font-size:13px;opacity:.85">📊 آرڈر ٹریکر</div>
+        <div style="font-size:32px;font-weight:bold">${tracker.received}<span style="font-size:18px;opacity:.7"> / ${tracker.total}</span></div>
+        <div style="font-size:13px;opacity:.85">دکانوں کا آرڈر آ گیا (${pct}%)</div></div>
+        <div style="font-size:40px">${pct === 100 ? '🎉' : '⏳'}</div>
+      </div>
+      <div style="background:rgba(255,255,255,.25);border-radius:8px;height:10px;margin:10px 0;overflow:hidden">
+        <div style="background:#fff;height:100%;width:${pct}%;border-radius:8px;transition:width .5s"></div>
+      </div>
+      ${rec.length ? `<div style="margin:6px 0;font-size:14px"><b>✅ آ گیا:</b> ${rec.map(s => `${esc(s.name)} <small style="opacity:.8">${fmtTime(s.at)} · ${s.items} آئٹم</small>`).join(' ، ')}</div>` : ''}
+      ${pend.length ? `<div style="font-size:14px"><b>⏳ باقی:</b> ${pend.map(s => esc(s.name)).join(' ، ')}</div>` : '<div><b>🎉 سب دکانوں کا آرڈر آ گیا!</b></div>'}
     </div>`;
-  let cur = null;
-  const totHtml = totals.map(t => {
-    const h = t.category_name !== cur ? `<div class="cathead">${esc(t.category_name || 'متفرق')}</div>` : '';
-    cur = t.category_name;
-    return h + `<div class="prow"><span class="pn">${esc(t.product_name)}</span><span class="un">${esc(t.unit_name || '')} · ${t.shop_count} دکان</span><b>${esc(t.total_qty)}</b></div>`;
-  }).join('');
+  // Category-wise cards (RateVault style)
+  const cats = {};
+  totals.forEach(t => { const k = t.category_name || 'متفرق'; (cats[k] = cats[k] || []).push(t); });
+  const totHtml = Object.entries(cats).map(([cn, items]) => `
+    <div class="ocard" style="margin-bottom:12px">
+      <div class="ochead"><b>🗂 ${esc(cn)}</b><span class="obadge">${items.length} آئٹم</span></div>
+      ${items.map(t => `<div class="prow"><span class="pn">${esc(t.product_name)}</span><span class="un">${esc(t.unit_name || '')} · ${t.shop_count} دکان</span><b style="font-size:18px">${esc(t.total_qty)}</b></div>`).join('')}
+    </div>`).join('');
   const shopF = DAILY_SHOP_FILTER;
   const ordersHtml = orders.filter(o => !shopF || String(o.shop_id) === shopF).map(o => `
     <div class="ocard">
@@ -1306,6 +1310,7 @@ async function renderDailyBoard(di) {
         ${tracker.shops.map(s => `<option value="${s.id}"${shopF === String(s.id) ? ' selected' : ''}>${esc(s.name)}${s.ordered ? ' ✅' : ''}</option>`).join('')}
       </select></label>
       <label><br><a class="btn small dark" target="_blank" href="/print?type=daily_total&date=${esc(date)}">🖨 کل پیداوار پرنٹ</a></label>
+      <label><br><a class="btn small dark" target="_blank" href="/print?type=daily_all&date=${esc(date)}">🖨🖨 سب کچھ پرنٹ (کل + تمام دکانیں)</a></label>
       ${isAdmin ? `<label><br><button class="btn small" onclick="renderDailyAccess()">⚙ ایکسس سیٹنگ</button></label>` : ''}
     </div>
     <h3 class="st">📋 کل پیداوار</h3>
@@ -1416,99 +1421,60 @@ function renderDailyData() {
     </div>`;
 }
 async function renderDailyCats() {
-  const list = await api('GET', '/api/daily-categories');
+  const [daily, supply] = await Promise.all([api('GET', '/api/daily-categories'), api('GET', '/api/categories')]);
+  const inD = new Set(daily.map(x => x.id));
+  const rows = supply.map(c => `<tr><td>${esc(c.name)}</td><td style="text-align:center">
+    ${inD.has(c.id)
+      ? `<button class="btn small green" onclick="toggleDaily('category',${c.id})">✓ شامل ہے</button>`
+      : `<button class="btn small" onclick="toggleDaily('category',${c.id})">➕ شامل کریں</button>`}
+  </td></tr>`).join('');
   $('#v-daily').innerHTML = `
     <h2 class="st">🗂 <span>روزانہ کیٹیگریز</span></h2>
     <button class="btn small" onclick="renderDailyData()">← واپس</button>
-    <button class="btn small dark" onclick="openDailyImport('categories')">📥 سپلائی سے منتخب کریں</button>
-    <div class="formgrid"><label>نئی کیٹیگری<br><input id="dc-name" placeholder="مثلاً Dry Cake"></label>
-    <label><br><button class="btn small green" onclick="dailyCatAdd()">➕ شامل کریں</button></label></div>
-    <table><tr><th>نام</th><th>حالت</th><th></th></tr>
-    ${list.map(c => `<tr><td>${esc(c.name)}</td>
-      <td>${c.active ? '<span class="badge">فعال</span>' : '<span class="badge off">بند</span>'}
-        <button class="btn small ghost" onclick="dailyCatToggle(${c.id},${c.active ? 0 : 1})">${c.active ? 'بند کریں' : 'فعال کریں'}</button></td>
-      <td><button class="btn small danger" onclick="dailyCatDel(${c.id})">🗑</button></td></tr>`).join('') || '<tr><td colspan=3>خالی</td></tr>'}</table>`;
+    <p class="note"><b>➕ شامل کریں</b> دبائیں — جو شامل ہے اس پر <b>✓ شامل ہے</b> ہوگا۔ دوبارہ دبائیں تو نکل جائے گی۔</p>
+    <table><tr><th>کیٹیگری</th><th style="text-align:center">روزانہ میں</th></tr>${rows || '<tr><td colspan=2>خالی</td></tr>'}</table>`;
 }
-async function dailyCatAdd() {
-  const name = $('#dc-name').value.trim(); if (!name) return;
-  await api('POST', '/api/daily-categories', { name });
-  renderDailyCats();
-}
-async function dailyCatDel(id) { if (!confirm('حذف کریں؟')) return; await api('DELETE', '/api/daily-categories/' + id); renderDailyCats(); }
-async function dailyCatToggle(id, active) { await api('PUT', '/api/daily-categories/' + id, { name: (await api('GET', '/api/daily-categories')).find(c => c.id === id).name, active }); renderDailyCats(); }
 async function renderDailyUnits() {
-  const list = await api('GET', '/api/daily-units');
+  const [daily, supply] = await Promise.all([api('GET', '/api/daily-units'), api('GET', '/api/units')]);
+  const inD = new Set(daily.map(x => x.id));
+  const rows = supply.map(u => `<tr><td>${esc(u.name)}</td><td style="text-align:center">
+    ${inD.has(u.id)
+      ? `<button class="btn small green" onclick="toggleDaily('unit',${u.id})">✓ شامل ہے</button>`
+      : `<button class="btn small" onclick="toggleDaily('unit',${u.id})">➕ شامل کریں</button>`}
+  </td></tr>`).join('');
   $('#v-daily').innerHTML = `
     <h2 class="st">⚖ <span>روزانہ یونٹس</span></h2>
     <button class="btn small" onclick="renderDailyData()">← واپس</button>
-    <button class="btn small dark" onclick="openDailyImport('units')">📥 سپلائی سے منتخب کریں</button>
-    <div class="formgrid"><label>نیا یونٹ<br><input id="du-name" placeholder="مثلاً پیکٹ"></label>
-    <label><br><button class="btn small green" onclick="dailyUnitAdd()">➕ شامل کریں</button></label></div>
-    <table><tr><th>نام</th><th></th></tr>
-    ${list.map(u => `<tr><td>${esc(u.name)}</td><td><button class="btn small danger" onclick="dailyUnitDel(${u.id})">🗑</button></td></tr>`).join('') || '<tr><td colspan=2>خالی</td></tr>'}</table>`;
+    <p class="note"><b>➕ شامل کریں</b> دبائیں — جو شامل ہے اس پر <b>✓ شامل ہے</b> ہوگا۔</p>
+    <table><tr><th>یونٹ</th><th style="text-align:center">روزانہ میں</th></tr>${rows || '<tr><td colspan=2>خالی</td></tr>'}</table>`;
 }
-async function dailyUnitAdd() {
-  const name = $('#du-name').value.trim(); if (!name) return;
-  await api('POST', '/api/daily-units', { name });
-  renderDailyUnits();
-}
-async function dailyUnitDel(id) { if (!confirm('حذف کریں؟')) return; await api('DELETE', '/api/daily-units/' + id); renderDailyUnits(); }
 async function renderDailyProducts() {
-  const [prods, cats, units] = await Promise.all([
-    api('GET', '/api/daily-products'), api('GET', '/api/daily-categories'), api('GET', '/api/daily-units'),
-  ]);
-  const rows = prods.map(p => `<tr><td>${esc(p.category_name || '—')}</td><td>${esc(p.name)}</td><td>${esc(p.unit_name || '—')}</td>
-    <td>${p.active ? '<span class="badge">فعال</span>' : '<span class="badge off">بند</span>'}</td>
-    <td><button class="btn small ghost" onclick="dailyProdEdit(${p.id})">✏</button>
-    <button class="btn small danger" onclick="dailyProdDel(${p.id})">🗑</button></td></tr>`).join('');
+  const [daily, supply] = await Promise.all([api('GET', '/api/daily-products'), api('GET', '/api/products')]);
+  const inD = new Set(daily.map(x => x.id));
+  const rows = supply.map(p => `<tr><td>${esc(p.category_name || '—')}</td><td>${esc(p.name)}</td><td>${esc(p.unit_name || '—')}</td><td style="text-align:center">
+    ${inD.has(p.id)
+      ? `<button class="btn small green" onclick="toggleDaily('product',${p.id})">✓ شامل ہے</button>`
+      : `<button class="btn small" onclick="toggleDaily('product',${p.id})">➕ شامل کریں</button>`}
+  </td></tr>`).join('');
   $('#v-daily').innerHTML = `
     <h2 class="st">🍞 <span>روزانہ آئٹمز</span></h2>
     <button class="btn small" onclick="renderDailyData()">← واپس</button>
-    <button class="btn small dark" onclick="openDailyImport('products')">📥 سپلائی سے منتخب کریں</button>
-    <div class="formgrid">
-      <label>کیٹیگری<br><select id="dp-cat">${cats.filter(c => c.active).map(c => `<option value="${c.id}">${esc(c.name)}</option>`).join('')}</select></label>
-      <label>آئٹم کا نام<br><input id="dp-name" placeholder="مثلاً Milky Bread"></label>
-      <label>یونٹ<br><select id="dp-unit">${units.map(u => `<option value="${u.id}">${esc(u.name)}</option>`).join('')}</select></label>
-      <label><br><button class="btn small green" onclick="dailyProdAdd()">➕ شامل کریں</button></label>
-    </div>
-    <table><tr><th>کیٹیگری</th><th>نام</th><th>یونٹ</th><th>حالت</th><th></th></tr>${rows || '<tr><td colspan=5>خالی</td></tr>'}</table>`;
-}
-async function dailyProdAdd() {
-  const name = $('#dp-name').value.trim(); if (!name) return;
-  await api('POST', '/api/daily-products', { name, category_id: Number($('#dp-cat').value) || null, unit_id: Number($('#dp-unit').value) || null });
-  renderDailyProducts();
-}
-async function dailyProdDel(id) { if (!confirm('حذف کریں؟')) return; await api('DELETE', '/api/daily-products/' + id); renderDailyProducts(); }
-async function dailyProdEdit(id) {
-  const prods = await api('GET', '/api/daily-products');
-  const p = prods.find(x => x.id === id); if (!p) return;
-  const name = prompt('آئٹم کا نام:', p.name); if (name === null) return;
-  const active = confirm('آئٹم فعال رکھیں؟ (OK=فعال، Cancel=بند)');
-  await api('PUT', '/api/daily-products/' + id, { name, category_id: p.category_id, unit_id: p.unit_id, active: active ? 1 : 0 });
-  renderDailyProducts();
+    <p class="note">آئٹم شامل کریں تو اسکی <b>کیٹیگری اور یونٹ خود</b> شامل ہو جائے گی۔</p>
+    <table><tr><th>کیٹیگری</th><th>نام</th><th>یونٹ</th><th style="text-align:center">روزانہ میں</th></tr>${rows || '<tr><td colspan=4>خالی</td></tr>'}</table>`;
 }
 async function renderDailyShops() {
-  const list = await api('GET', '/api/daily-shops');
+  const [daily, supply] = await Promise.all([api('GET', '/api/daily-shops'), api('GET', '/api/shops')]);
+  const inD = new Set(daily.map(x => x.id));
+  const rows = supply.map(s => `<tr><td>${esc(s.name)}</td><td dir="ltr">${esc(s.phone || '—')}</td><td style="text-align:center">
+    ${inD.has(s.id)
+      ? `<button class="btn small green" onclick="toggleDaily('shop',${s.id})">✓ شامل ہے</button>`
+      : `<button class="btn small" onclick="toggleDaily('shop',${s.id})">➕ شامل کریں</button>`}
+  </td></tr>`).join('');
   $('#v-daily').innerHTML = `
     <h2 class="st">🏪 <span>روزانہ دکانیں</span></h2>
     <button class="btn small" onclick="renderDailyData()">← واپس</button>
-    <button class="btn small dark" onclick="openDailyImport('shops')">📥 سپلائی سے منتخب کریں</button>
-    <div class="formgrid">
-      <label>دکان کا نام<br><input id="ds-name" placeholder="مثلاً Mega Gulshan"></label>
-      <label>فون<br><input id="ds-phone" dir="ltr"></label>
-      <label>پتہ<br><input id="ds-address"></label>
-      <label><br><button class="btn small green" onclick="dailyShopAdd()">➕ شامل کریں</button></label>
-    </div>
-    <table><tr><th>نام</th><th>فون</th><th>پتہ</th><th>حالت</th><th></th></tr>
-    ${list.map(s => `<tr><td>${esc(s.name)}</td><td dir="ltr">${esc(s.phone || '—')}</td><td>${esc(s.address || '—')}</td>
-      <td>${s.active ? '<span class="badge">فعال</span>' : '<span class="badge off">بند</span>'}</td>
-      <td><button class="btn small ghost" onclick="dailyShopEdit(${s.id})">✏</button>
-      <button class="btn small danger" onclick="dailyShopDel(${s.id})">🗑</button></td></tr>`).join('') || '<tr><td colspan=5>خالی</td></tr>'}</table>`;
-}
-async function dailyShopAdd() {
-  const name = $('#ds-name').value.trim(); if (!name) return;
-  await api('POST', '/api/daily-shops', { name, phone: $('#ds-phone').value.trim(), address: $('#ds-address').value.trim() });
-  renderDailyShops();
+    <p class="note"><b>➕ شامل کریں</b> دبائیں — جو شامل ہے اس پر <b>✓ شامل ہے</b> ہوگا۔</p>
+    <table><tr><th>دکان</th><th>فون</th><th style="text-align:center">روزانہ میں</th></tr>${rows || '<tr><td colspan=3>خالی</td></tr>'}</table>`;
 }
 // ---------- Daily: supply se select karke import ----------
 const DIMPORT_CONF = {

@@ -1515,6 +1515,55 @@ ${head('روزانہ آرڈر — کل پیداوار', 'پیداوار کی ت�
       <div class="sig"><div>فیکٹری (دستخط)</div><div>وصول کنندہ (دستخط)</div></div></div>`;
     return res.send(`<!DOCTYPE html><html lang="ur" dir="rtl"><head><meta charset="utf-8"><title>روزانہ سلپ — ${esc(shop.name)}</title>${css}</head><body>${slip}${printBtn}</body></html>`);
   }
+  // ---------- DAILY: sab kuch ek saath (کل پیداوار + تمام دکانوں کی سلپس) ----------
+  if (type === 'daily_all') {
+    if (!can(req.user, 'daily', 'view')) return res.status(403).send('forbidden');
+    const sc = dailyScope(req);
+    const ddate = date || dailyOrderDate();
+    const sf = dailyShopFilter(sc, 'do');
+    // Totals
+    let tsql = `SELECT p.name AS product_name, c.name AS category_name, u.name AS unit_name,
+        SUM(di.quantity) AS total_qty, COUNT(DISTINCT do.shop_id) AS shop_count
+      FROM daily_order_items di JOIN daily_orders do ON do.id=di.order_id
+      JOIN daily_products p ON p.id=di.product_id
+      LEFT JOIN daily_categories c ON c.id=p.category_id LEFT JOIN daily_units u ON u.id=p.unit_id
+      WHERE do.order_date=?${sf.clause}`;
+    const targs = [ddate, ...sf.args];
+    if (sc.catIds) { tsql += ` AND p.category_id IN (${sc.catIds.map(() => '?').join(',')})`; targs.push(...sc.catIds); }
+    tsql += ' GROUP BY p.id ORDER BY c.name, p.name';
+    const trows = db.prepare(tsql).all(...targs);
+    let cur = null, totBody = '';
+    trows.forEach(r => {
+      if (r.category_name !== cur) {
+        if (cur !== null) totBody += '</table>';
+        cur = r.category_name;
+        totBody += `<div class="hshop">🗂 ${esc(cur || 'متفرق')}</div><table><tr><th style="width:40px">#</th><th>آئٹم</th><th>کل مقدار</th><th>دکانیں</th></tr>`;
+      }
+      totBody += `<tr><td></td><td>${esc(r.product_name)}</td><td><b>${esc(r.total_qty)} ${esc(r.unit_name || '')}</b></td><td>${esc(r.shop_count)}</td></tr>`;
+    });
+    if (cur !== null) totBody += '</table>';
+    // Per-shop slips
+    const orders = db.prepare(`SELECT do.id, do.shop_id, do.note, s.name AS shop_name FROM daily_orders do
+      JOIN daily_shops s ON s.id=do.shop_id WHERE do.order_date=?${sf.clause} ORDER BY s.name`).all(ddate, ...sf.args);
+    const dItems = db.prepare(`SELECT p.name AS product_name, u.name AS unit_name, di.quantity, c.name AS category_name
+      FROM daily_order_items di JOIN daily_products p ON p.id=di.product_id
+      LEFT JOIN daily_units u ON u.id=p.unit_id LEFT JOIN daily_categories c ON c.id=p.category_id
+      WHERE di.order_id=?${sc.catIds ? ` AND p.category_id IN (${sc.catIds.map(() => '?').join(',')})` : ''}
+      ORDER BY c.name, p.name`);
+    const slips = orders.map(o => {
+      const its = dItems.all(o.id, ...(sc.catIds || []));
+      const rows = its.map((it, i) => `<tr><td>${i + 1}</td><td>${esc(it.product_name)} <span style="color:#888">(${esc(it.category_name || '')})</span></td><td><b>${esc(it.quantity)} ${esc(it.unit_name || '')}</b></td><td style="width:70px">☐</td></tr>`).join('')
+        || '<tr><td colspan=4>کوئی آئٹم نہیں</td></tr>';
+      return `<div class="slip" style="page-break-before:always">${head('روزانہ آرڈر سلپ', 'پیداوار: ' + ddate)}
+        <h2 class="shopname">${esc(o.shop_name)}</h2>
+        <table><tr><th>#</th><th>آئٹم</th><th>مقدار</th><th>پیک ✓</th></tr>${rows}</table>
+        ${o.note ? `<div class="note">نوٹ: ${esc(o.note)}</div>` : ''}
+        <div class="sig"><div>فیکٹری (دستخط)</div><div>وصول کنندہ (دستخط)</div></div></div>`;
+    }).join('');
+    return res.send(`<!DOCTYPE html><html lang="ur" dir="rtl"><head><meta charset="utf-8"><title>روزانہ مکمل — ${esc(ddate)}</title>${css}</head><body>
+${head('روزانہ آرڈر — مکمل پرنٹ', 'پیداوار کی تاریخ: ' + ddate)}
+<div class="hshop">📋 کل پیداوار</div>${totBody || '<p>کوئی آرڈر نہیں</p>'}${slips}${printBtn}</body></html>`);
+  }
   const mode = type === 'shops' ? 'shops' : 'totals';
   let f = 'WHERE 1=1'; const args = [];
   if (date) { f += ' AND o.delivery_date=?'; args.push(date); }
@@ -1551,7 +1600,12 @@ ${head('پروڈکشن شیٹ — آئٹم وائز کل مقدار', 'تاری�
 ${printBtn}</body></html>`);
 });
 
-app.use(express.static(path.join(__dirname, 'public')));
+app.use(express.static(path.join(__dirname, 'public'), {
+  // Frontend files (app.js etc.) hamesha fresh — purana cache masla khatam
+  setHeaders(res, filePath) {
+    if (/\.(js|css|html)$/.test(filePath)) res.set('Cache-Control', 'no-cache');
+  }
+}));
 app.get('*', (req, res) => res.sendFile(path.join(__dirname, 'public', 'index.html')));
 
 app.listen(PORT, () => console.log(`Gulshan Factory online on :${PORT}`));
