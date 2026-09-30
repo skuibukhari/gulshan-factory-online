@@ -1146,7 +1146,11 @@ async function savePerms() {
 }
 
 // ==================== DAILY ORDERS (روزانہ آرڈر) — separate system ====================
-let DAILY_DATE = null, DAILY_CUTOFF = '20:00', DAILY_VIEW_DATE = null;
+let DAILY_DATE = null, DAILY_CUTOFF = '20:00', DAILY_VIEW_DATE = null, DAILY_SHOP_FILTER = '';
+function fmtTime(ts) {
+  try { return new Date(ts).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true, timeZone: 'Asia/Karachi' }); }
+  catch (e) { return ''; }
+}
 
 async function renderDaily() {
   const di = await api('GET', '/api/daily/date');
@@ -1206,18 +1210,27 @@ async function delDailyOrder(id) {
 async function renderDailyBoard(di) {
   const isAdmin = ME.role === 'super_admin';
   const date = DAILY_VIEW_DATE || di.order_date;
-  const [orders, totals] = await Promise.all([
+  const [orders, totals, tracker] = await Promise.all([
     api('GET', '/api/daily/orders?date=' + encodeURIComponent(date)),
     api('GET', '/api/daily/totals?date=' + encodeURIComponent(date)),
+    api('GET', '/api/daily/tracker?date=' + encodeURIComponent(date)),
   ]);
   const isCurrent = date === di.order_date;
+  const rec = tracker.shops.filter(s => s.ordered), pend = tracker.shops.filter(s => !s.ordered);
+  const trackerHtml = `
+    <div class="supcard">
+      <div class="suphead">📊 <b>آرڈر ٹریکر</b> <span class="obadge">${tracker.received} / ${tracker.total} دکانیں</span></div>
+      ${rec.length ? `<div style="margin:8px 0"><b style="color:#2e7d32">✅ آ گیا:</b> ${rec.map(s => `${esc(s.name)} <small class="note">${fmtTime(s.at)} · ${s.items} آئٹم</small>`).join(' ، ')}</div>` : ''}
+      ${pend.length ? `<div><b style="color:#b3540e">⏳ باقی:</b> ${pend.map(s => esc(s.name)).join(' ، ')}</div>` : '<div><b style="color:#2e7d32">🎉 سب دکانوں کا آرڈر آ گیا!</b></div>'}
+    </div>`;
   let cur = null;
   const totHtml = totals.map(t => {
     const h = t.category_name !== cur ? `<div class="cathead">${esc(t.category_name || 'متفرق')}</div>` : '';
     cur = t.category_name;
     return h + `<div class="prow"><span class="pn">${esc(t.product_name)}</span><span class="un">${esc(t.unit_name || '')} · ${t.shop_count} دکان</span><b>${esc(t.total_qty)}</b></div>`;
   }).join('');
-  const ordersHtml = orders.map(o => `
+  const shopF = DAILY_SHOP_FILTER;
+  const ordersHtml = orders.filter(o => !shopF || String(o.shop_id) === shopF).map(o => `
     <div class="ocard">
       <div class="ochead"><b>🏪 ${esc(o.shop_name)}</b>
         <span><a class="btn small" target="_blank" href="/print?type=daily_shop&date=${esc(date)}&shop_id=${o.shop_id}">🖨 پرنٹ</a>
@@ -1228,16 +1241,21 @@ async function renderDailyBoard(di) {
     </div>`).join('');
   $('#v-daily').innerHTML = `
     <h2 class="st">📝 <span>روزانہ آرڈر</span></h2>
+    ${isCurrent && !di.cutoff_passed ? `<div id="dCd"></div>` : ''}
+    ${isCurrent && di.cutoff_passed ? `<div class="lockbar">🔒 کٹ آف (${esc(di.cutoff_time)}) گزر چکا ہے</div>` : ''}
+    ${trackerHtml}
     <div class="formgrid">
-      <label>پیداوار کی تاریخ<br><input type="date" id="dDate" value="${esc(date)}" onchange="DAILY_VIEW_DATE=this.value;renderDaily()"></label>
+      <label>پیداوار کی تاریخ<br><input type="date" id="dDate" value="${esc(date)}" onchange="DAILY_VIEW_DATE=this.value;DAILY_SHOP_FILTER='';renderDaily()"></label>
+      <label>دکان<br><select id="dShopF" onchange="DAILY_SHOP_FILTER=this.value;renderDaily()">
+        <option value="">تمام دکانیں</option>
+        ${tracker.shops.map(s => `<option value="${s.id}"${shopF === String(s.id) ? ' selected' : ''}>${esc(s.name)}${s.ordered ? ' ✅' : ''}</option>`).join('')}
+      </select></label>
       <label><br><a class="btn small dark" target="_blank" href="/print?type=daily_total&date=${esc(date)}">🖨 کل پیداوار پرنٹ</a></label>
       ${isAdmin ? `<label><br><button class="btn small" onclick="renderDailyAccess()">⚙ ایکسس سیٹنگ</button></label>` : ''}
     </div>
-    ${isCurrent && !di.cutoff_passed ? `<div id="dCd"></div>` : ''}
-    ${isCurrent && di.cutoff_passed ? `<div class="lockbar">🔒 کٹ آف (${esc(di.cutoff_time)}) گزر چکا ہے</div>` : ''}
     <h3 class="st">📋 کل پیداوار</h3>
     ${totHtml || '<p class="note">کوئی آرڈر نہیں</p>'}
-    <h3 class="st">🏪 دکان وائز آرڈر (${orders.length})</h3>
+    <h3 class="st">🏪 دکان وائز آرڈر (${orders.filter(o => !shopF || String(o.shop_id) === shopF).length})</h3>
     <div class="ocards">${ordersHtml || '<p class="note">کوئی آرڈر نہیں</p>'}</div>`;
   if (isCurrent && !di.cutoff_passed) startCountdown(dailyCutDate(di.order_date), di.cutoff_time, 'روزانہ آرڈر', 'dCd', { onDone: () => renderDaily() });
 }

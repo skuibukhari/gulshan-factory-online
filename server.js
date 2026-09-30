@@ -923,6 +923,23 @@ app.put('/api/daily/access/:uid', requireLogin, isAdmin, (req, res) => {
   })();
   res.json({ ok: true });
 });
+// Tracker: kin shops ka order aaya / kin ka baqi hai (department ke liye)
+app.get('/api/daily/tracker', requireLogin, requireSection('daily', 'view'), (req, res) => {
+  const sc = dailyScope(req);
+  const date = req.query.date || dailyOrderDate();
+  let shops;
+  if (sc.shopId) shops = db.prepare('SELECT id, name FROM shops WHERE id=?').all(sc.shopId);
+  else if (sc.shopIds) shops = db.prepare(`SELECT id, name FROM shops WHERE id IN (${sc.shopIds.map(() => '?').join(',')}) ORDER BY name`).all(...sc.shopIds);
+  else shops = db.prepare('SELECT id, name FROM shops WHERE active=1 ORDER BY name').all();
+  const ord = db.prepare('SELECT created_at FROM daily_orders WHERE shop_id=? AND order_date=?');
+  const nItems = db.prepare(`SELECT COUNT(*) c FROM daily_order_items
+    WHERE order_id=(SELECT id FROM daily_orders WHERE shop_id=? AND order_date=?)`);
+  const out = shops.map(s => {
+    const o = ord.get(s.id, date);
+    return { id: s.id, name: s.name, ordered: !!o, at: o ? o.created_at : null, items: o ? nItems.get(s.id, date).c : 0 };
+  });
+  res.json({ date, shops: out, received: out.filter(s => s.ordered).length, total: out.length });
+});
 app.put('/api/daily/settings', requireLogin, isAdmin, (req, res) => {
   const ct = String((req.body || {}).cutoff_time || '').trim();
   if (!/^\d{2}:\d{2}$/.test(ct)) return res.status(400).json({ error: 'bad_time' });
