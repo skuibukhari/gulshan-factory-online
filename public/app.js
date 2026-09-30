@@ -1236,6 +1236,20 @@ async function renderDailyShopForm(di) {
   }).join('');
   $('#v-daily').innerHTML = `
     <h2 class="st">📝 <span>روزانہ آرڈر</span></h2>
+    <div class="supcard">
+      <div class="suphead">🖨 <b>پرنٹس</b></div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px">
+        <a class="btn small dark" target="_blank" href="/print?type=daily_total&date=${esc(date)}">📋 آئٹم وائز کل (تمام دکانیں)</a>
+        <a class="btn small dark" target="_blank" href="/print?type=daily_all&date=${esc(date)}">📦 سب کچھ (کل + تمام دکانوں کی سلپس)</a>
+      </div>
+      <div class="formgrid" style="margin-top:8px">
+        <label>دکان وائز پرنٹ<br><select id="dPrintShop">
+          <option value="all">📦 تمام دکانیں (ہر دکان الگ پرنٹ)</option>
+          ${tracker.shops.map(s => `<option value="${s.id}">🏪 ${esc(s.name)}${s.ordered ? ' ✅' : ''}</option>`).join('')}
+        </select></label>
+        <label><br><button class="btn small dark" onclick="printDailyShop()">🖨 دکان کی سلپ پرنٹ کریں</button></label>
+      </div>
+    </div>
     <div class="supbanner">📦 پیداوار: <b>${esc(di.order_date)}</b></div>
     ${locked ? `<div class="lockbar">🔒 کٹ آف (${esc(di.cutoff_time)}) گزر چکا ہے — آرڈر بند ہے</div>` : `<div id="dCd"></div>`}
     ${catsHtml || '<p class="note">کوئی آئٹم نہیں</p>'}
@@ -1344,20 +1358,6 @@ async function renderDailyBoard(di) {
     ${isCurrent && !di.cutoff_passed ? `<div id="dCd"></div>` : ''}
     ${isCurrent && di.cutoff_passed ? `<div class="lockbar">🔒 کٹ آف (${esc(di.cutoff_time)}) گزر چکا ہے</div>` : ''}
     ${trackerHtml}
-    <div class="supcard">
-      <div class="suphead">🖨 <b>پرنٹس</b></div>
-      <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px">
-        <a class="btn small dark" target="_blank" href="/print?type=daily_total&date=${esc(date)}">📋 آئٹم وائز کل (تمام دکانیں)</a>
-        <a class="btn small dark" target="_blank" href="/print?type=daily_all&date=${esc(date)}">📦 سب کچھ (کل + تمام دکانوں کی سلپس)</a>
-      </div>
-      <div class="formgrid" style="margin-top:8px">
-        <label>دکان وائز پرنٹ<br><select id="dPrintShop">
-          <option value="all">📦 تمام دکانیں (ہر دکان الگ پرنٹ)</option>
-          ${tracker.shops.map(s => `<option value="${s.id}">🏪 ${esc(s.name)}${s.ordered ? ' ✅' : ''}</option>`).join('')}
-        </select></label>
-        <label><br><button class="btn small dark" onclick="printDailyShop()">🖨 دکان کی سلپ پرنٹ کریں</button></label>
-      </div>
-    </div>
     <div class="formgrid">
       <label>پیداوار کی تاریخ<br><input type="date" id="dDate" value="${esc(date)}" onchange="DAILY_VIEW_DATE=this.value;DAILY_SHOP_FILTER='';renderDaily()"></label>
       <label>دکان<br><select id="dShopF" onchange="DAILY_SHOP_FILTER=this.value;renderDaily()">

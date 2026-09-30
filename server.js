@@ -1512,7 +1512,7 @@ ${head('تاریخ وائز آرڈر ہسٹری', 'تاریخ: ' + date)}${body 
  .ptitle{font-size:20px;font-weight:bold;color:#111;line-height:1.4;margin:0;padding:2px 0 0}
  .psub{font-size:13px;color:#e8721c;font-weight:bold;margin:2px 0 0}
  .pmeta{font-size:9px;color:#444;text-align:left;white-space:nowrap;line-height:1.7;flex-shrink:0;background:#f5f5f5;padding:6px 10px;border-radius:4px}
- .dcols{column-count:4;column-gap:6px}
+ .dcols{column-count:4;column-gap:6px;width:100%;direction:rtl}
  .cat-block{break-inside:avoid;margin:0 0 10px;border:2px solid #111;border-radius:4px;overflow:hidden}
  .cat-head{background:#111;color:#fff;text-align:center;font-size:11px;font-weight:bold;padding:4px 2px}
  .cat-block table{width:100%;border-collapse:collapse;font-size:10px}
