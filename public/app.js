@@ -724,26 +724,56 @@ function printDateHistory() {
 // ---------- masters ----------
 const MASTER_CONF = {
   vehicles: { title: '🚚 گاڑیاں', fields: [['name', 'نام'], ['plate', 'نمبر پلیٹ']], cols: ['نام', 'نمبر پلیٹ'] },
-  cats: { title: '🗂 کیٹیگریز', api: 'categories', fields: [['name', 'نام'], ['sort', 'ترتیب']], cols: ['نام', 'ترتیب'] },
-  units: { title: '⚖ یونٹس', fields: [['name', 'نام']], cols: ['نام'] },
-  shops: { title: '🏪 دکانیں', fields: [['name', 'نام'], ['phone', 'فون'], ['address', 'پتہ']], cols: ['نام', 'فون', 'پتہ'] },
+  cats: { title: '🗂 کیٹیگریز', api: 'categories', dailyKind: 'category', fields: [['name', 'نام'], ['sort', 'ترتیب']], cols: ['نام', 'ترتیب'] },
+  units: { title: '⚖ یونٹس', dailyKind: 'unit', fields: [['name', 'نام']], cols: ['نام'] },
+  shops: { title: '🏪 دکانیں', dailyKind: 'shop', fields: [['name', 'نام'], ['phone', 'فون'], ['address', 'پتہ']], cols: ['نام', 'فون', 'پتہ'] },
 };
+// Rozana me kaun hai — tick ki halat ke liye
+let _dailyIds = null;
+async function getDailyIds() {
+  if (_dailyIds) return _dailyIds;
+  try {
+    const [c, u, p, s] = await Promise.all([
+      api('GET', '/api/daily-categories'), api('GET', '/api/daily-units'),
+      api('GET', '/api/daily-products'), api('GET', '/api/daily-shops'),
+    ]);
+    _dailyIds = { category: new Set(c.map(x => x.id)), unit: new Set(u.map(x => x.id)), product: new Set(p.map(x => x.id)), shop: new Set(s.map(x => x.id)) };
+  } catch (e) { _dailyIds = { category: new Set(), unit: new Set(), product: new Set(), shop: new Set() }; }
+  return _dailyIds;
+}
+async function toggleDaily(kind, id, btn) {
+  const ids = await getDailyIds();
+  const on = !ids[kind].has(id);
+  try {
+    await api('POST', `/api/daily/toggle/${kind}/${id}`, { on });
+    _dailyIds = null; // refresh
+    const key = { category: 'cats', unit: 'units', shop: 'shops' }[kind];
+    if (key) renderMaster(key); else renderProducts();
+  } catch (e) {
+    alert(e.message === 'in_use' ? '⚠️ Ye rozana me istemal ho raha hai — pehle uska data hatain' : 'خرابی: ' + e.message);
+  }
+}
+function dailyTickBtn(kind, id, inDaily) {
+  return `<button class="btn small${inDaily ? ' green' : ' ghost'}" title="روزانہ آرڈر میں ${inDaily ? 'شامل ہے' : 'شامل کریں'}" onclick="toggleDaily('${kind}',${id},this)">📝${inDaily ? '✓' : ''}</button>`;
+}
 async function renderMaster(key) {
   const conf = MASTER_CONF[key];
   const endpoint = conf.api || key;
   const sec = VIEW_SEC[key] || key;
   const list = await api('GET', '/api/' + endpoint);
+  const ids = conf.dailyKind ? await getDailyIds() : null;
   const isShops = key === 'shops';
   const rows = list.map(r => `<tr>${isShops ? `<td>${r.image ? `<img class="shimg" src="/images/${esc(r.image)}" alt="">` : '<span class="note">—</span>'}
     ${can(sec, 'full') ? `<br><label class="btn small ghost" style="cursor:pointer">🖼 <input type="file" accept="image/*" style="display:none" onchange="uploadShopImage(${r.id},this)"></label>` : ''}</td>` : ''}${conf.fields.map(([f]) => `<td>${esc(r[f])}</td>`).join('')}
     <td>${r.active === 0 ? '<span class="badge off">بند</span>' : '<span class="badge">فعال</span>'}
     ${can(sec, 'full') ? ` <button class="btn small ghost" onclick="masterEdit('${key}','${endpoint}',${r.id})">✏</button>
+    ${conf.dailyKind && can('daily', 'full') ? dailyTickBtn(conf.dailyKind, r.id, ids[conf.dailyKind].has(r.id)) : ''}
     <button class="btn small danger" onclick="masterDel('${endpoint}',${r.id},'${key}')">🗑</button>` : ''}</td></tr>`).join('');
   const form = can(sec, 'full') ? `
     <div class="formgrid" id="mf-${key}">
       ${conf.fields.map(([f, l]) => `<label>${l}<br><input id="mf-${key}-${f}"></label>`).join('')}
       <label><br><button class="btn small green" onclick="masterAdd('${key}','${endpoint}')">➕ شامل کریں</button></label>
-    </div>` : '';
+    </div>${conf.dailyKind ? '<p class="note">📝✓ = روزانہ آرڈر میں شامل ہے — بٹن دبائیں شامل/نکالنے کے لیے</p>' : ''}` : '';
   $('#v-' + key).innerHTML = `<h2 class="st">${conf.title}</h2>${form}
     <table><tr>${isShops ? '<th>تصویر</th>' : ''}${conf.cols.map(c => `<th>${c}</th>`).join('')}<th>حالت</th></tr>${rows || `<tr><td colspan=5>خالی</td></tr>`}</table>`;
 }
@@ -820,8 +850,10 @@ async function routeEdit(id) {
 // products
 async function renderProducts() {
   await refreshCache();
+  const ids = can('daily', 'full') ? await getDailyIds() : null;
   const rows = CACHE.products.map(p => `<tr><td>${esc(p.category_name || '—')}</td><td>${esc(p.name)}</td><td>${esc(p.unit_name || '—')}</td>
     <td>${can('products', 'full') ? `<button class="btn small ghost" onclick="prodEdit(${p.id})">✏</button>
+    ${ids ? dailyTickBtn('product', p.id, ids.product.has(p.id)) : ''}
     <button class="btn small danger" onclick="prodDel(${p.id})">🗑</button>` : ''}</td></tr>`).join('');
   const form = can('products', 'full') ? `
     <div class="formgrid">
@@ -829,7 +861,7 @@ async function renderProducts() {
       <label>آئٹم کا نام<br><input id="pf-name" placeholder="مثلاً Milky Bread Small"></label>
       <label>یونٹ<br><select id="pf-unit">${CACHE.units.map(u => `<option value="${u.id}">${esc(u.name)}</option>`).join('')}</select></label>
       <label><br><button class="btn small green" onclick="prodAdd()">➕ شامل کریں</button></label>
-    </div>` : '';
+    </div>${ids ? '<p class="note">📝✓ = روزانہ آرڈر میں شامل ہے — بٹن دبائیں شامل/نکالنے کے لیے</p>' : ''}` : '';
   $('#v-products').innerHTML = `<h2 class="st">🍞 <span>آئٹمز</span></h2>${form}
     <table><tr><th>کیٹیگری</th><th>نام</th><th>یونٹ</th><th></th></tr>${rows || '<tr><td colspan=4>خالی</td></tr>'}</table>`;
 }

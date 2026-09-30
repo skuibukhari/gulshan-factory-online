@@ -1113,6 +1113,33 @@ app.post('/api/daily/import/:kind', requireLogin, requireSection('daily', 'full'
   })();
   res.json({ ok: true });
 });
+// ---------- Daily: main screens se tick karke select (separate data me copy) ----------
+app.post('/api/daily/toggle/:kind/:id', requireLogin, requireSection('daily', 'full'), (req, res) => {
+  const kind = req.params.kind, id = Number(req.params.id), on = !!(req.body || {}).on;
+  if (!['category', 'unit', 'product', 'shop'].includes(kind) || !id) return res.status(400).json({ error: 'bad_input' });
+  try {
+    db.transaction(() => {
+      if (on) {
+        if (kind === 'category') db.prepare(`INSERT OR IGNORE INTO daily_categories (id, name) SELECT id, name FROM categories WHERE id=?`).run(id);
+        else if (kind === 'unit') db.prepare(`INSERT OR IGNORE INTO daily_units (id, name) SELECT id, name FROM units WHERE id=?`).run(id);
+        else if (kind === 'shop') db.prepare(`INSERT OR IGNORE INTO daily_shops (id, name, phone, address, image, active) SELECT id, name, phone, address, image, active FROM shops WHERE id=?`).run(id);
+        else if (kind === 'product') {
+          const p = db.prepare('SELECT * FROM products WHERE id=?').get(id);
+          if (!p) throw new Error('not_found');
+          if (p.category_id) db.prepare(`INSERT OR IGNORE INTO daily_categories (id, name) SELECT id, name FROM categories WHERE id=?`).run(p.category_id);
+          if (p.unit_id) db.prepare(`INSERT OR IGNORE INTO daily_units (id, name) SELECT id, name FROM units WHERE id=?`).run(p.unit_id);
+          db.prepare(`INSERT OR IGNORE INTO daily_products (id, name, category_id, unit_id) SELECT id, name, category_id, unit_id FROM products WHERE id=?`).run(id);
+        }
+      } else {
+        const tbl = { category: 'daily_categories', unit: 'daily_units', product: 'daily_products', shop: 'daily_shops' }[kind];
+        db.prepare(`DELETE FROM ${tbl} WHERE id=?`).run(id);
+      }
+    })();
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(400).json({ error: e.message === 'not_found' ? 'not_found' : 'in_use' });
+  }
+});
 app.get('/api/products', requireLogin, requireSection('products', 'view'), (req, res) => {
   res.json(db.prepare(`SELECT p.*, c.name AS category_name, u.name AS unit_name
     FROM products p LEFT JOIN categories c ON c.id=p.category_id LEFT JOIN units u ON u.id=p.unit_id
