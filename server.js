@@ -1504,8 +1504,8 @@ ${head('تاریخ وائز آرڈر ہسٹری', 'تاریخ: ' + date)}${body 
   // ---------- DAILY: total production sheet (category-wise, scoped) ----------
   // ---------- DAILY: DEMAND DASHBOARD (RateVault pattern) ----------
   const ddCss = `<style>
- @page{size:A4;margin:8mm} *{box-sizing:border-box}
- body{font-family:'Noto Nastaliq Urdu','Jameel Noori Nastaleeq',serif;direction:rtl;color:#111;margin:0;font-size:14px}
+ @page{size:A4;margin:5mm 4mm} *{box-sizing:border-box}
+ body{font-family:'Jameel Noori Nastaleeq','Noto Nastaliq Urdu',serif;direction:rtl;color:#111;margin:0;font-size:14px}
  .phead{display:flex;align-items:center;gap:8px;border:2px solid #111;border-radius:6px;padding:6px 8px;margin:0 0 6px;background:#fff}
  .plogo{width:42px;height:42px;object-fit:contain;flex-shrink:0}
  .pcenter{flex:1;text-align:center;min-width:0}
@@ -1513,6 +1513,7 @@ ${head('تاریخ وائز آرڈر ہسٹری', 'تاریخ: ' + date)}${body 
  .psub{font-size:12px;color:#e8721c;font-weight:bold;margin:0}
  .pmeta{font-size:9px;color:#444;text-align:left;white-space:nowrap;line-height:1.7;flex-shrink:0;background:#f5f5f5;padding:6px 10px;border-radius:4px}
  .dcols{column-count:4;column-gap:8px;width:100%;direction:rtl}
+ .shopcols{column-count:3;column-gap:10px;width:100%;direction:rtl}
  .cat-block{break-inside:avoid;margin:0 0 6px;border:2px solid #111;border-radius:3px;overflow:hidden}
  .cat-head{background:#111;color:#fff;text-align:center;font-size:13px;font-weight:bold;padding:3px 2px;font-family:'Jameel Noori Nastaleeq',serif}
  .cat-block table{width:100%;border-collapse:collapse;font-size:12px}
@@ -1624,7 +1625,7 @@ ${printHead(ddate, req.user.username)}
       const note = o && o.note ? `<div class="note">نوٹ: ${esc(o.note)}</div>` : '';
       return `<div class="shoppage"${si > 0 ? ' style="page-break-before:always"' : ''}>${printHead(ddate, req.user.username)}
         <div class="shoptitle"><span class="em">🏪</span> ${esc(shop.name)}</div>
-        <div class="dcols">${blocks || '<p>کوئی آئٹم نہیں</p>'}</div>${note}</div>`;
+        <div class="dcols shopcols">${blocks || '<p>کوئی آئٹم نہیں</p>'}</div>${note}</div>`;
     }).join('');
     return res.send(`<!DOCTYPE html><html lang="ur" dir="rtl"><head><meta charset="utf-8"><title>روزانہ سلپ — ${esc(ddate)}</title>${ddCss}</head><body>${pages}${printBtn}</body></html>`);
   }
