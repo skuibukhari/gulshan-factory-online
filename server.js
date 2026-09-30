@@ -1504,8 +1504,8 @@ ${head('تاریخ وائز آرڈر ہسٹری', 'تاریخ: ' + date)}${body 
   // ---------- DAILY: total production sheet (category-wise, scoped) ----------
   // ---------- DAILY: DEMAND DASHBOARD (RateVault pattern) ----------
   const ddCss = `<style>
- @page{size:A4;margin:5mm 4mm} *{box-sizing:border-box}
- body{font-family:'Jameel Noori Nastaleeq','Noto Nastaliq Urdu',serif;direction:rtl;color:#111;margin:0;font-size:14px}
+ @page{size:A4;margin:4mm 4mm} *{box-sizing:border-box}
+ body{font-family:'Jameel Noori Nastaleeq','Noto Nastaliq Urdu',serif;direction:rtl;color:#111;margin:0;font-size:15px}
  .phead{display:flex;align-items:center;gap:8px;border:2px solid #111;border-radius:6px;padding:6px 8px;margin:0 0 6px;background:#fff}
  .plogo{width:42px;height:42px;object-fit:contain;flex-shrink:0}
  .pcenter{flex:1;text-align:center;min-width:0}
@@ -1513,15 +1513,15 @@ ${head('تاریخ وائز آرڈر ہسٹری', 'تاریخ: ' + date)}${body 
  .psub{font-size:12px;color:#e8721c;font-weight:bold;margin:0}
  .pmeta{font-size:9px;color:#444;text-align:left;white-space:nowrap;line-height:1.7;flex-shrink:0;background:#f5f5f5;padding:6px 10px;border-radius:4px}
  .dcols{column-count:4;column-gap:8px;width:100%;direction:rtl}
- .shopcols{column-count:3;column-gap:10px;width:100%;direction:rtl}
+ .shopcols{column-count:2;column-gap:14px;width:100%;direction:rtl}
  .cat-block{break-inside:avoid;margin:0 0 6px;border:2px solid #111;border-radius:3px;overflow:hidden}
- .cat-head{background:#111;color:#fff;text-align:center;font-size:13px;font-weight:bold;padding:3px 2px;font-family:'Jameel Noori Nastaleeq',serif}
- .cat-block table{width:100%;border-collapse:collapse;font-size:12px}
+ .cat-head{background:#111;color:#fff;text-align:center;font-size:16px;font-weight:bold;padding:8px 4px;font-family:'Jameel Noori Nastaleeq',serif}
+ .cat-block table{width:100%;border-collapse:collapse;font-size:14px}
  .cat-block th{background:#eee;border:1px solid #111;padding:2px;font-size:10px;font-family:Arial,sans-serif}
  .cat-block th.mid{font-size:12px}
  .cat-block th.total-h{color:#e8721c;text-align:center}
  .cat-block th.num-h{color:#555;text-align:center}
- .cat-block td{border:1px solid #888;padding:2px 4px}
+ .cat-block td{border:1px solid #888;padding:6px 8px}
  .cat-block tr:nth-child(even) td{background:#fafafa}
  .cat-block td.num{width:28px;text-align:center;color:#333;font-size:11px;font-weight:bold;background:#f0f0f0}
  .cat-block td.name{text-align:right}
