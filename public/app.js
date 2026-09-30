@@ -1354,6 +1354,20 @@ async function renderDailyBoard(di) {
     </div>`).join('');
   $('#v-daily').innerHTML = `
     <h2 class="st">📝 <span>روزانہ آرڈر</span></h2>
+    <div class="supcard" style="border:2px solid #e8721c;margin:8px 0">
+      <div class="suphead" style="font-size:18px">🖨 <b>پرنٹ آپشنز</b></div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:10px">
+        <a class="btn dark" style="padding:14px;font-size:15px;text-align:center" target="_blank" href="/print?type=daily_total&date=${esc(date)}">📋<br>آئٹم وائز کل<br><small>تمام دکانوں کا ٹوٹل</small></a>
+        <a class="btn dark" style="padding:14px;font-size:15px;text-align:center" target="_blank" href="/print?type=daily_all&date=${esc(date)}">📦<br>تمام دکانیں<br><small>ہر دکان الگ پیج</small></a>
+      </div>
+      <div class="formgrid" style="margin-top:10px">
+        <label style="font-size:15px"><b>🏪 دکان منتخب کریں</b><br><select id="dPrintShop2" style="font-size:15px;padding:10px">
+          <option value="">-- دکان چنیں --</option>
+          ${tracker.shops.map(s => `<option value="${s.id}">🏪 ${esc(s.name)}${s.ordered ? ' ✅' : ''}</option>`).join('')}
+        </select></label>
+        <label><br><button class="btn dark" style="padding:12px 20px;font-size:15px" onclick="printDailyShop2()">🖨 منتخب دکان پرنٹ کریں</button></label>
+      </div>
+    </div>
     ${isAdmin ? `<div style="margin:8px 0"><button class="btn green" onclick="renderDailyAdminOrder()">📝 دکان کا آرڈر دیں</button></div>` : ''}
     ${isCurrent && !di.cutoff_passed ? `<div id="dCd"></div>` : ''}
     ${isCurrent && di.cutoff_passed ? `<div class="lockbar">🔒 کٹ آف (${esc(di.cutoff_time)}) گزر چکا ہے</div>` : ''}
@@ -1371,6 +1385,11 @@ async function renderDailyBoard(di) {
     <h3 class="st">🏪 دکان وائز آرڈر (${orders.filter(o => !shopF || String(o.shop_id) === shopF).length})</h3>
     <div class="ocards">${ordersHtml || '<p class="note">کوئی آرڈر نہیں</p>'}</div>`;
   if (isCurrent && !di.cutoff_passed) startCountdown(dailyCutDate(di.order_date), di.cutoff_time, 'روزانہ آرڈر', 'dCd', { onDone: () => renderDaily() });
+}
+function printDailyShop2() {
+  const sel = $('#dPrintShop2'); if (!sel || !sel.value) { alert('کوئی دکان منتخب نہیں'); return; }
+  const d = ($('#dDate') || {}).value || DAILY_DATE;
+  window.open(`/print?type=daily_shop&date=${encodeURIComponent(d)}&shop_id=${encodeURIComponent(sel.value)}`, '_blank');
 }
 function printDailyShop() {
   const sel = $('#dPrintShop'); if (!sel || !sel.value) { alert('کوئی دکان منتخب نہیں'); return; }
