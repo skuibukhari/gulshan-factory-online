@@ -1337,14 +1337,25 @@ async function renderDailyBoard(di) {
     ${isCurrent && !di.cutoff_passed ? `<div id="dCd"></div>` : ''}
     ${isCurrent && di.cutoff_passed ? `<div class="lockbar">🔒 کٹ آف (${esc(di.cutoff_time)}) گزر چکا ہے</div>` : ''}
     ${trackerHtml}
+    <div class="supcard">
+      <div class="suphead">🖨 <b>پرنٹس</b></div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px">
+        <a class="btn small dark" target="_blank" href="/print?type=daily_total&date=${esc(date)}">📋 آئٹم وائز کل (تمام دکانیں)</a>
+        <a class="btn small dark" target="_blank" href="/print?type=daily_all&date=${esc(date)}">📦 سب کچھ (کل + تمام دکانوں کی سلپس)</a>
+      </div>
+      <div class="formgrid" style="margin-top:8px">
+        <label>دکان وائز پرنٹ<br><select id="dPrintShop">
+          ${tracker.shops.filter(s => s.ordered).map(s => `<option value="${s.id}">🏪 ${esc(s.name)}</option>`).join('')}
+        </select></label>
+        <label><br><button class="btn small dark" onclick="printDailyShop()">🖨 دکان کی سلپ پرنٹ کریں</button></label>
+      </div>
+    </div>
     <div class="formgrid">
       <label>پیداوار کی تاریخ<br><input type="date" id="dDate" value="${esc(date)}" onchange="DAILY_VIEW_DATE=this.value;DAILY_SHOP_FILTER='';renderDaily()"></label>
       <label>دکان<br><select id="dShopF" onchange="DAILY_SHOP_FILTER=this.value;renderDaily()">
         <option value="">تمام دکانیں</option>
         ${tracker.shops.map(s => `<option value="${s.id}"${shopF === String(s.id) ? ' selected' : ''}>${esc(s.name)}${s.ordered ? ' ✅' : ''}</option>`).join('')}
       </select></label>
-      <label><br><a class="btn small dark" target="_blank" href="/print?type=daily_total&date=${esc(date)}">🖨 کل پیداوار پرنٹ</a></label>
-      <label><br><a class="btn small dark" target="_blank" href="/print?type=daily_all&date=${esc(date)}">🖨🖨 سب کچھ پرنٹ (کل + تمام دکانیں)</a></label>
       ${isAdmin ? `<label><br><button class="btn small" onclick="renderDailyAccess()">⚙ ایکسس سیٹنگ</button></label>` : ''}
       ${isAdmin ? `<label><br><button class="btn small green" onclick="renderDailyAdminOrder()">📝 دکان کا آرڈر دیں</button></label>` : ''}
     </div>
@@ -1353,6 +1364,11 @@ async function renderDailyBoard(di) {
     <h3 class="st">🏪 دکان وائز آرڈر (${orders.filter(o => !shopF || String(o.shop_id) === shopF).length})</h3>
     <div class="ocards">${ordersHtml || '<p class="note">کوئی آرڈر نہیں</p>'}</div>`;
   if (isCurrent && !di.cutoff_passed) startCountdown(dailyCutDate(di.order_date), di.cutoff_time, 'روزانہ آرڈر', 'dCd', { onDone: () => renderDaily() });
+}
+function printDailyShop() {
+  const sel = $('#dPrintShop'); if (!sel || !sel.value) { alert('کوئی دکان منتخب نہیں'); return; }
+  const d = ($('#dDate') || {}).value || DAILY_DATE;
+  window.open(`/print?type=daily_shop&date=${encodeURIComponent(d)}&shop_id=${encodeURIComponent(sel.value)}`, '_blank');
 }
 async function delDailyOrderBoard(id) {
   if (!confirm('آرڈر حذف کریں؟')) return;
@@ -1485,17 +1501,28 @@ async function renderDailyUnits() {
 }
 async function renderDailyProducts() {
   const [daily, supply] = await Promise.all([api('GET', '/api/daily-products'), api('GET', '/api/products')]);
-  const inD = new Set(daily.map(x => x.id));
-  const rows = supply.map(p => `<tr><td>${esc(p.category_name || '—')}</td><td>${esc(p.name)}</td><td>${esc(p.unit_name || '—')}</td><td style="text-align:center">
+  const inD = new Map(daily.map(x => [x.id, x]));
+  const sorted = [...supply].sort((a, b) => {
+    const da = inD.has(a.id), db = inD.has(b.id);
+    if (da && !db) return -1; if (!da && db) return 1;
+    if (da && db) return (inD.get(a.id).sort_order || 0) - (inD.get(b.id).sort_order || 0);
+    return a.name.localeCompare(b.name);
+  });
+  const rows = sorted.map(p => `<tr><td>${esc(p.category_name || '—')}</td><td>${esc(p.name)}</td><td>${esc(p.unit_name || '—')}</td><td style="text-align:center">
     ${inD.has(p.id)
-      ? `<button class="btn small green" onclick="toggleDaily('product',${p.id})">✓ شامل ہے</button>`
+      ? `<button class="btn small green" onclick="toggleDaily('product',${p.id})">✓ شامل ہے</button>
+         <button class="btn small ghost" onclick="moveDailyProduct(${p.id},'up')">↑</button><button class="btn small ghost" onclick="moveDailyProduct(${p.id},'down')">↓</button>`
       : `<button class="btn small" onclick="toggleDaily('product',${p.id})">➕ شامل کریں</button>`}
   </td></tr>`).join('');
   $('#v-daily').innerHTML = `
     <h2 class="st">🍞 <span>روزانہ آئٹمز</span></h2>
     <button class="btn small" onclick="renderDailyData()">← واپس</button>
-    <p class="note">آئٹم شامل کریں تو اسکی <b>کیٹیگری اور یونٹ خود</b> شامل ہو جائے گی۔</p>
+    <p class="note">آئٹم شامل کریں تو اسکی <b>کیٹیگری اور یونٹ خود</b> شامل ہو جائے گی۔<br>↑↓ سے <b>ترتیب</b> بدلیں — یہی ترتیب آرڈر فارم اور پرنٹ میں آئے گی۔</p>
     <table><tr><th>کیٹیگری</th><th>نام</th><th>یونٹ</th><th style="text-align:center">روزانہ میں</th></tr>${rows || '<tr><td colspan=4>خالی</td></tr>'}</table>`;
+}
+async function moveDailyProduct(id, dir) {
+  await api('POST', `/api/daily/products/${id}/move`, { dir });
+  renderDailyProducts();
 }
 async function renderDailyShops() {
   const [daily, supply] = await Promise.all([api('GET', '/api/daily-shops'), api('GET', '/api/shops')]);

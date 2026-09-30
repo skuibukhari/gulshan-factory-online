@@ -121,6 +121,7 @@ try { db.exec(`ALTER TABLE shops ADD COLUMN image TEXT DEFAULT ''`); } catch (e)
 try { db.exec(`ALTER TABLE routes ADD COLUMN open_time TEXT DEFAULT '10:00'`); } catch (e) {}
 try { db.exec(`ALTER TABLE users ADD COLUMN account_type TEXT DEFAULT ''`); } catch (e) {}
 try { db.exec(`ALTER TABLE users ADD COLUMN daily_shop_id INTEGER`); } catch (e) {}
+try { db.exec(`ALTER TABLE daily_products ADD COLUMN sort_order INTEGER DEFAULT 0`); } catch (e) {}
 
 // ---------- Daily Orders (روزانہ آرڈر) — separate system, does not touch existing order flow ----------
 db.exec(`CREATE TABLE IF NOT EXISTS daily_orders (
@@ -172,7 +173,8 @@ CREATE TABLE IF NOT EXISTS daily_products (
   name TEXT NOT NULL,
   category_id INTEGER REFERENCES daily_categories(id),
   unit_id INTEGER REFERENCES daily_units(id),
-  active INTEGER DEFAULT 1
+  active INTEGER DEFAULT 1,
+  sort_order INTEGER DEFAULT 0
 );
 CREATE TABLE IF NOT EXISTS daily_shops (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -196,6 +198,8 @@ if (!db.prepare(`SELECT value FROM daily_settings WHERE key='catalog_split'`).ge
   db.prepare(`UPDATE users SET daily_shop_id = shop_id WHERE role='shop' AND shop_id IS NOT NULL
     AND daily_shop_id IS NULL AND EXISTS (SELECT 1 FROM daily_shops WHERE id = users.shop_id)`).run();
 }
+// sort_order=0 wali purani rows ko tartib do (table banne ke baad)
+db.prepare(`UPDATE daily_products SET sort_order = id * 10 WHERE sort_order = 0 OR sort_order IS NULL`).run();
 db.prepare(`INSERT OR IGNORE INTO daily_settings (key, value) VALUES ('cutoff_time', '20:00')`).run();
 
 const SECTIONS = ['dashboard','orders','order_history','shops','products','categories','units','vehicles','routes','schedule','reports','users','daily'];
@@ -866,7 +870,7 @@ app.get('/api/daily/my-items', requireLogin, requireSection('daily', 'view'), (r
 app.get('/api/daily/catalog', requireLogin, requireSection('daily', 'view'), (req, res) => {
   const cats = db.prepare('SELECT id, name FROM daily_categories WHERE active=1 ORDER BY name').all();
   const prods = db.prepare(`SELECT p.id, p.name, p.category_id, u.name AS unit_name
-    FROM daily_products p LEFT JOIN daily_units u ON u.id=p.unit_id WHERE p.active=1 ORDER BY p.name`).all();
+    FROM daily_products p LEFT JOIN daily_units u ON u.id=p.unit_id WHERE p.active=1 ORDER BY p.sort_order, p.name`).all();
   res.json(cats.map(c => ({ ...c, products: prods.filter(p => p.category_id === c.id) })));
 });
 
@@ -883,11 +887,11 @@ app.get('/api/daily/orders', requireLogin, requireSection('daily', 'view'), (req
         c.name AS category_name, un.name AS unit_name FROM daily_order_items di
       JOIN daily_products p ON p.id=di.product_id LEFT JOIN daily_categories c ON c.id=p.category_id
       LEFT JOIN daily_units un ON un.id=p.unit_id
-      WHERE di.order_id=? AND p.category_id IN (${sc.catIds.map(() => '?').join(',')}) ORDER BY c.name, p.name`)
+      WHERE di.order_id=? AND p.category_id IN (${sc.catIds.map(() => '?').join(',')}) ORDER BY p.sort_order, p.name`)
     : db.prepare(`SELECT di.order_id, di.product_id, di.quantity, p.name AS product_name, p.category_id,
         c.name AS category_name, un.name AS unit_name FROM daily_order_items di
       JOIN daily_products p ON p.id=di.product_id LEFT JOIN daily_categories c ON c.id=p.category_id
-      LEFT JOIN daily_units un ON un.id=p.unit_id WHERE di.order_id=? ORDER BY c.name, p.name`);
+      LEFT JOIN daily_units un ON un.id=p.unit_id WHERE di.order_id=? ORDER BY p.sort_order, p.name`);
   res.json(orders.map(o => ({ ...o, items: sc.catIds ? itemQ.all(o.id, ...sc.catIds) : itemQ.all(o.id) })));
 });
 
@@ -943,7 +947,7 @@ app.get('/api/daily/totals', requireLogin, requireSection('daily', 'view'), (req
     WHERE do.order_date=?${sf.clause}`;
   const args = [date, ...sf.args];
   if (sc.catIds) { sql += ` AND p.category_id IN (${sc.catIds.map(() => '?').join(',')})`; args.push(...sc.catIds); }
-  sql += ' GROUP BY p.id ORDER BY c.name, p.name';
+  sql += ' GROUP BY p.id ORDER BY p.sort_order, p.name';
   res.json(db.prepare(sql).all(...args));
 });
 
@@ -1128,7 +1132,8 @@ app.post('/api/daily/toggle/:kind/:id', requireLogin, requireSection('daily', 'f
           if (!p) throw new Error('not_found');
           if (p.category_id) db.prepare(`INSERT OR IGNORE INTO daily_categories (id, name) SELECT id, name FROM categories WHERE id=?`).run(p.category_id);
           if (p.unit_id) db.prepare(`INSERT OR IGNORE INTO daily_units (id, name) SELECT id, name FROM units WHERE id=?`).run(p.unit_id);
-          db.prepare(`INSERT OR IGNORE INTO daily_products (id, name, category_id, unit_id) SELECT id, name, category_id, unit_id FROM products WHERE id=?`).run(id);
+          const mx = db.prepare('SELECT COALESCE(MAX(sort_order),0) m FROM daily_products').get().m;
+          db.prepare(`INSERT OR IGNORE INTO daily_products (id, name, category_id, unit_id, sort_order) SELECT id, name, category_id, unit_id, ? FROM products WHERE id=?`).run(mx + 1, id);
         }
       } else {
         const tbl = { category: 'daily_categories', unit: 'daily_units', product: 'daily_products', shop: 'daily_shops' }[kind];
@@ -1139,6 +1144,22 @@ app.post('/api/daily/toggle/:kind/:id', requireLogin, requireSection('daily', 'f
   } catch (e) {
     res.status(400).json({ error: e.message === 'not_found' ? 'not_found' : 'in_use' });
   }
+});
+// ---------- Daily: item sequence (↑↓) ----------
+app.post('/api/daily/products/:id/move', requireLogin, requireSection('daily', 'full'), (req, res) => {
+  const id = Number(req.params.id), dir = (req.body || {}).dir;
+  if (!id || !['up', 'down'].includes(dir)) return res.status(400).json({ error: 'bad_input' });
+  const cur = db.prepare('SELECT id, sort_order FROM daily_products WHERE id=?').get(id);
+  if (!cur) return res.status(404).json({ error: 'not_found' });
+  const neighbor = dir === 'up'
+    ? db.prepare('SELECT id, sort_order FROM daily_products WHERE sort_order < ? ORDER BY sort_order DESC, id DESC LIMIT 1').get(cur.sort_order)
+    : db.prepare('SELECT id, sort_order FROM daily_products WHERE sort_order > ? ORDER BY sort_order ASC, id ASC LIMIT 1').get(cur.sort_order);
+  if (!neighbor) return res.json({ ok: true, moved: false });
+  db.transaction(() => {
+    db.prepare('UPDATE daily_products SET sort_order=? WHERE id=?').run(neighbor.sort_order, cur.id);
+    db.prepare('UPDATE daily_products SET sort_order=? WHERE id=?').run(cur.sort_order, neighbor.id);
+  })();
+  res.json({ ok: true, moved: true });
 });
 app.get('/api/products', requireLogin, requireSection('products', 'view'), (req, res) => {
   res.json(db.prepare(`SELECT p.*, c.name AS category_name, u.name AS unit_name
@@ -1473,7 +1494,7 @@ ${head('تاریخ وائز آرڈر ہسٹری', 'تاریخ: ' + date)}${body 
       WHERE do.order_date=?${sf.clause}`;
     const args = [ddate, ...sf.args];
     if (sc.catIds) { sql += ` AND p.category_id IN (${sc.catIds.map(() => '?').join(',')})`; args.push(...sc.catIds); }
-    sql += ' GROUP BY p.id ORDER BY c.name, p.name';
+    sql += ' GROUP BY p.id ORDER BY p.sort_order, p.name';
     const rows = db.prepare(sql).all(...args);
     let cur = null, body = '';
     rows.forEach(r => {
@@ -1503,7 +1524,7 @@ ${head('روزانہ آرڈر — کل پیداوار', 'پیداوار کی ت�
       FROM daily_order_items di JOIN daily_products p ON p.id=di.product_id
       LEFT JOIN daily_units u ON u.id=p.unit_id LEFT JOIN daily_categories c ON c.id=p.category_id
       WHERE di.order_id=?${sc.catIds ? ` AND p.category_id IN (${sc.catIds.map(() => '?').join(',')})` : ''}
-      ORDER BY c.name, p.name`);
+      ORDER BY p.sort_order, p.name`);
     const its = o ? dItems.all(o.id, ...(sc.catIds || [])) : [];
     const rows = its.map((it, i) => `<tr><td>${i + 1}</td><td>${esc(it.product_name)} <span style="color:#888">(${esc(it.category_name || '')})</span></td><td><b>${esc(it.quantity)} ${esc(it.unit_name || '')}</b></td><td style="width:70px">☐</td></tr>`).join('')
       || '<tr><td colspan=4>کوئی آئٹم نہیں</td></tr>';
@@ -1530,7 +1551,7 @@ ${head('روزانہ آرڈر — کل پیداوار', 'پیداوار کی ت�
       WHERE do.order_date=?${sf.clause}`;
     const targs = [ddate, ...sf.args];
     if (sc.catIds) { tsql += ` AND p.category_id IN (${sc.catIds.map(() => '?').join(',')})`; targs.push(...sc.catIds); }
-    tsql += ' GROUP BY p.id ORDER BY c.name, p.name';
+    tsql += ' GROUP BY p.id ORDER BY p.sort_order, p.name';
     const trows = db.prepare(tsql).all(...targs);
     let cur = null, totBody = '';
     trows.forEach(r => {
@@ -1549,7 +1570,7 @@ ${head('روزانہ آرڈر — کل پیداوار', 'پیداوار کی ت�
       FROM daily_order_items di JOIN daily_products p ON p.id=di.product_id
       LEFT JOIN daily_units u ON u.id=p.unit_id LEFT JOIN daily_categories c ON c.id=p.category_id
       WHERE di.order_id=?${sc.catIds ? ` AND p.category_id IN (${sc.catIds.map(() => '?').join(',')})` : ''}
-      ORDER BY c.name, p.name`);
+      ORDER BY p.sort_order, p.name`);
     const slips = orders.map(o => {
       const its = dItems.all(o.id, ...(sc.catIds || []));
       const rows = its.map((it, i) => `<tr><td>${i + 1}</td><td>${esc(it.product_name)} <span style="color:#888">(${esc(it.category_name || '')})</span></td><td><b>${esc(it.quantity)} ${esc(it.unit_name || '')}</b></td><td style="width:70px">☐</td></tr>`).join('')
