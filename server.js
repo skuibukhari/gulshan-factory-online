@@ -1,1590 +1,1715 @@
-// Gulshan Factory — frontend (Urdu, RTL)
-// Register service worker (makes the app installable on Android; caches nothing)
-if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').catch(() => {});
-const $ = s => document.querySelector(s);
-const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-// mouse wheel se number input ki value na badle — sirf type karne se
-document.addEventListener('wheel', () => {
-  const a = document.activeElement;
-  if (a && a.tagName === 'INPUT' && a.type === 'number') a.blur();
-}, { passive: true });
+// Gulshan Factory — multi-user online ordering system
+// Node.js + Express + better-sqlite3. Serves frontend from ./public
+const path = require('path');
+const fs = require('fs');
+const express = require('express');
+const session = require('express-session');
+const bcrypt = require('bcryptjs');
+const Database = require('better-sqlite3');
 
-// ---------- theme: auto (system) / light / dark ----------
-const THEME_META = { auto: ['🖥️', 'تھیم: خودکار (سسٹم)'], light: ['☀️', 'تھیم: لائٹ'], dark: ['🌙', 'تھیم: ڈارک'] };
-function themePref() { try { return localStorage.getItem('gf-theme') || 'auto'; } catch (e) { return 'auto'; } }
-function effectiveTheme() {
-  const p = themePref();
-  if (p !== 'auto') return p;
-  try { return matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'; } catch (e) { return 'light'; }
-}
-function applyTheme() {
-  if (effectiveTheme() === 'dark') document.documentElement.setAttribute('data-theme', 'dark');
-  else document.documentElement.removeAttribute('data-theme');
-  const b = $('#themeBtn'), m = THEME_META[themePref()] || THEME_META.auto;
-  if (b) { b.textContent = m[0]; b.title = m[1]; }
-}
-function cycleTheme() {
-  const order = ['auto', 'light', 'dark'];
-  const next = order[(order.indexOf(themePref()) + 1) % order.length];
-  try { localStorage.setItem('gf-theme', next); } catch (e) {}
-  applyTheme();
-}
-function setThemePref(v) { try { localStorage.setItem('gf-theme', v); } catch (e) {} applyTheme(); }
-try { matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => { if (themePref() === 'auto') applyTheme(); }); } catch (e) {}
-applyTheme();
-let ME = null, PERM = {};
-let CACHE = { cats: [], units: [], products: [], vehicles: [], routes: [], shops: [] };
-let countdownTimer = null;
+const PORT = process.env.PORT || 3000;
+const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, 'data');
+fs.mkdirSync(DATA_DIR, { recursive: true });
+const db = new Database(path.join(DATA_DIR, 'gulshan.db'));
+db.pragma('journal_mode = WAL');
+db.pragma('foreign_keys = ON');
 
-async function api(method, url, body) {
-  const r = await fetch(url, { method, headers: { 'Content-Type': 'application/json' },
-    body: body ? JSON.stringify(body) : undefined });
-  const t = await r.text();
-  let j = {}; try { j = t ? JSON.parse(t) : {}; } catch (e) { j = { _raw: t }; }
-  if (!r.ok) throw new Error(j.error || ('HTTP ' + r.status));
-  return j;
+// ---------- Schema ----------
+db.exec(`
+CREATE TABLE IF NOT EXISTS users (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  username TEXT UNIQUE NOT NULL,
+  password_hash TEXT NOT NULL,
+  role TEXT NOT NULL CHECK(role IN ('super_admin','factory','shop')),
+  shop_id INTEGER REFERENCES shops(id) ON DELETE SET NULL,
+  active INTEGER NOT NULL DEFAULT 1,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE TABLE IF NOT EXISTS shops (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  name TEXT NOT NULL,
+  phone TEXT DEFAULT '',
+  address TEXT DEFAULT '',
+  active INTEGER NOT NULL DEFAULT 1,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE TABLE IF NOT EXISTS vehicles (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  name TEXT NOT NULL,
+  plate TEXT DEFAULT '',
+  active INTEGER NOT NULL DEFAULT 1
+);
+CREATE TABLE IF NOT EXISTS routes (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  name TEXT NOT NULL,
+  vehicle_id INTEGER REFERENCES vehicles(id) ON DELETE SET NULL,
+  supply_date TEXT DEFAULT '',
+  cutoff_date TEXT DEFAULT '',
+  cutoff_time TEXT DEFAULT '',
+  active INTEGER NOT NULL DEFAULT 1
+);
+CREATE TABLE IF NOT EXISTS categories (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  name TEXT NOT NULL,
+  sort INTEGER NOT NULL DEFAULT 0
+);
+CREATE TABLE IF NOT EXISTS units (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  name TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS products (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  name TEXT NOT NULL,
+  category_id INTEGER REFERENCES categories(id) ON DELETE SET NULL,
+  unit_id INTEGER REFERENCES units(id) ON DELETE SET NULL,
+  active INTEGER NOT NULL DEFAULT 1
+);
+CREATE TABLE IF NOT EXISTS orders (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  shop_id INTEGER NOT NULL REFERENCES shops(id) ON DELETE CASCADE,
+  route_id INTEGER REFERENCES routes(id) ON DELETE SET NULL,
+  delivery_date TEXT NOT NULL,
+  note TEXT DEFAULT '',
+  status TEXT NOT NULL DEFAULT 'new',
+  created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE TABLE IF NOT EXISTS order_items (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  order_id INTEGER NOT NULL REFERENCES orders(id) ON DELETE CASCADE,
+  product_id INTEGER NOT NULL REFERENCES products(id),
+  quantity REAL NOT NULL
+);
+CREATE TABLE IF NOT EXISTS permissions (
+  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  section TEXT NOT NULL,
+  level TEXT NOT NULL CHECK(level IN ('none','view','full')),
+  PRIMARY KEY (user_id, section)
+);
+CREATE TABLE IF NOT EXISTS push_subscriptions (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  endpoint TEXT NOT NULL UNIQUE,
+  p256dh TEXT NOT NULL,
+  auth TEXT NOT NULL,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE TABLE IF NOT EXISTS app_settings (
+  key TEXT PRIMARY KEY,
+  value TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS otps (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  code_hash TEXT NOT NULL,
+  expires_at INTEGER NOT NULL,
+  used INTEGER NOT NULL DEFAULT 0,
+  created_at INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS webauthn_creds (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  cred_id TEXT NOT NULL UNIQUE,
+  public_key TEXT NOT NULL,
+  counter INTEGER NOT NULL DEFAULT 0,
+  created_at INTEGER NOT NULL
+);
+`);
+try { db.exec(`ALTER TABLE users ADD COLUMN phone TEXT DEFAULT ''`); } catch (e) {}
+try { db.exec(`ALTER TABLE users ADD COLUMN avatar TEXT DEFAULT ''`); } catch (e) {}
+try { db.exec(`ALTER TABLE shops ADD COLUMN image TEXT DEFAULT ''`); } catch (e) {}
+try { db.exec(`ALTER TABLE routes ADD COLUMN open_time TEXT DEFAULT '10:00'`); } catch (e) {}
+try { db.exec(`ALTER TABLE users ADD COLUMN account_type TEXT DEFAULT ''`); } catch (e) {}
+try { db.exec(`ALTER TABLE users ADD COLUMN daily_shop_id INTEGER`); } catch (e) {}
+try { db.exec(`ALTER TABLE daily_products ADD COLUMN sort_order INTEGER DEFAULT 0`); } catch (e) {}
+
+// ---------- Daily Orders (روزانہ آرڈر) — separate system, does not touch existing order flow ----------
+db.exec(`CREATE TABLE IF NOT EXISTS daily_orders (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  shop_id INTEGER NOT NULL REFERENCES shops(id) ON DELETE CASCADE,
+  order_date TEXT NOT NULL,
+  note TEXT DEFAULT '',
+  created_by INTEGER REFERENCES users(id),
+  created_at INTEGER NOT NULL,
+  UNIQUE(shop_id, order_date)
+);
+CREATE TABLE IF NOT EXISTS daily_order_items (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  order_id INTEGER NOT NULL REFERENCES daily_orders(id) ON DELETE CASCADE,
+  product_id INTEGER NOT NULL REFERENCES products(id),
+  quantity REAL NOT NULL DEFAULT 0,
+  UNIQUE(order_id, product_id)
+);
+CREATE TABLE IF NOT EXISTS daily_settings (
+  key TEXT PRIMARY KEY,
+  value TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS daily_cat_access (
+  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  category_id INTEGER NOT NULL REFERENCES categories(id) ON DELETE CASCADE,
+  UNIQUE(user_id, category_id)
+);
+CREATE TABLE IF NOT EXISTS daily_shop_access (
+  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  shop_id INTEGER NOT NULL REFERENCES shops(id) ON DELETE CASCADE,
+  UNIQUE(user_id, shop_id)
+);
+CREATE TABLE IF NOT EXISTS daily_shop_items (
+  shop_id INTEGER NOT NULL REFERENCES shops(id) ON DELETE CASCADE,
+  product_id INTEGER NOT NULL REFERENCES products(id) ON DELETE CASCADE,
+  UNIQUE(shop_id, product_id)
+);
+CREATE TABLE IF NOT EXISTS daily_categories (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  name TEXT NOT NULL UNIQUE,
+  active INTEGER DEFAULT 1
+);
+CREATE TABLE IF NOT EXISTS daily_units (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  name TEXT NOT NULL UNIQUE
+);
+CREATE TABLE IF NOT EXISTS daily_products (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  name TEXT NOT NULL,
+  category_id INTEGER REFERENCES daily_categories(id),
+  unit_id INTEGER REFERENCES daily_units(id),
+  active INTEGER DEFAULT 1,
+  sort_order INTEGER DEFAULT 0
+);
+CREATE TABLE IF NOT EXISTS daily_shops (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  name TEXT NOT NULL,
+  phone TEXT DEFAULT '',
+  address TEXT DEFAULT '',
+  image TEXT DEFAULT '',
+  active INTEGER DEFAULT 1
+);`);
+// --- Daily system: fully separate catalog (mukamal alag data) — one-time copy ---
+// Same IDs so existing daily_orders/access rows stay valid; after this, independent.
+if (!db.prepare(`SELECT value FROM daily_settings WHERE key='catalog_split'`).get()) {
+  db.prepare(`INSERT OR IGNORE INTO daily_categories (id, name) SELECT id, name FROM categories`).run();
+  db.prepare(`INSERT OR IGNORE INTO daily_units (id, name) SELECT id, name FROM units`).run();
+  db.prepare(`INSERT OR IGNORE INTO daily_products (id, name, category_id, unit_id)
+    SELECT id, name, category_id, unit_id FROM products`).run();
+  db.prepare(`INSERT OR IGNORE INTO daily_shops (id, name, phone, address, image, active)
+    SELECT id, name, phone, address, image, active FROM shops`).run();
+  db.prepare(`INSERT INTO daily_settings (key, value) VALUES ('catalog_split', '1')`).run();
+  // Existing shop users → link to their (copied) daily shop so daily access keeps working
+  db.prepare(`UPDATE users SET daily_shop_id = shop_id WHERE role='shop' AND shop_id IS NOT NULL
+    AND daily_shop_id IS NULL AND EXISTS (SELECT 1 FROM daily_shops WHERE id = users.shop_id)`).run();
 }
-const can = (sec, lvl = 'view') => {
-  if (!ME) return false;
-  if (ME.role === 'super_admin') return true;
-  const rank = { none: 0, view: 1, full: 2 };
-  return (rank[PERM[sec]] || 0) >= (rank[lvl] || 0);
+// sort_order=0 wali purani rows ko tartib do (table banne ke baad)
+db.prepare(`UPDATE daily_products SET sort_order = id * 10 WHERE sort_order = 0 OR sort_order IS NULL`).run();
+db.prepare(`INSERT OR IGNORE INTO daily_settings (key, value) VALUES ('cutoff_time', '20:00')`).run();
+
+const SECTIONS = ['dashboard','orders','order_history','shops','products','categories','units','vehicles','routes','schedule','reports','users','daily'];
+
+const DEFAULT_PERMS = {
+  factory: { dashboard:'full', orders:'full', order_history:'full', shops:'view', products:'view', categories:'view', units:'view', vehicles:'view', routes:'view', schedule:'full', reports:'full', users:'none', daily:'full' },
+  shop:    { dashboard:'view', orders:'full', order_history:'view', shops:'none', products:'none', categories:'none', units:'none', vehicles:'none', routes:'none', schedule:'view', reports:'none', users:'none', daily:'full' },
 };
-function karachiToday() {
-  return new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Karachi' }).format(new Date());
+
+function seedPermissions(userId, role) {
+  const defs = DEFAULT_PERMS[role] || {};
+  const ins = db.prepare('INSERT OR REPLACE INTO permissions (user_id, section, level) VALUES (?,?,?)');
+  for (const s of SECTIONS) ins.run(userId, s, defs[s] || 'none');
+}
+function getPermissions(userId) {
+  const rows = db.prepare('SELECT section, level FROM permissions WHERE user_id=?').all(userId);
+  const p = {};
+  for (const s of SECTIONS) p[s] = 'none';
+  for (const r of rows) p[r.section] = r.level;
+  // 'daily' is new: users created before it existed have no row — fall back to role default
+  // (existing saved settings are never overwritten)
+  if (!rows.some(r => r.section === 'daily')) {
+    const role = (db.prepare('SELECT role FROM users WHERE id=?').get(userId) || {}).role;
+    p.daily = (DEFAULT_PERMS[role] || {}).daily || 'none';
+  }
+  return p;
 }
 
-// ---------- init ----------
-async function init() {
-  try {
-    checkVersion();
-    const ad = await api('GET', '/api/ad').catch(() => ({ enabled: false }));
-    if (ad.enabled && ad.url) await showSplash(ad);
-    const st = await api('GET', '/api/status');
-    if (st.setupRequired) { $('#setupView').style.display = 'flex'; return; }
-    if (st.loggedIn) { await enterApp(); return; }
-    $('#loginView').style.display = 'flex';
-  } catch (e) { document.body.innerHTML = '<p style="padding:40px">سرور سے رابطہ نہیں ہو سکا</p>'; }
+// ---------- Web Push notifications (new order alerts on mobile) ----------
+// VAPID keys are auto-generated once and stored in app_settings — no setup needed.
+const webpush = require('web-push');
+function appSetting(k, v) {
+  if (v === undefined) { const r = db.prepare('SELECT value FROM app_settings WHERE key=?').get(k); return r ? r.value : null; }
+  db.prepare('INSERT OR REPLACE INTO app_settings (key, value) VALUES (?,?)').run(k, v);
 }
-async function doSetup() {
-  $('#suErr').textContent = '';
-  try {
-    await api('POST', '/api/setup', { username: $('#suUser').value.trim(), password: $('#suPass').value });
-    await enterApp();
-  } catch (e) { $('#suErr').textContent = 'خرابی: ' + e.message; }
-}
-async function doLogin() {
-  $('#liErr').textContent = '';
-  try {
-    const username = $('#liUser').value.trim();
-    await api('POST', '/api/login', { username, password: $('#liPass').value });
-    try { localStorage.setItem('gf-lastuser', username); } catch (e) {}
-    await enterApp();
-  } catch (e) { $('#liErr').textContent = 'یوزر نام یا پاس ورڈ غلط ہے'; }
-}
-// ---------- forgot password (OTP to registered mobile) ----------
-function showAuth(id) { for (const v of ['loginView', 'forgotView', 'otpView', 'setupView']) { const el = document.getElementById(v); if (el) el.style.display = v === id ? 'flex' : 'none'; } }
-function showLogin() {
-  try { const lu = localStorage.getItem('gf-lastuser'); if (lu && !$('#liUser').value) $('#liUser').value = lu; } catch (e) {}
-  showAuth('loginView');
-}
-function showForgot() { $('#fpErr').textContent = ''; const sb = $('#fpSubBox'); if (sb) sb.style.display = 'none'; showAuth('forgotView'); }
-let fpUsername = '';
-async function doForgot() {
-  const u = $('#fpUser').value.trim(), err = $('#fpErr'); err.textContent = '';
-  if (!u) { err.textContent = 'یوزر نام لکھیں'; return; }
-  try {
-    const r = await api('POST', '/api/forgot-password', { username: u });
-    if (!r.sent) { $('#fpSubBox').style.display = 'block'; err.textContent = 'پہلے نیچے سے اس موبائل پر اطلاع آن کریں'; return; }
-  } catch (e) { err.textContent = e.message === 'too_many' ? 'زیادہ کوششیں — 15 منٹ بعد دوبارہ کوشش کریں' : 'خرابی: ' + e.message; return; }
-  fpUsername = u; $('#otpErr').textContent = ''; $('#otpCode').value = ''; $('#otpPass').value = ''; $('#otpPass2').value = '';
-  showAuth('otpView');
-}
-async function doForgotSubscribe() {
-  const u = $('#fpUser').value.trim(), phone = $('#fpPhone').value.trim(), err = $('#fpSubErr');
-  err.textContent = '';
-  if (!u) { err.textContent = 'اوپر یوزر نام لکھیں'; return; }
-  if (!phone) { err.textContent = 'رجسٹرڈ موبائل نمبر لکھیں'; return; }
-  try {
-    err.textContent = '⏳ اجازت طلب کی جا رہی ہے...';
-    const sub = await getPushSubscription();
-    if (!sub) { err.textContent = 'نوٹیفکیشن کی اجازت نہیں ملی — براؤزر سیٹنگ چیک کریں'; return; }
-    await api('POST', '/api/push-subscribe-forgot', { username: u, phone, subscription: sub.toJSON() });
-    err.textContent = '';
-    alert('اطلاع آن ہو گئی ✅ — اب "OTP بھیجیں" دبائیں');
-  } catch (e) {
-    err.textContent = e.message === 'phone_mismatch' ? 'موبائل نمبر رجسٹرڈ نمبر سے نہیں ملتا' : e.message === 'too_many' ? 'زیادہ کوششیں — بعد میں کوشش کریں' : 'خرابی: ' + e.message;
+(function ensureVapid() {
+  if (!appSetting('vapid_public') || !appSetting('vapid_private')) {
+    const keys = webpush.generateVAPIDKeys();
+    appSetting('vapid_public', keys.publicKey);
+    appSetting('vapid_private', keys.privateKey);
+  }
+  webpush.setVapidDetails('mailto:gulshan-factory@local', appSetting('vapid_public'), appSetting('vapid_private'));
+})();
+// Send a push to every subscribed staff member (super_admin + factory), except the order creator.
+function pushTo(subs, payload) {
+  for (const s of subs) {
+    webpush.sendNotification({ endpoint: s.endpoint, keys: { p256dh: s.p256dh, auth: s.auth } }, payload)
+      .catch(e => { if (e.statusCode === 404 || e.statusCode === 410) db.prepare('DELETE FROM push_subscriptions WHERE id=?').run(s.id); });
   }
 }
-async function doReset() {
-  const code = $('#otpCode').value.trim(), p1 = $('#otpPass').value, p2 = $('#otpPass2').value;
-  const err = $('#otpErr'); err.textContent = '';
-  if (p1 !== p2) { err.textContent = 'پاس ورڈ دونوں جگہ ایک جیسا لکھیں'; return; }
-  if (p1.length < 6) { err.textContent = 'پاس ورڈ کم از کم 6 حروف کا ہو'; return; }
-  try { await api('POST', '/api/reset-password', { username: fpUsername, code, password: p1 }); }
-  catch (e) { err.textContent = 'OTP غلط یا مدت ختم — نیا OTP بھیجیں'; return; }
-  alert('پاس ورڈ ری سیٹ ہو گیا ✅ اب لاگ اِن کریں');
-  showAuth('loginView');
+function notifyNewOrder(orderId, shopId, deliveryDate, itemCount, creatorId) {
+  const shop = db.prepare('SELECT name FROM shops WHERE id=?').get(shopId);
+  const payload = JSON.stringify({
+    title: '🧾 نیا آرڈر — گلشن فیکٹری',
+    body: `${shop ? shop.name : 'دکان'}: ${itemCount} آئٹمز | ڈیلیوری: ${deliveryDate}`,
+    url: '/',
+  });
+  const subs = db.prepare(`SELECT ps.* FROM push_subscriptions ps JOIN users u ON u.id=ps.user_id
+    WHERE u.active=1 AND u.role IN ('super_admin','factory') AND u.id != ?`).all(creatorId || 0);
+  pushTo(subs, payload);
 }
-// ---------- app version / update notice ----------
-async function checkVersion() {
-  try {
-    const { version } = await api('GET', '/api/version');
-    const seen = localStorage.getItem('gf-ver');
-    const vl = $('#verLine'); if (vl) vl.textContent = 'ورژن ' + version;
-    if (seen && seen !== version) $('#updBar').style.display = 'block';
-    localStorage.setItem('gf-ver', version);
-  } catch (e) {}
+// Push to ALL subscribed users (any role) — e.g. route/supply changes shops must know about.
+function notifyAll(title, body) {
+  const payload = JSON.stringify({ title, body, url: '/' });
+  const subs = db.prepare(`SELECT ps.* FROM push_subscriptions ps JOIN users u ON u.id=ps.user_id WHERE u.active=1`).all();
+  pushTo(subs, payload);
 }
-async function doLogout() {
-  await api('POST', '/api/logout');
-  location.reload();
-}
-// ---------- change own password ----------
-async function doChangePassword() {
-  const cur = $('#pwCur').value, nw = $('#pwNew').value, nw2 = $('#pwNew2').value;
-  const err = $('#pwErr'); err.textContent = '';
-  if (nw !== nw2) { err.textContent = 'نیا پاس ورڈ دونوں جگہ ایک جیسا لکھیں'; return; }
-  if (nw.length < 6) { err.textContent = 'پاس ورڈ کم از کم 6 حروف کا ہو'; return; }
-  try {
-    await api('POST', '/api/change-password', { current: cur, next: nw });
-  } catch (e) { err.textContent = 'موجودہ پاس ورڈ غلط ہے'; return; }
-  $('#pwModal').style.display = 'none';
-  $('#pwCur').value = $('#pwNew').value = $('#pwNew2').value = '';
-  alert('پاس ورڈ تبدیل ہو گیا ✅');
-}
-async function enterApp() {
-  ME = await api('GET', '/api/me');
-  PERM = ME.permissions || {};
-  $('#loginView').style.display = 'none'; $('#setupView').style.display = 'none';
-  $('#appView').style.display = 'block';
-  $('#meLine').textContent = ME.username + ' — ' + ({ super_admin: 'سپر ایڈمن', factory: 'فیکٹری یوزر', shop: 'دکان' }[ME.role] || ME.role);
-  renderTopbarDp();
-  await refreshCache();
-  buildMenu();
-  const hashView = (location.hash || '').slice(1);
-  _showView(hashView && viewAllowed(hashView) ? hashView : firstAllowedView());
-  try {
-    history.replaceState({ view: 'dashboard' }, '', '#dashboard');
-    if (CUR_VIEW !== 'dashboard') history.pushState({ view: CUR_VIEW }, '', '#' + CUR_VIEW);
-  } catch (e) {}
-  setupPush(); // order notifications for staff (non-blocking)
-}
-
-// ---------- push notifications (new order alerts) ----------
-function urlB64ToKey(b64) {
-  const pad = '='.repeat((4 - (b64.length % 4)) % 4);
-  const bin = atob((b64 + pad).replace(/-/g, '+').replace(/_/g, '/'));
-  const out = new Uint8Array(bin.length);
-  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
-  return out;
-}
-async function getPushSubscription() {
-  if (!('serviceWorker' in navigator) || !('PushManager' in window) || !('Notification' in window)) return null;
-  if (Notification.permission === 'denied') return null;
-  if (Notification.permission !== 'granted') { await Notification.requestPermission(); }
-  if (Notification.permission !== 'granted') return null;
-  const reg = await navigator.serviceWorker.ready;
-  let sub = await reg.pushManager.getSubscription();
-  if (!sub) {
-    const { publicKey } = await api('GET', '/api/vapid-public-key');
-    sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: urlB64ToKey(publicKey) });
+// Login alerts -> only super_admins. Failed attempts throttled: max 1 alert per username per 10 min.
+const lastFailAlert = {};
+function notifyLogin(username, ok, excludeUserId) {
+  if (!ok) {
+    const now = Date.now();
+    if (lastFailAlert[username] && now - lastFailAlert[username] < 10 * 60 * 1000) return;
+    lastFailAlert[username] = now;
   }
-  return sub;
-}
-async function setupPush() {
-  try {
-    // all roles subscribe: staff get order/login alerts, everyone gets route/supply updates
-    const sub = await getPushSubscription();
-    if (!sub) return false;
-    await api('POST', '/api/push-subscribe', { subscription: sub.toJSON() });
-    return true;
-  } catch (e) { /* push optional — never break the app */ return false; }
-}
-async function enablePush() {
-  const ok = await setupPush();
-  alert(ok ? 'نوٹیفکیشن آن ہو گئے ✅' : 'نوٹیفکیشن آن نہیں ہوئے — براؤزر کی پرمیشن چیک کریں');
+  const payload = JSON.stringify({
+    title: ok ? '🔑 لاگ اِن الرٹ' : '⚠️ ناکام لاگ اِن کوشش',
+    body: ok ? `${username} نے لاگ اِن کیا` : `${username} — غلط یوزر نیم یا پاسورڈ`,
+    url: '/',
+  });
+  const subs = db.prepare(`SELECT ps.* FROM push_subscriptions ps JOIN users u ON u.id=ps.user_id
+    WHERE u.active=1 AND u.role='super_admin' AND u.id != ?`).all(excludeUserId || 0);
+  pushTo(subs, payload);
 }
 
-// ---------- cache ----------
-async function refreshCache() {
-  const get = async (u) => { try { return await api('GET', u); } catch (e) { return []; } };
-  if (can('categories')) CACHE.cats = await get('/api/categories');
-  if (can('units')) CACHE.units = await get('/api/units');
-  if (can('products')) CACHE.products = await get('/api/products');
-  if (can('vehicles')) CACHE.vehicles = await get('/api/vehicles');
-  if (can('routes')) CACHE.routes = await get('/api/routes');
-  if (can('shops')) CACHE.shops = await get('/api/shops');
-  else if (ME.role === 'shop') { try { const s = await api('GET', '/api/shops'); CACHE.shops = s; } catch (e) {} }
+// Push to one specific user (all their subscribed devices).
+function pushToUser(userId, payload) {
+  const subs = db.prepare(`SELECT ps.* FROM push_subscriptions ps JOIN users u ON u.id=ps.user_id
+    WHERE u.active=1 AND u.id=?`).all(userId);
+  pushTo(subs, payload);
+  return subs.length;
 }
 
-// ---------- menu / views ----------
-const MENU = [
-  ['dashboard', '📊 ڈیش بورڈ'], ['supply', '🗓 سپلائی کیلنڈر'], ['order', '🧾 نیا آرڈر'], ['orders', '📦 آرڈرز'],
-  ['daily', '📝 روزانہ آرڈر'],
-  ['order_history', '🕘 آرڈر ہسٹری'], ['reports', '🖨 رپورٹس'],
-  ['vehicles', '🚚 گاڑیاں'], ['routes', '🗺 روٹس و شیڈول'], ['cats', '🗂 کیٹیگریز'],
-  ['units', '⚖ یونٹس'], ['products', '🍞 آئٹمز'], ['shops', '🏪 دکانیں'],
-];
-const VIEW_SEC = { dashboard: 'dashboard', supply: 'routes', order: 'orders', orders: 'orders', daily: 'daily', order_history: 'order_history', reports: 'reports',
-  vehicles: 'vehicles', routes: 'routes', cats: 'categories', units: 'units', products: 'products', shops: 'shops' };
-function viewAllowed(key) {
-  const sec = VIEW_SEC[key];
-  if (!sec) return true;
-  if (sec === 'orders' && key === 'order') return can('orders', 'full');
-  if (key === 'supply') return can('routes', 'full');
-  return can(sec);
-}
-function firstAllowedView() {
-  for (const [key] of MENU) if (viewAllowed(key)) return key;
-  return 'dashboard';
-}
-function buildMenu() {
-  const nav = $('#menuNav'); nav.innerHTML = '';
-  for (const [key, label] of MENU) {
-    if (!viewAllowed(key)) continue;
-    const b = document.createElement('button');
-    b.textContent = label; b.dataset.view = key;
-    b.onclick = () => { showView(key); toggleMenu(false); };
-    nav.appendChild(b);
-  }
-  const pw = document.createElement('button');
-  pw.textContent = '🔑 پاس ورڈ تبدیل کریں'; pw.onclick = () => { $('#pwModal').style.display = 'flex'; toggleMenu(false); }; nav.appendChild(pw);
-  const out = document.createElement('button');
-  out.textContent = '🚪 لاگ آؤٹ'; out.onclick = doLogout; nav.appendChild(out);
-}
-let CUR_VIEW = null;
-function _showView(name) {
-  if (!viewAllowed(name)) name = firstAllowedView();
-  CUR_VIEW = name;
-  document.querySelectorAll('.view').forEach(v => v.classList.remove('on'));
-  const el = $('#v-' + (name === 'order_history' ? 'history' : name)); if (el) el.classList.add('on');
-  document.querySelectorAll('#menuNav button').forEach(b => b.classList.toggle('active', b.dataset.view === name));
-  ({ dashboard: renderDashboard, supply: renderSupplyCalendar, order: renderOrderForm, orders: renderOrders, daily: renderDaily, order_history: renderHistory,
-     vehicles: () => renderMaster('vehicles'), routes: renderRoutes, cats: () => renderMaster('cats'),
-     units: () => renderMaster('units'), products: renderProducts, shops: () => renderMaster('shops'),
-     reports: renderReports }[name] || (() => {}))();
-}
-function showView(name) {
-  _showView(name);
-  // Back hamesha dashboard par laye: dashboard ke upar sirf 1 entry rakho
-  try {
-    const top = history.state && history.state.view;
-    if (CUR_VIEW === 'dashboard' || (top && top !== 'dashboard')) history.replaceState({ view: CUR_VIEW }, '', '#' + CUR_VIEW);
-    else history.pushState({ view: CUR_VIEW }, '', '#' + CUR_VIEW);
-  } catch (e) {}
-}
-// Android back button: pichle tab par wapas, pehle tab se back = app band (normal)
-window.addEventListener('popstate', e => {
-  const v = e.state && e.state.view;
-  _showView(v || firstAllowedView());
+// ---------- App ----------
+const app = express();
+
+// GitHub auto-deploy webhook. Must be registered BEFORE express.json() so the
+// raw body is available for signature verification.
+// Setup: set DEPLOY_SECRET env on the server and the same secret in the GitHub
+// webhook (Payload URL https://<site>/api/deploy, content type application/json).
+// On every push to main it runs `git pull`. Frontend-only changes go live
+// immediately (static files are read from disk); if server.js changed, restart
+// the site from the panel once.
+app.post('/api/deploy', express.raw({ type: 'application/json', limit: '1mb' }), (req, res) => {
+  const secret = process.env.DEPLOY_SECRET;
+  if (!secret) return res.status(500).json({ error: 'deploy_not_configured' });
+  const sig = req.headers['x-hub-signature-256'] || '';
+  const expected = 'sha256=' + require('crypto').createHmac('sha256', secret).update(req.body).digest('hex');
+  if (sig.length !== expected.length || !require('crypto').timingSafeEqual(Buffer.from(sig), Buffer.from(expected)))
+    return res.status(403).json({ error: 'bad_signature' });
+  let ref = '';
+  try { ref = JSON.parse(req.body.toString()).ref || ''; } catch (e) {}
+  if (ref && ref !== 'refs/heads/main') return res.json({ ok: true, skipped: 'not_main' });
+  require('child_process').execFile('git', ['pull', 'origin', 'main'], { cwd: __dirname, timeout: 60000 }, (err, stdout, stderr) => {
+    const out = String(stdout || '') + String(stderr || '');
+    if (err) return res.status(500).json({ error: 'pull_failed', log: out.slice(-500) });
+    const needRestart = /server\.js/.test(out);
+    const needInstall = /package\.json/.test(out);
+    const done = (installLog) => res.json({ ok: true, server_restart_needed: needRestart, npm_install: installLog ? installLog.slice(-300) : undefined, log: out.slice(-300) });
+    if (!needInstall) return done('');
+    require('child_process').execFile('npm', ['install', '--omit=dev', '--no-audit', '--no-fund'], { cwd: __dirname, timeout: 180000 },
+      (e2, so2, se2) => done(String(so2 || '') + String(se2 || '')));
+  });
 });
-function toggleMenu(open) {
-  $('#sidemenu').classList.toggle('on', open);
-  $('#scrim').classList.toggle('on', open);
-  if (open) $('#setpanel').classList.remove('on');
-}
-function openSettings() {
-  $('#setpanel').classList.add('on'); $('#scrim').classList.add('on');
-  $('#sidemenu').classList.remove('on');
-  const isSA = ME.role === 'super_admin';
-  document.querySelectorAll('.setpanel .tabs button').forEach(b => {
-    b.style.display = (b.dataset.tab === 'general' || isSA) ? '' : 'none';
-  });
-  setTab('general', document.querySelector('.setpanel .tabs button[data-tab="general"]'));
-}
-function closePanels() {
-  $('#sidemenu').classList.remove('on'); $('#setpanel').classList.remove('on'); $('#scrim').classList.remove('on');
-}
 
-// ---------- dashboard ----------
-function timeAgo(s) {
-  try {
-    const t = new Date(String(s || '').replace(' ', 'T') + 'Z').getTime();
-    if (isNaN(t)) return '';
-    const m = Math.floor((Date.now() - t) / 60000);
-    if (m < 1) return 'ابھی';
-    if (m < 60) return m + ' منٹ پہلے';
-    const h = Math.floor(m / 60);
-    if (h < 24) return h + ' گھنٹے پہلے';
-    const d = Math.floor(h / 24);
-    return d + ' دن پہلے';
-  } catch (e) { return ''; }
+app.use(express.json({ limit: '1mb' }));
+app.set('trust proxy', 1);
+const sessSecret = process.env.SESSION_SECRET || 'gulshan-factory-dev-secret-change-me';
+if (!process.env.SESSION_SECRET) console.warn('[warn] SESSION_SECRET not set — using dev default. Set it in production!');
+app.use(session({
+  name: 'gf.sid',
+  secret: sessSecret,
+  resave: false,
+  saveUninitialized: false,
+  cookie: { httpOnly: true, sameSite: 'lax', secure: process.env.COOKIE_SECURE === '1', maxAge: 1000 * 60 * 60 * 24 * 7 },
+}));
+
+function requireLogin(req, res, next) {
+  if (!req.session.userId) return res.status(401).json({ error: 'login_required' });
+  const u = db.prepare('SELECT id, username, role, shop_id, daily_shop_id, active FROM users WHERE id=?').get(req.session.userId);
+  if (!u || !u.active) { req.session.destroy(() => {}); return res.status(401).json({ error: 'login_required' }); }
+  req.user = u;
+  next();
 }
-function shopAvatar(name, img) {
-  if (img) return `<span class="avatar"><img src="${esc(img)}" alt=""></span>`;
-  const ch = String(name || '?').trim().charAt(0) || '?';
-  return `<span class="avatar">${esc(ch)}</span>`;
+function can(user, section, min) {
+  if (user.role === 'super_admin') return true;
+  const lvl = (getPermissions(user.id)[section]) || 'none';
+  const rank = { none: 0, view: 1, full: 2 };
+  return (rank[lvl] || 0) >= (rank[min] || 0);
 }
-function userAvatar(username, img) {
-  if (img) return `<span class="avatar sm"><img src="${esc(img)}" alt=""></span>`;
-  const ch = String(username || '?').trim().charAt(0) || '?';
-  return `<span class="avatar sm">${esc(ch)}</span>`;
-}
-async function renderDashboard() {
-  const d = await api('GET', '/api/dashboard');
-  const cd = d.upcoming.map(r => `
-    <div class="supcard">
-      <div class="suphead">🚚 <b>${esc(r.name)}</b>${(d.scope !== 'shop' && r.order_count != null) ? ` <span class="obadge">🧾 ${r.order_count} آرڈر</span>` : ''}</div>
-      <div class="supmeta">🚛 ${esc(r.vehicle_name || '—')} &nbsp; 📅 سپلائی: <b>${esc(r.supply_date || '—')}</b></div>
-      <div class="supmeta">⏰ کٹ آف: <b>${esc(r.cutoff_date || '')} ${esc(r.cutoff_time || '')}</b> &nbsp; 🕙 کھلے گا: <b>${esc(r.open_time || '10:00')}</b></div>
-    </div>`).join('');
-  const p2 = n => String(n).padStart(2, '0');
-  const ro = (d.recent_orders || []).map(o => {
-    const dt = new Date(String(o.created_at || '').replace(' ', 'T') + 'Z'); // stored UTC -> viewer local time
-    const when = isNaN(dt) ? '' : `${p2(dt.getDate())}-${p2(dt.getMonth() + 1)} ${p2(dt.getHours())}:${p2(dt.getMinutes())}`;
-    const simg = o.shop_image ? '/images/' + o.shop_image : null;
-    const uimg = o.user_avatar ? '/images/' + o.user_avatar : null;
-    const clickAttr = can('orders', 'full') ? ` onclick="gotoOrder('${esc(o.delivery_date || '')}')" style="cursor:pointer"` : '';
-    return `<div class="drow"${clickAttr}>
-      ${shopAvatar(o.shop_name, simg)}
-      <div class="drmain">
-        <div class="drshop">${esc(o.shop_name)} <span class="ordn">#${o.id}</span></div>
-        <div class="drmeta">📦 ${o.items} آئٹمز • 📅 ${esc(o.delivery_date || '—')}</div>
-        <div class="drmeta">🕐 ${esc(when)}${o.created_by ? ` • ${userAvatar(o.created_by, uimg)} <b>${esc(o.created_by)}</b>` : ''}</div>
-      </div>
-      <span class="chev">‹</span>
-    </div>`;
-  }).join('');
-  const pcls = ['p4', 'p1', 'p2', 'p3', 'p5', 'p6'];
-  let pi = 0;
-  const stat = (icon, n, l) => { const c = pcls[pi++ % pcls.length]; return `<div class="pcard ${c}"><div class="pic">${icon}</div><div class="pnum">${n}</div><div class="plbl">${l}</div></div>`; };
-  const cards = d.scope === 'shop'
-    ? `<div class="pcard p3 wide"><div class="pic">🏪</div><div class="pnum">${esc(d.shop_name || 'میری دکان')}</div><div class="plbl">میری دکان</div></div>`
-      + stat('🧾', d.today_orders, 'نئے آرڈرز (آج)')
-      + stat('📦', d.total_orders, 'کل آرڈرز')
-    : stat('🧾', d.today_orders, 'نئے آرڈرز (آج)')
-      + stat('📦', d.total_orders, 'کل آرڈرز')
-      + stat('🏪', d.shops, 'شاپس')
-      + stat('🗂', d.products, 'پروڈکٹس')
-      + stat('👥', d.users, 'کل صارفین')
-      + stat('🚚', d.vehicles, 'گاڑیاں');
-  // 7-day bar chart (oldest -> today)
-  const daily = d.daily || [0, 0, 0, 0, 0, 0, 0];
-  const mx = Math.max(1, ...daily);
-  const wdf = new Intl.DateTimeFormat('ur-PK', { weekday: 'short' });
-  const bars = daily.map((v, i) => {
-    const lbl = wdf.format(new Date(Date.now() - (6 - i) * 864e5));
-    return `<div class="bcol"><div class="bval">${v}</div><div class="bar" style="height:${Math.max(6, Math.round(v / mx * 110))}px"></div><div class="bday">${lbl}</div></div>`;
-  }).join('');
-  const me = (typeof ME !== 'undefined' && ME && ME.username) || '';
-  const qaBtns = [
-    can('orders', 'full') ? '<button class="qbtn" onclick="showView(\'order\')"><span class="qic">🧾</span>نیا آرڈر</button>' : '',
-    can('products', 'full') ? '<button class="qbtn" onclick="showView(\'products\')"><span class="qic">🗂</span>پروڈکٹ شامل کریں</button>' : '',
-    can('shops', 'full') ? '<button class="qbtn" onclick="showView(\'shops\')"><span class="qic">🏪</span>شاپ شامل کریں</button>' : '',
-    can('reports') ? '<button class="qbtn" onclick="showView(\'reports\')"><span class="qic">📊</span>رپورٹ دیکھیں</button>' : '',
-  ].join('');
-  $('#v-dashboard').innerHTML = `
-    <div class="hero">
-      <div class="hw">
-        <div class="htitle">👋 خوش آمدید${me ? '، ' + esc(me) : ''}!</div>
-        <div class="hsub">آپ کے بیکری سسٹم کا ڈیش بورڈ</div>
-        <div class="htag">تازہ مصنوعات، خوش ذائقہ، آپ کے لیے</div>
-      </div>
-      <img class="hlogo" src="/logo.png" alt="گلشن">
-    </div>
-    <div class="dhead"><div class="dclock">🕐 <span id="liveClock"></span></div></div>
-    <div id="cdBox"></div>
-    <div class="dstats">${cards}</div>
-    ${qaBtns ? `<h2 class="st">⚡ <span>فوری کارروائی</span></h2><div class="qagrid">${qaBtns}</div>` : ''}
-    <h2 class="st">📊 <span>آرڈرز کا خلاصہ</span> <small class="stsmall">یہ ہفتہ</small></h2>
-    <div class="chart">${bars}</div>
-    <h2 class="st">🗓 <span>آنے والی سپلائی</span></h2>
-    <div class="supgrid">${cd || '<p class="note">کوئی شیڈول نہیں</p>'}</div>
-    <h2 class="st">📋 <span>${d.scope === 'shop' ? 'میرے تازہ ترین آرڈرز' : 'تازہ ترین آرڈرز'}</span></h2>
-    <div class="drows">${ro || '<p class="note">ابھی کوئی آرڈر نہیں</p>'}</div>`;
-  tickClock();
-  const soon = (d.upcoming || []).find(r => r.cutoff_date && !cutoffPassedClient(r.cutoff_date, r.cutoff_time));
-  if (soon) startCountdown(soon.cutoff_date, soon.cutoff_time, soon.name);
-}
-function tickClock() {
-  const el = $('#liveClock'); if (!el) return;
-  const f = () => { el.textContent = new Intl.DateTimeFormat('ur-PK', { timeZone: 'Asia/Karachi', hour: '2-digit', minute: '2-digit', second: '2-digit' }).format(new Date()); };
-  f(); setInterval(f, 1000);
-}
-function startCountdown(cdate, ctime, label, boxId, opts) {
-  opts = opts || {};
-  if (countdownTimer) clearInterval(countdownTimer);
-  const box = document.getElementById(boxId || 'cdBox'); if (!box || !cdate) return;
-  const target = new Date(`${cdate}T${ctime || '23:59'}:00+05:00`).getTime();
-  const f = () => {
-    const ms = target - Date.now();
-    if (ms <= 0) {
-      if (opts.onDone) { clearInterval(countdownTimer); opts.onDone(); return; }
-      box.innerHTML = `<div class="countdown">⏰ <b>${esc(label)}</b> کا کٹ آف وقت گزر چکا ہے</div>`; clearInterval(countdownTimer); return;
-    }
-    const h = Math.floor(ms / 36e5), m = Math.floor(ms % 36e5 / 6e4), s = Math.floor(ms % 6e4 / 1e3);
-    box.innerHTML = `<div class="countdown"><small>${esc(opts.cap || '⏰ کٹ آف تک باقی وقت')} — ${esc(label)}</small><div class="t">${h}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}</div></div>`;
+function requireSection(section, min = 'view') {
+  return (req, res, next) => {
+    if (!can(req.user, section, min)) return res.status(403).json({ error: 'forbidden' });
+    next();
   };
-  f(); countdownTimer = setInterval(f, 1000);
+}
+const isAdmin = (req, res, next) => {
+  if (req.user.role !== 'super_admin') return res.status(403).json({ error: 'admin_only' });
+  next();
+};
+// Shop users may only touch their own shop's data
+function scopedShopId(req) {
+  if (req.user.role === 'shop') return req.user.shop_id;
+  return null; // admin/factory: not scoped by default
 }
 
-// ---------- order form (shop / admin) ----------
-let orderDraft = {};
-// ---------- supply calendar (super_admin + factory) ----------
-let calYear = null, calMonth = null, CALDAYS = [], CALDEF = { cutoff: '20:00', open: '10:00' };
-async function renderSupplyCalendar() {
-  const now = new Date();
-  if (calYear == null) { calYear = now.getFullYear(); calMonth = now.getMonth(); }
-  const p2 = n => String(n).padStart(2, '0');
-  const from = `${calYear}-${p2(calMonth + 1)}-01`;
-  const lastDay = new Date(calYear, calMonth + 1, 0).getDate();
-  const to = `${calYear}-${p2(calMonth + 1)}-${lastDay}`;
-  try { CALDAYS = await api('GET', `/api/supply-days?from=${from}&to=${to}`); } catch (e) { CALDAYS = []; }
-  try { const sd = await api('GET', '/api/supply-default'); if (sd) { if (sd.cutoff_time) CALDEF.cutoff = sd.cutoff_time; if (sd.open_time) CALDEF.open = sd.open_time; } } catch (e) {}
-  const byDate = {}; CALDAYS.forEach(d => { byDate[d.supply_date] = d; });
-  const monthName = new Intl.DateTimeFormat('ur-PK', { month: 'long', year: 'numeric' }).format(new Date(calYear, calMonth, 1));
-  const todayS = karachiToday();
-  const dows = ['ہفتہ', 'اتوار', 'پیر', 'منگل', 'بدھ', 'جمعرات', 'جمعہ'];
-  const off = (new Date(calYear, calMonth, 1).getDay() + 1) % 7; // Saturday-first
-  let cells = '';
-  for (let i = 0; i < off; i++) cells += '<div class="cald empty"></div>';
-  for (let d = 1; d <= lastDay; d++) {
-    const ds = `${calYear}-${p2(calMonth + 1)}-${p2(d)}`;
-    const s = byDate[ds];
-    const past = ds < todayS;
-    const cls = s ? 'cald sup' : (past ? 'cald past' : 'cald');
-    const clickable = (past && !s) ? '' : `onclick="calTap('${ds}',${s ? s.id : 0})"`;
-    cells += `<div class="${cls}" ${clickable}><span class="cdn">${d}</span>${s ? `<span class="cbo">🧾 ${s.order_count}</span>` : ''}</div>`;
+// ---------- Public: setup & auth ----------
+app.get('/api/status', (req, res) => {
+  const n = db.prepare('SELECT COUNT(*) c FROM users').get().c;
+  res.json({ setupRequired: n === 0, loggedIn: !!req.session.userId });
+});
+app.post('/api/setup', (req, res) => {
+  const n = db.prepare('SELECT COUNT(*) c FROM users').get().c;
+  if (n > 0) return res.status(400).json({ error: 'already_setup' });
+  const { username, password } = req.body || {};
+  if (!username || !password || String(password).length < 4) return res.status(400).json({ error: 'bad_input' });
+  const hash = bcrypt.hashSync(String(password), 10);
+  const r = db.prepare("INSERT INTO users (username, password_hash, role) VALUES (?,?, 'super_admin')").run(String(username).trim(), hash);
+  req.session.userId = r.lastInsertRowid;
+  res.json({ ok: true });
+});
+app.post('/api/login', (req, res) => {
+  const { username, password } = req.body || {};
+  const uname = String(username || '').trim();
+  const u = db.prepare('SELECT * FROM users WHERE username=? AND active=1').get(uname);
+  if (!u || !bcrypt.compareSync(String(password || ''), u.password_hash)) {
+    notifyLogin(uname || 'نامعلوم', false, 0);
+    return res.status(401).json({ error: 'bad_credentials' });
   }
-  $('#v-supply').innerHTML = `
-    <h2 class="st">🗓 <span>سپلائی کیلنڈر</span></h2>
-    <div class="calhead">
-      <button class="btn small ghost" onclick="calNav(-1)">‹</button>
-      <b>${monthName}</b>
-      <button class="btn small ghost" onclick="calNav(1)">›</button>
-    </div>
-    <div class="calgrid">${dows.map(w => `<div class="cald dow">${w}</div>`).join('')}${cells}</div>
-    <p class="note">🟢 سبز دن = سپلائی | خالی دن پر tap = نیا سپلائی day | سبز دن پر tap = کٹ آف بدلیں / ہٹائیں</p>
-    <div id="calDetail"></div>`;
-}
-function calNav(d) {
-  calMonth += d;
-  if (calMonth < 0) { calMonth = 11; calYear--; }
-  if (calMonth > 11) { calMonth = 0; calYear++; }
-  renderSupplyCalendar();
-}
-async function calTap(ds, id) {
-  if (!id) {
-    if (!confirm(`📅 ${ds} کو سپلائی day بنائیں؟\n🕙 آرڈر: پچھلے دن ${CALDEF.open} سے\n⏰ کٹ آف: پچھلے دن ${CALDEF.cutoff} بجے`)) return;
-    try { await api('POST', '/api/supply-days', { date: ds }); }
-    catch (e) { alert('خرابی: ' + (e.message === 'already_exists' ? 'یہ دن پہلے سے لگا ہے' : e.message)); return; }
-    renderSupplyCalendar(); return;
-  }
-  const s = CALDAYS.find(x => x.id === id); if (!s) return;
-  $('#calDetail').innerHTML = `
-    <div class="caldetail">
-      <h3>🚚 سپلائی: ${esc(s.supply_date)}</h3>
-      <div class="supmeta">🧾 ${s.order_count} آرڈر</div>
-      <div class="supmeta">🕙 آرڈر کھلے گا: <b>${esc(s.cutoff_date || '')} ${esc(s.open_time || CALDEF.open)}</b></div>
-      <div class="supmeta">⏰ کٹ آف: <b>${esc(s.cutoff_date || '')} ${esc(s.cutoff_time || '')}</b></div>
-      <div class="formgrid">
-        <label>آرڈر کھلنے کا ٹائم<br><input type="time" id="calOt" value="${esc(s.open_time || CALDEF.open)}"></label>
-        <label>کٹ آف ٹائم<br><input type="time" id="calCt" value="${esc(s.cutoff_time || CALDEF.cutoff)}"></label>
-      </div>
-      <div style="display:flex;gap:8px;flex-wrap:wrap;margin:8px 0">
-        <button class="btn small green" onclick="calSaveCt(${s.id})">💾 ٹائم محفوظ کریں</button>
-        <button class="btn small danger" onclick="calRemove(${s.id},${s.order_count})">🗑 یہ سپلائی ہٹائیں</button>
-      </div>
-      <div id="calMove"></div>
-    </div>`;
-  $('#calDetail').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-}
-async function calSaveCt(id) {
-  const t = $('#calCt').value, o = $('#calOt').value;
-  if (!t || !o) { alert('ٹائم لکھیں'); return; }
-  try { await api('PUT', '/api/supply-days/' + id, { cutoff_time: t, open_time: o }); }
-  catch (e) { alert('خرابی: ' + e.message); return; }
-  alert('ٹائم اپڈیٹ ہو گیا ✅');
-  renderSupplyCalendar();
-}
-async function calRemove(id, n) {
-  if (n > 0) {
-    const others = CALDAYS.filter(x => x.id !== id);
-    if (!others.length) { alert('کوئی دوسرا سپلائی day نہیں — پہلے نیا دن لگائیں'); return; }
-    $('#calMove').innerHTML = `<div class="formgrid" style="margin-top:10px">
-      <label>آرڈرز کس دن منتقل کریں؟<br><select id="calMoveTo">${others.map(o => `<option value="${o.id}">${esc(o.supply_date)} (${o.order_count} آرڈر)</option>`).join('')}</select></label>
-      <label><br><button class="btn small dark" onclick="calRemoveGo(${id})">⏭ منتقل کریں اور ہٹائیں</button></label></div>`;
-    return;
-  }
-  if (!confirm('یہ سپلائی day ہٹائیں؟')) return;
-  await api('DELETE', '/api/supply-days/' + id);
-  renderSupplyCalendar();
-}
-async function calRemoveGo(id) {
-  const to = $('#calMoveTo').value;
-  try { await api('DELETE', `/api/supply-days/${id}?move_to=${to}`); }
-  catch (e) { alert('خرابی: ' + e.message); return; }
-  alert('آرڈرز منتقل ہو گئے ✅');
-  renderSupplyCalendar();
-}
-async function renderOrderForm() {
-  await refreshCache();
-  const isShop = ME.role === 'shop';
-  // Order catalog: every user who may place orders gets it, regardless of catalog-management permissions
-  let catalog = null;
-  try { catalog = await api('GET', '/api/order-catalog'); } catch (e) { catalog = null; }
-  const cats = catalog ? catalog.cats : CACHE.cats;
-  const products = catalog ? catalog.products : CACHE.products.filter(p => p.active);
-  const routes = catalog ? catalog.routes : CACHE.routes.filter(r => r.active);
-  const shopOpts = isShop
-    ? `<input type="hidden" id="ofShop" value="${ME.shop_id}"><div class="kbd">🏪 دکان: <b>${esc(ME.shop_name || '')}</b></div>`
-    : `<label>دکان<br><select id="ofShop">${CACHE.shops.filter(s => s.active).map(s => `<option value="${s.id}">${esc(s.name)}</option>`).join('')}</select></label>`;
-  // Order window: opens at open_time on cutoff_date, closes at cutoff_time.
-  // Nearest currently-OPEN supply day is auto-selected — shop never picks a date.
-  const winTs = r => ({
-    open: r.cutoff_date ? new Date(`${r.cutoff_date}T${r.open_time || '10:00'}:00+05:00`).getTime() : 0,
-    cut: r.cutoff_date ? new Date(`${r.cutoff_date}T${r.cutoff_time || '23:59'}:00+05:00`).getTime() : Infinity,
-  });
-  const nowTs = Date.now();
-  const bySup = (a, b) => String(a.supply_date).localeCompare(String(b.supply_date));
-  const open = routes.filter(r => { if (!r.supply_date) return false; const w = winTs(r); return nowTs >= w.open && nowTs <= w.cut; }).sort(bySup);
-  const sup = open[0] || null;
-  const nextUp = routes.filter(r => { if (!r.supply_date) return false; return winTs(r).open > nowTs; }).sort(bySup)[0] || null;
-  const catsHtml = cats.map(c => {
-    const prods = products.filter(p => p.category_id === c.id);
-    if (!prods.length) return '';
-    return `<div class="cathead">${esc(c.name)}</div>` + prods.map(p =>
-      `<div class="prow"><span class="pn">${esc(p.name)}</span><span class="un">${esc(p.unit_name || '')}</span>
-       <input type="number" min="0" step="any" data-pid="${p.id}" placeholder="0"></div>`).join('');
-  }).join('');
-  $('#v-order').innerHTML = `
-    <h2 class="st">🧾 <span>نیا آرڈر</span></h2>
-    ${sup ? `
-    <input type="hidden" id="ofRoute" value="${sup.id}">
-    <input type="hidden" id="ofDate" value="${esc(sup.supply_date || '')}">
-    <div class="supbanner">🚚 <b>سپلائی: ${esc(sup.supply_date || '')}</b> &nbsp; ⏰ کٹ آف: <b>${esc(sup.cutoff_date || '')} ${esc(sup.cutoff_time || '')}</b></div>
-    <div id="ofCd"></div>`
-    : nextUp ? `
-    <input type="hidden" id="ofRoute" value=""><input type="hidden" id="ofDate" value="">
-    <div class="lockbar">🕙 اگلی سپلائی (<b>${esc(nextUp.supply_date || '')}</b>) کے آرڈر <b>${esc(nextUp.cutoff_date || '')} ${esc(nextUp.open_time || '10:00')}</b> بجے کھلیں گے</div>
-    <div id="ofCd"></div>`
-    : `<div class="lockbar">📢 ابھی کوئی سپلائی announce نہیں ہوئی — اعلان کا انتظار کریں</div>
-       <input type="hidden" id="ofRoute" value=""><input type="hidden" id="ofDate" value="">`}
-    <div class="formgrid">
-      ${shopOpts}
-      <label>نوٹ<br><input id="ofNote" placeholder="اختیاری"></label>
-    </div>
-    ${catsHtml || '<p class="note">کوئی آئٹم نہیں — پہلے آئٹمز شامل کریں</p>'}
-    <div class="err" id="ofErr"></div>
-    <button class="btn green" onclick="submitOrder()"${sup ? '' : ' disabled'}>✅ آرڈر بھیجیں</button>`;
-  if (sup) startCountdown(sup.cutoff_date, sup.cutoff_time, sup.name, 'ofCd');
-  else if (nextUp) startCountdown(nextUp.cutoff_date, nextUp.open_time || '10:00', nextUp.name, 'ofCd',
-    { cap: '🕙 آرڈر کھلنے میں باقی وقت', onDone: () => renderOrderForm() });
-}
-function cutoffPassedClient(cdate, ctime) {
-  if (!cdate) return false;
-  return Date.now() > new Date(`${cdate}T${ctime || '23:59'}:00+05:00`).getTime();
-}
-function lockOrderForm(locked, label) {
-  document.querySelectorAll('#v-order input[data-pid]').forEach(i => { i.disabled = locked; if (locked) i.value = ''; });
-  const btn = document.querySelector('#v-order button.btn.green');
-  if (btn) btn.disabled = locked;
-  let bar = $('#ofLock');
-  if (locked && !bar) {
-    bar = document.createElement('div');
-    bar.id = 'ofLock';
-    bar.className = 'lockbar';
-    $('#v-order').prepend(bar);
-  }
-  if (bar) {
-    bar.style.display = locked ? 'block' : 'none';
-    if (locked) bar.innerHTML = `🔒 <b>${esc(label || '')}</b> کا کٹ آف وقت گزر چکا ہے — اس روٹ پر آرڈر بند ہے`;
-  }
-}
-function orderRouteChanged() {
-  const sel = $('#ofRoute'); if (!sel) return;
-  const o = sel.options[sel.selectedIndex];
-  const locked = !!(o && o.value && cutoffPassedClient(o.dataset.cd, o.dataset.ct));
-  lockOrderForm(locked, o ? o.text : '');
-  const box = $('#ofCd');
-  if (o && o.dataset.cd) startCountdown(o.dataset.cd, o.dataset.ct, o.text, 'ofCd');
-  else if (box) box.innerHTML = '';
-  const d = $('#ofDate');
-  if (d && o && o.dataset.sd) d.value = o.dataset.sd;
-}
-async function submitOrder() {
-  $('#ofErr').textContent = '';
-  const items = [...document.querySelectorAll('#v-order input[data-pid]')]
-    .map(i => ({ product_id: Number(i.dataset.pid), quantity: Number(i.value) || 0 }))
-    .filter(i => i.quantity > 0);
-  if (!items.length) { $('#ofErr').textContent = 'کم از کم ایک آئٹم کی مقدار لکھیں'; return; }
+  req.session.userId = u.id;
+  notifyLogin(u.username, true, u.id);
+  res.json({ ok: true });
+});
+app.post('/api/change-password', requireLogin, (req, res) => {
+  const { current, next } = req.body || {};
+  const u = db.prepare('SELECT * FROM users WHERE id=?').get(req.user.id);
+  if (!u || !bcrypt.compareSync(String(current || ''), u.password_hash))
+    return res.status(400).json({ error: 'wrong_current' });
+  if (!next || String(next).length < 6) return res.status(400).json({ error: 'weak' });
+  db.prepare('UPDATE users SET password_hash=? WHERE id=?').run(bcrypt.hashSync(String(next), 10), u.id);
+  res.json({ ok: true });
+});
+// ---------- OTP password reset (code goes to the user's registered mobile via push) ----------
+app.post('/api/forgot-password', (req, res) => {
+  const { username } = req.body || {};
+  const u = db.prepare('SELECT id, active FROM users WHERE username=?').get(String(username || '').trim());
+  if (!u || !u.active) return res.json({ ok: true, sent: false }); // don't reveal
+  const recent = db.prepare('SELECT COUNT(*) c FROM otps WHERE user_id=? AND created_at>?').get(u.id, Date.now() - 15 * 60 * 1000).c;
+  if (recent >= 3) return res.status(429).json({ error: 'too_many' });
+  const code = String(Math.floor(100000 + Math.random() * 900000));
+  db.prepare('INSERT INTO otps (user_id, code_hash, expires_at, used, created_at) VALUES (?,?,?,?,?)')
+    .run(u.id, bcrypt.hashSync(code, 10), Date.now() + 10 * 60 * 1000, 0, Date.now());
+  const n = pushToUser(u.id, JSON.stringify({
+    title: '🔑 پاس ورڈ ری سیٹ — گلشن فیکٹری',
+    body: `آپ کا OTP: ${code} — 10 منٹ میں استعمال کریں`,
+    url: '/',
+  }));
+  res.json({ ok: true, sent: n > 0 });
+});
+app.post('/api/reset-password', (req, res) => {
+  const { username, code, password } = req.body || {};
+  if (!password || String(password).length < 6) return res.status(400).json({ error: 'weak' });
+  const u = db.prepare('SELECT id, active FROM users WHERE username=?').get(String(username || '').trim());
+  if (!u || !u.active) return res.status(400).json({ error: 'bad_code' });
+  const otp = db.prepare('SELECT * FROM otps WHERE user_id=? AND used=0 ORDER BY id DESC LIMIT 1').get(u.id);
+  if (!otp || otp.expires_at < Date.now() || !bcrypt.compareSync(String(code || ''), otp.code_hash))
+    return res.status(400).json({ error: 'bad_code' });
+  db.prepare('UPDATE otps SET used=1 WHERE id=?').run(otp.id);
+  db.prepare('UPDATE users SET password_hash=? WHERE id=?').run(bcrypt.hashSync(String(password), 10), u.id);
+  res.json({ ok: true });
+});
+// ---------- WebAuthn biometric login (fingerprint / face) ----------
+app.post('/api/webauthn/register-start', requireLogin, async (req, res) => {
+  const wbn = loadWbn();
+  if (!wbn) return res.status(500).json({ error: 'not_installed' });
   try {
-    const routeId = Number($('#ofRoute').value) || null;
-    if (!routeId) { $('#ofErr').textContent = 'روٹ منتخب کریں'; return; }
-    await api('POST', '/api/orders', {
-      shop_id: Number($('#ofShop').value), route_id: routeId,
-      delivery_date: $('#ofDate').value, note: $('#ofNote').value, items,
+    const existing = db.prepare('SELECT cred_id FROM webauthn_creds WHERE user_id=?').all(req.user.id);
+    const opts = await wbn.generateRegistrationOptions({
+      rpName: 'Gulshan Factory', rpID: rpIDOf(req),
+      userID: new TextEncoder().encode('gf-' + req.user.id),
+      userName: req.user.username,
+      attestationType: 'none',
+      authenticatorSelection: { authenticatorAttachment: 'platform', userVerification: 'preferred' },
+      excludeCredentials: existing.map(r => ({ id: r.cred_id, type: 'public-key' })),
     });
-    alert('آرڈر محفوظ ہو گیا ✅');
-    document.querySelectorAll('#v-order input[data-pid]').forEach(i => i.value = '');
-  } catch (e) {
-    $('#ofErr').textContent = e.message === 'cutoff_passed' ? '⏰ کٹ آف وقت گزر چکا — آرڈر بند ہے' : e.message === 'not_open_yet' ? '🕙 آرڈر ابھی نہیں کھلا — مقررہ وقت کا انتظار کریں' : e.message === 'route_required' ? 'روٹ منتخب کریں' : 'خرابی: ' + e.message;
-  }
-}
+    req.session.wbnChallenge = opts.challenge;
+    res.json({ options: opts });
+  } catch (e) { res.status(500).json({ error: 'failed' }); }
+});
+app.post('/api/webauthn/register-finish', requireLogin, async (req, res) => {
+  const wbn = loadWbn();
+  if (!wbn) return res.status(500).json({ error: 'not_installed' });
+  try {
+    const { verified, registrationInfo } = await wbn.verifyRegistrationResponse({
+      response: req.body.cred,
+      expectedChallenge: req.session.wbnChallenge,
+      expectedOrigin: originOf(req),
+      expectedRPID: rpIDOf(req),
+    });
+    if (!verified || !registrationInfo) return res.status(400).json({ error: 'verify_failed' });
+    const ncred = registrationInfo.credential || {};
+    db.prepare(`INSERT OR REPLACE INTO webauthn_creds (user_id, cred_id, public_key, counter, created_at)
+      VALUES (?,?,?,?,?)`).run(req.user.id, ncred.id,
+      b64uE(ncred.publicKey), ncred.counter || 0, Date.now());
+    delete req.session.wbnChallenge;
+    res.json({ ok: true });
+  } catch (e) { res.status(400).json({ error: 'bad_request' }); }
+});
+app.post('/api/webauthn/login-start', async (req, res) => {
+  const wbn = loadWbn();
+  if (!wbn) return res.status(500).json({ error: 'not_installed' });
+  const u = db.prepare('SELECT id, active FROM users WHERE username=?').get(String((req.body || {}).username || '').trim());
+  if (!u || !u.active) return res.status(400).json({ error: 'no_bio' });
+  const creds = db.prepare('SELECT cred_id FROM webauthn_creds WHERE user_id=?').all(u.id);
+  if (!creds.length) return res.status(400).json({ error: 'no_bio' });
+  try {
+    const opts = await wbn.generateAuthenticationOptions({
+      rpID: rpIDOf(req),
+      allowCredentials: creds.map(c => ({ id: c.cred_id, type: 'public-key' })),
+      userVerification: 'preferred',
+    });
+    req.session.wbnChallenge = opts.challenge;
+    req.session.wbnUser = u.id;
+    res.json({ options: opts });
+  } catch (e) { res.status(500).json({ error: 'failed' }); }
+});
+app.post('/api/webauthn/login-finish', async (req, res) => {
+  const wbn = loadWbn();
+  if (!wbn) return res.status(500).json({ error: 'not_installed' });
+  try {
+    const { username, asrt } = req.body || {};
+    const u = db.prepare('SELECT * FROM users WHERE username=?').get(String(username || '').trim());
+    const cred = u && asrt && db.prepare('SELECT * FROM webauthn_creds WHERE user_id=? AND cred_id=?').get(u.id, asrt.id);
+    if (!u || !u.active || !cred || req.session.wbnUser !== u.id || !req.session.wbnChallenge)
+      return res.status(400).json({ error: 'bad_request' });
+    const { verified, authenticationInfo } = await wbn.verifyAuthenticationResponse({
+      response: asrt,
+      expectedChallenge: req.session.wbnChallenge,
+      expectedOrigin: originOf(req),
+      expectedRPID: rpIDOf(req),
+      credential: { id: cred.cred_id, publicKey: b64uD(cred.public_key), counter: cred.counter },
+    });
+    if (!verified) return res.status(400).json({ error: 'verify_failed' });
+    db.prepare('UPDATE webauthn_creds SET counter=? WHERE id=?').run(authenticationInfo.newCounter, cred.id);
+    req.session.userId = u.id;
+    delete req.session.wbnChallenge; delete req.session.wbnUser;
+    res.json({ ok: true });
+  } catch (e) { res.status(400).json({ error: 'bad_request' }); }
+});
+app.get('/api/webauthn/status', requireLogin, (req, res) => {
+  const n = db.prepare('SELECT COUNT(*) c FROM webauthn_creds WHERE user_id=?').get(req.user.id).c;
+  res.json({ on: n > 0 });
+});
+app.delete('/api/webauthn', requireLogin, (req, res) => {
+  db.prepare('DELETE FROM webauthn_creds WHERE user_id=?').run(req.user.id);
+  res.json({ ok: true });
+});
+// ---------- webauthn client debug log (diagnose login issues; in-memory) ----------
+const wbnDebugLog = [];
+app.post('/api/webauthn-debug', (req, res) => {
+  wbnDebugLog.push({ t: new Date().toISOString(), ip: req.ip, ...(req.body || {}) });
+  if (wbnDebugLog.length > 120) wbnDebugLog.splice(0, wbnDebugLog.length - 120);
+  res.json({ ok: true });
+});
+app.get('/api/webauthn-debug', requireLogin, (req, res) => {
+  if (req.user.role !== 'super_admin') return res.status(403).json({ error: 'forbidden' });
+  res.json(wbnDebugLog);
+});
 
-// ---------- orders list ----------
-function orderCard(o) {
-  const simg = o.shop_image ? '/images/' + o.shop_image : null;
-  const items = o.items.map(i => `<div class="oitem"><span>${esc(i.product_name)}${i.category_name ? ` <small>(${esc(i.category_name)})</small>` : ''}</span><b>${esc(i.quantity)} ${esc(i.unit_name || '')}</b></div>`).join('');
-  const acts = can('orders', 'full')
-    ? `<div class="oacts"><button class="btn small ghost" onclick="editOrder(${o.id})">✏ ترمیم</button>
-       <button class="btn small danger" onclick="delOrder(${o.id})">🗑 حذف</button></div>` : '';
-  return `<div class="ocard">
-    <div class="ochead">${shopAvatar(o.shop_name, simg)}
-      <div class="ocmain"><div class="octitle">${esc(o.shop_name)} <span class="ordn">#${o.id}</span></div>
-      <div class="ocsub">📅 ${esc(o.delivery_date || '—')}${o.route_name ? ` • 🛣 ${esc(o.route_name)}` : ''}</div></div>
-    </div>
-    <div class="oitems">${items || '<p class="note">کوئی آئٹم نہیں</p>'}</div>
-    ${acts}
-  </div>`;
+// ---------- Splash ads (super_admin uploads image/video shown at app start) ----------
+const AD_DIR = path.join(DATA_DIR, 'ads');
+fs.mkdirSync(AD_DIR, { recursive: true });
+app.use('/ads', express.static(AD_DIR));
+// ---------- profile / shop images ----------
+const IMG_DIR = path.join(DATA_DIR, 'images');
+fs.mkdirSync(IMG_DIR, { recursive: true });
+app.use('/images', express.static(IMG_DIR));
+function imageUpload(prefix) {
+  if (!loadMulter()) return null;
+  return multerLib({
+    storage: multerLib.diskStorage({
+      destination: IMG_DIR,
+      filename: (req, file, cb) => cb(null, prefix + '-' + Date.now() + path.extname(file.originalname).toLowerCase()),
+    }),
+    limits: { fileSize: 5 * 1024 * 1024 },
+    fileFilter: (req, file, cb) => {
+      if (/^image\//.test(file.mimetype)) cb(null, true);
+      else cb(new Error('bad_type'));
+    },
+  }).single('file');
 }
-async function renderOrders() {
-  const defDate = ORD_FILTER_DATE || karachiToday(); ORD_FILTER_DATE = null;
-  const q = `date=${defDate}`;
-  const list = await api('GET', '/api/orders?' + q);
-  $('#v-orders').innerHTML = `<h2 class="st">📦 <span>آرڈرز</span> <small class="note">(${esc(defDate)})</small></h2>
-    <div class="formgrid"><label>تاریخ<br><input type="date" id="olDate" value="${defDate}"></label>
-    <label>روٹ<br><select id="olRoute"><option value="">تمام</option>${CACHE.routes.map(r => `<option value="${r.id}">${esc(r.name)}</option>`).join('')}</select></label>
-    <label><br><button class="btn small dark" onclick="filterOrders()">🔍 دیکھیں</button></label></div>
-    <div id="olBody" class="ocards">${list.map(orderCard).join('') || '<p class="note">کوئی آرڈر نہیں</p>'}</div>
-    ${can('orders', 'full') ? '<button class="btn" onclick="showView(\'order\')">🧾 نیا آرڈر</button>' : ''}`;
-}
-let ORD_FILTER_DATE = null;
-function gotoOrder(deliveryDate) {
-  ORD_FILTER_DATE = deliveryDate || karachiToday();
-  showView('orders');
-}
-async function filterOrders() {
-  const d = $('#olDate').value, r = $('#olRoute').value;
-  const list = await api('GET', `/api/orders?date=${d}${r ? '&route_id=' + r : ''}`);
-  $('#olBody').innerHTML = list.map(orderCard).join('') || '<p class="note">کوئی آرڈر نہیں</p>';
-}
-async function delOrder(id) {
-  if (!confirm('آرڈر حذف کریں؟')) return;
-  await api('DELETE', '/api/orders/' + id);
-  filterOrders();
-}
-async function editOrder(id) {
-  const list = await api('GET', '/api/orders');
-  const o = list.find(x => x.id === id); if (!o) return;
-  const qty = {};
-  o.items.forEach(i => qty[i.product_id] = i.quantity);
-  const catsHtml = CACHE.cats.map(c => {
-    const prods = CACHE.products.filter(p => p.active && p.category_id === c.id);
-    if (!prods.length) return '';
-    return `<div class="cathead">${esc(c.name)}</div>` + prods.map(p =>
-      `<div class="prow"><span class="pn">${esc(p.name)}</span><span class="un">${esc(p.unit_name || '')}</span>
-       <input type="number" min="0" step="any" data-pid="${p.id}" value="${qty[p.id] || ''}" placeholder="0"></div>`).join('');
-  }).join('');
-  $('#v-orders').innerHTML = `<h2 class="st">✏ <span>آرڈر میں ترمیم</span> (#${o.id} — ${esc(o.shop_name)})</h2>
-    <div class="formgrid"><label>ڈیلیوری تاریخ<br><input type="date" id="eoDate" value="${esc(o.delivery_date)}"></label>
-    <label>نوٹ<br><input id="eoNote" value="${esc(o.note || '')}"></label></div>
-    ${catsHtml}<br><button class="btn green" onclick="saveEditOrder(${o.id})">💾 محفوظ کریں</button>
-    <button class="btn ghost" onclick="renderOrders()">↩ واپس</button>`;
-}
-async function saveEditOrder(id) {
-  const items = [...document.querySelectorAll('#v-orders input[data-pid]')]
-    .map(i => ({ product_id: Number(i.dataset.pid), quantity: Number(i.value) || 0 }));
-  await api('PUT', '/api/orders/' + id, { delivery_date: $('#eoDate').value, note: $('#eoNote').value, items });
-  alert('محفوظ ہو گیا ✅'); renderOrders();
-}
-
-// ---------- history ----------
-async function renderHistory() {
-  const g = await api('GET', '/api/order-history');
-  const dates = Object.keys(g).sort().reverse();
-  const isShopUser = !!(typeof ME !== 'undefined' && ME && ME.shop_id);
-  let shopSel = '';
-  if (!isShopUser && can('shops', 'view')) {
-    const shops = await api('GET', '/api/shops').catch(() => []);
-    shopSel = `<label>دکان<br><select id="hsShop">${shops.map(s => `<option value="${s.id}">${esc(s.name)}</option>`).join('')}</select></label>`;
-  }
-  $('#v-history').innerHTML = `<h2 class="st">🕘 <span>آرڈر ہسٹری</span></h2>
-    <div class="formgrid">
-      ${shopSel}
-      <label>تاریخ<br><input type="date" id="hsDate" value="${karachiToday()}"></label>
-    </div>
-    <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px">
-      <button class="btn small green" onclick="printShopHistory()">🖨 دکان وائز ہسٹری پرنٹ کریں</button>
-      <button class="btn small dark" onclick="printDateHistory()">🖨 تاریخ وائز ہسٹری پرنٹ کریں</button>
-    </div>`
-    + (dates.map(d =>
-    `<div class="histdate">📅 ${esc(d)}</div>` + g[d].map(o =>
-      `<div class="kbd"><b>${esc(o.shop_name)}</b> — ${o.items.map(i => esc(i.product_name) + ': ' + esc(i.quantity) + ' ' + esc(i.unit_name || '')).join('، ')}</div>`
-    ).join('')).join('') || '<p class="note">کوئی ہسٹری نہیں</p>');
-}
-function printShopHistory() {
-  const sel = document.getElementById('hsShop');
-  const sid = sel ? sel.value : ((typeof ME !== 'undefined' && ME && ME.shop_id) || '');
-  if (!sid) { alert('دکان منتخب کریں'); return; }
-  window.open('/print?type=shop_history&shop_id=' + encodeURIComponent(sid), '_blank');
-}
-function printDateHistory() {
-  const d = (document.getElementById('hsDate') || {}).value;
-  if (!d) { alert('تاریخ منتخب کریں'); return; }
-  window.open('/print?type=date_history&date=' + encodeURIComponent(d), '_blank');
-}
-
-// ---------- masters ----------
-const MASTER_CONF = {
-  vehicles: { title: '🚚 گاڑیاں', fields: [['name', 'نام'], ['plate', 'نمبر پلیٹ']], cols: ['نام', 'نمبر پلیٹ'] },
-  cats: { title: '🗂 کیٹیگریز', api: 'categories', fields: [['name', 'نام'], ['sort', 'ترتیب']], cols: ['نام', 'ترتیب'] },
-  units: { title: '⚖ یونٹس', fields: [['name', 'نام']], cols: ['نام'] },
-  shops: { title: '🏪 دکانیں', fields: [['name', 'نام'], ['phone', 'فون'], ['address', 'پتہ']], cols: ['نام', 'فون', 'پتہ'] },
-};
-// Rozana me kaun hai — tick ki halat ke liye
-let _dailyIds = null;
-async function getDailyIds() {
-  if (_dailyIds) return _dailyIds;
-  try {
-    const [c, u, p, s] = await Promise.all([
-      api('GET', '/api/daily-categories'), api('GET', '/api/daily-units'),
-      api('GET', '/api/daily-products'), api('GET', '/api/daily-shops'),
-    ]);
-    _dailyIds = { category: new Set(c.map(x => x.id)), unit: new Set(u.map(x => x.id)), product: new Set(p.map(x => x.id)), shop: new Set(s.map(x => x.id)) };
-  } catch (e) { _dailyIds = { category: new Set(), unit: new Set(), product: new Set(), shop: new Set() }; }
-  return _dailyIds;
-}
-async function toggleDaily(kind, id, btn) {
-  const ids = await getDailyIds();
-  const on = !ids[kind].has(id);
-  try {
-    await api('POST', `/api/daily/toggle/${kind}/${id}`, { on });
-    _dailyIds = null; // refresh
-    // jis daily screen par hain wahi dobara
-    ({ category: renderDailyCats, unit: renderDailyUnits, product: renderDailyProducts, shop: renderDailyShops })[kind]();
-  } catch (e) {
-    alert(e.message === 'in_use' ? '⚠️ Ye rozana me istemal ho raha hai — pehle uska data hatain' : 'خرابی: ' + e.message);
-  }
-}
-async function renderMaster(key) {
-  const conf = MASTER_CONF[key];
-  const endpoint = conf.api || key;
-  const sec = VIEW_SEC[key] || key;
-  const list = await api('GET', '/api/' + endpoint);
-  const isShops = key === 'shops';
-  const rows = list.map(r => `<tr>${isShops ? `<td>${r.image ? `<img class="shimg" src="/images/${esc(r.image)}" alt="">` : '<span class="note">—</span>'}
-    ${can(sec, 'full') ? `<br><label class="btn small ghost" style="cursor:pointer">🖼 <input type="file" accept="image/*" style="display:none" onchange="uploadShopImage(${r.id},this)"></label>` : ''}</td>` : ''}${conf.fields.map(([f]) => `<td>${esc(r[f])}</td>`).join('')}
-    <td>${r.active === 0 ? '<span class="badge off">بند</span>' : '<span class="badge">فعال</span>'}
-    ${can(sec, 'full') ? ` <button class="btn small ghost" onclick="masterEdit('${key}','${endpoint}',${r.id})">✏</button>
-    <button class="btn small danger" onclick="masterDel('${endpoint}',${r.id},'${key}')">🗑</button>` : ''}</td></tr>`).join('');
-  const form = can(sec, 'full') ? `
-    <div class="formgrid" id="mf-${key}">
-      ${conf.fields.map(([f, l]) => `<label>${l}<br><input id="mf-${key}-${f}"></label>`).join('')}
-      <label><br><button class="btn small green" onclick="masterAdd('${key}','${endpoint}')">➕ شامل کریں</button></label>
-    </div>` : '';
-  $('#v-' + key).innerHTML = `<h2 class="st">${conf.title}</h2>${form}
-    <table><tr>${isShops ? '<th>تصویر</th>' : ''}${conf.cols.map(c => `<th>${c}</th>`).join('')}<th>حالت</th></tr>${rows || `<tr><td colspan=5>خالی</td></tr>`}</table>`;
-}
-async function uploadShopImage(id, input) {
-  const f = input.files && input.files[0]; if (!f) return;
-  try {
-    const fd = new FormData(); fd.append('file', f);
-    const r = await fetch('/api/shops/' + id + '/image', { method: 'POST', body: fd });
-    const j = await r.json();
-    if (!j.ok) throw new Error(j.error || 'failed');
-    renderMaster('shops');
-  } catch (e) { alert('تصویر اپ لوڈ ناکام — صرف تصویر (زیادہ سے زیادہ 5MB)'); }
-}
-async function masterAdd(key, endpoint) {
-  const conf = MASTER_CONF[key]; const body = {};
-  for (const [f] of conf.fields) body[f] = $('#mf-' + key + '-' + f).value;
-  await api('POST', '/api/' + endpoint, body);
-  renderMaster(key);
-}
-async function masterDel(endpoint, id, key) {
-  if (!confirm('حذف کریں؟')) return;
-  await api('DELETE', `/api/${endpoint}/${id}`);
-  renderMaster(key);
-}
-async function masterEdit(key, endpoint, id) {
-  const list = await api('GET', '/api/' + endpoint);
-  const r = list.find(x => x.id === id); if (!r) return;
-  const conf = MASTER_CONF[key];
-  const vals = {};
-  for (const [f, l] of conf.fields) {
-    const v = prompt(l + ':', r[f] ?? '');
-    if (v === null) return; vals[f] = v;
-  }
-  await api('PUT', `/api/${endpoint}/${id}`, vals);
-  renderMaster(key);
-}
-// routes (special: vehicle + dates + time)
-async function renderRoutes() {
-  await refreshCache();
-  const rows = CACHE.routes.map(r => {
-    const v = CACHE.vehicles.find(x => x.id === r.vehicle_id);
-    return `<tr><td>${esc(r.name)}</td><td>${esc(v ? v.name : '—')}</td><td>${esc(r.supply_date || '—')}</td>
-    <td>${esc(r.cutoff_date || '—')} ${esc(r.cutoff_time || '')}</td>
-    <td>${can('routes', 'full') ? `<button class="btn small ghost" onclick="routeEdit(${r.id})">✏</button>
-    <button class="btn small danger" onclick="routeDel(${r.id})">🗑</button>` : ''}</td></tr>`;
-  }).join('');
-  const form = can('routes', 'full') ? `
-    <div class="formgrid">
-      <label>روٹ کا نام<br><input id="rf-name"></label>
-      <label>گاڑی<br><select id="rf-vehicle"><option value="">—</option>${CACHE.vehicles.filter(v => v.active).map(v => `<option value="${v.id}">${esc(v.name)}</option>`).join('')}</select></label>
-      <label>سپلائی تاریخ<br><input type="date" id="rf-sdate"></label>
-      <label>کٹ آف تاریخ<br><input type="date" id="rf-cdate"></label>
-      <label>کٹ آف وقت<br><input type="time" id="rf-ctime"></label>
-      <label><br><button class="btn small green" onclick="routeAdd()">➕ شامل کریں</button></label>
-    </div>` : '';
-  $('#v-routes').innerHTML = `<h2 class="st">🗺 <span>روٹس و شیڈول</span></h2>${form}
-    <table><tr><th>روٹ</th><th>گاڑی</th><th>سپلائی تاریخ</th><th>کٹ آف</th><th></th></tr>${rows || '<tr><td colspan=5>خالی</td></tr>'}</table>`;
-}
-async function routeAdd() {
-  await api('POST', '/api/routes', { name: $('#rf-name').value, vehicle_id: Number($('#rf-vehicle').value) || null,
-    supply_date: $('#rf-sdate').value, cutoff_date: $('#rf-cdate').value, cutoff_time: $('#rf-ctime').value });
-  renderRoutes();
-}
-async function routeDel(id) { if (!confirm('حذف کریں؟')) return; await api('DELETE', '/api/routes/' + id); renderRoutes(); }
-async function routeEdit(id) {
-  const r = CACHE.routes.find(x => x.id === id); if (!r) return;
-  const name = prompt('روٹ کا نام:', r.name); if (name === null) return;
-  const sdate = prompt('سپلائی تاریخ (YYYY-MM-DD):', r.supply_date || ''); if (sdate === null) return;
-  const cdate = prompt('کٹ آف تاریخ (YYYY-MM-DD):', r.cutoff_date || ''); if (cdate === null) return;
-  const ctime = prompt('کٹ آف وقت (HH:MM):', r.cutoff_time || ''); if (ctime === null) return;
-  await api('PUT', '/api/routes/' + id, { name, vehicle_id: r.vehicle_id, supply_date: sdate, cutoff_date: cdate, cutoff_time: ctime, active: r.active });
-  renderRoutes();
-}
-// products
-async function renderProducts() {
-  await refreshCache();
-  const rows = CACHE.products.map(p => `<tr><td>${esc(p.category_name || '—')}</td><td>${esc(p.name)}</td><td>${esc(p.unit_name || '—')}</td>
-    <td>${can('products', 'full') ? `<button class="btn small ghost" onclick="prodEdit(${p.id})">✏</button>
-    <button class="btn small danger" onclick="prodDel(${p.id})">🗑</button>` : ''}</td></tr>`).join('');
-  const form = can('products', 'full') ? `
-    <div class="formgrid">
-      <label>کیٹیگری<br><select id="pf-cat">${CACHE.cats.map(c => `<option value="${c.id}">${esc(c.name)}</option>`).join('')}</select></label>
-      <label>آئٹم کا نام<br><input id="pf-name" placeholder="مثلاً Milky Bread Small"></label>
-      <label>یونٹ<br><select id="pf-unit">${CACHE.units.map(u => `<option value="${u.id}">${esc(u.name)}</option>`).join('')}</select></label>
-      <label><br><button class="btn small green" onclick="prodAdd()">➕ شامل کریں</button></label>
-    </div>` : '';
-  $('#v-products').innerHTML = `<h2 class="st">🍞 <span>آئٹمز</span></h2>${form}
-    <table><tr><th>کیٹیگری</th><th>نام</th><th>یونٹ</th><th></th></tr>${rows || '<tr><td colspan=4>خالی</td></tr>'}</table>`;
-}
-async function prodAdd() {
-  await api('POST', '/api/products', { name: $('#pf-name').value, category_id: Number($('#pf-cat').value) || null, unit_id: Number($('#pf-unit').value) || null });
-  renderProducts();
-}
-async function prodDel(id) { if (!confirm('حذف کریں؟')) return; await api('DELETE', '/api/products/' + id); renderProducts(); }
-async function prodEdit(id) {
-  const p = CACHE.products.find(x => x.id === id); if (!p) return;
-  const name = prompt('آئٹم کا نام:', p.name); if (name === null) return;
-  await api('PUT', '/api/products/' + id, { name, category_id: p.category_id, unit_id: p.unit_id, active: p.active });
-  renderProducts();
-}
-
-// ---------- reports ----------
-async function renderReports() {
-  $('#v-reports').innerHTML = `<h2 class="st">🖨 <span>رپورٹس — پروڈکشن شیٹ</span></h2>
-    <div class="formgrid">
-      <label>تاریخ<br><input type="date" id="rpDate" value="${karachiToday()}"></label>
-      <label>روٹ<br><select id="rpRoute"><option value="">تمام روٹس</option>${CACHE.routes.map(r => `<option value="${r.id}">${esc(r.name)}</option>`).join('')}</select></label>
-      <label><br><button class="btn small dark" onclick="loadTotals()">🔍 ٹوٹل دیکھیں</button></label>
-    </div>
-    <div id="rpBody"></div>
-    <div id="rpPrint"></div>`;
-  loadTotals();
-}
-async function loadTotals() {
-  const d = $('#rpDate').value, r = $('#rpRoute').value;
-  const t = await api('GET', `/api/totals?date=${d}${r ? '&route_id=' + r : ''}`);
-  const rows = t.map(x => `<tr><td>${esc(x.category_name || '')}</td><td>${esc(x.product_name)}</td><td><b>${esc(x.total_qty)} ${esc(x.unit_name || '')}</b></td><td>${x.shop_count} دکان</td></tr>`).join('');
-  $('#rpBody').innerHTML = `<table><tr><th>کیٹیگری</th><th>آئٹم</th><th>کل مقدار</th><th>دکانیں</th></tr>${rows || '<tr><td colspan=4>کوئی آرڈر نہیں</td></tr>'}</table>`;
-  $('#rpPrint').innerHTML = `<a class="btn green" target="_blank" href="/print?type=totals&date=${d}${r ? '&route_id=' + r : ''}">🖨 آئٹم وائز ٹوٹل پرنٹ کریں</a>
-  <a class="btn dark" target="_blank" href="/print?type=shops&date=${d}${r ? '&route_id=' + r : ''}">🧾 دکان وائز سلپ پرنٹ کریں (ہر دکان الگ صفحہ)</a>
-  <a class="btn" target="_blank" href="/print?type=date_history&date=${d}">📜 اس تاریخ کی مکمل ہسٹری پرنٹ کریں</a>`;
-}
-
-// ---------- settings: users & access ----------
-let setTabName = 'general';
-function setTab(t, btn) {
-  setTabName = t;
-  document.querySelectorAll('.setpanel .tabs button').forEach(b => b.classList.remove('active'));
-  btn.classList.add('active');
-  for (const k of ['general', 'users', 'access', 'push', 'ad']) $('#set' + k[0].toUpperCase() + k.slice(1)).style.display = t === k ? 'block' : 'none';
-  if (t === 'general') renderSettingsGeneral();
-  else if (t === 'users') renderSettingsUsers(); else if (t === 'access') renderSettingsAccess(); else if (t === 'push') renderSettingsPush(); else renderSettingsAd();
-}
-// ---------- settings: general (one place for everyone's options) ----------
-async function renderSettingsGeneral() {
-  const st = await api('GET', '/api/webauthn/status').catch(() => ({ on: false }));
-  const tp = themePref();
-  const myDp = ME.avatar ? `<img src="${esc(ME.avatar)}" class="bigdp" alt="">` : userAvatar(ME.username, null);
-  $('#setGeneral').innerHTML = `<h3>⚙️ میری سیٹنگ</h3>
-    <div class="profsec">
-      ${myDp}
-      <div><div class="profname">${esc(ME.username)}</div>
-      <label class="btn small ghost" style="cursor:pointer">🖼 تصویر لگائیں
-        <input type="file" id="dpFile" accept="image/*" style="display:none" onchange="uploadMyAvatar(this)"></label>
-      <div class="err" id="dpErr"></div></div>
-    </div>
-    <div class="formgrid">
-      <label>🎨 تھیم<br><select id="gsTheme" onchange="setThemePref(this.value)">
-        <option value="auto"${tp === 'auto' ? ' selected' : ''}>🖥️ خودکار (سسٹم)</option>
-        <option value="light"${tp === 'light' ? ' selected' : ''}>☀️ لائٹ</option>
-        <option value="dark"${tp === 'dark' ? ' selected' : ''}>🌙 ڈارک</option></select></label>
-      <label>🔐 فنگر پرنٹ / فیس لاگ اِن<br>
-        <button class="btn small ${st.on ? 'ghost' : 'green'}" onclick="bioRegister()">${st.on ? '🔄 دوبارہ سیٹ کریں' : '✅ آن کریں'}</button>
-        ${st.on ? ' <button class="btn small danger" onclick="bioRemove()">بند کریں</button>' : ''}</label>
-      <label>🔔 نوٹیفکیشن<br><button class="btn small" onclick="enablePush()">Allow کریں</button></label>
-      <label>🔑 پاس ورڈ<br><button class="btn small" onclick="document.getElementById('pwModal').style.display='flex'">تبدیل کریں</button></label>
-    </div>
-    <p class="note">👆 فنگر پرنٹ صرف اسی موبائل پر کام کرے گا جس پر آن کیا — لاگ اِن اسکرین پر یوزر نام لکھ کر 👆 دبائیں۔</p>`;
-}
-async function uploadMyAvatar(input) {
-  const f = input.files && input.files[0]; if (!f) return;
-  $('#dpErr').textContent = '⏳ اپ لوڈ ہو رہی ہے...';
-  try {
-    const fd = new FormData(); fd.append('file', f);
-    const r = await fetch('/api/my-avatar', { method: 'POST', body: fd });
-    const j = await r.json();
-    if (!j.ok) throw new Error(j.error || 'failed');
-    ME.avatar = j.avatar;
-    renderTopbarDp();
-    renderSettingsGeneral();
-  } catch (e) { $('#dpErr').textContent = 'ناکام — صرف تصویر (زیادہ سے زیادہ 5MB)'; }
-}
-function renderTopbarDp() {
-  const w = $('#meDpWrap'); if (!w) return;
-  w.innerHTML = ME.avatar ? `<img src="${esc(ME.avatar)}" class="medp" alt="">` : '';
-}
-// ---------- biometric login (WebAuthn: fingerprint / face) ----------
-function b64ToBuf(s) { s = String(s).replace(/-/g, '+').replace(/_/g, '/'); while (s.length % 4) s += '='; const b = atob(s); const u = new Uint8Array(b.length); for (let i = 0; i < b.length; i++) u[i] = b.charCodeAt(i); return u; }
-function bufToB64(buf) { const u = new Uint8Array(buf); let s = ''; for (let i = 0; i < u.length; i++) s += String.fromCharCode(u[i]); return btoa(s).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, ''); }
-function wbnPre(o) {
-  const out = { ...o, challenge: b64ToBuf(o.challenge) };
-  if (out.user) out.user = { ...out.user, id: b64ToBuf(out.user.id) };
-  for (const k of ['excludeCredentials', 'allowCredentials']) if (out[k]) out[k] = out[k].map(c => ({ ...c, id: b64ToBuf(c.id) }));
-  return out;
-}
-function wbnPost(c) {
-  const o = { id: c.id, rawId: bufToB64(c.rawId), type: c.type, response: {} };
-  for (const k of ['clientDataJSON', 'attestationObject', 'authenticatorData', 'signature', 'userHandle']) if (c.response[k]) o.response[k] = bufToB64(c.response[k]);
-  return o;
-}
-async function bioRegister() {
-  if (!window.PublicKeyCredential) { alert('اس براؤزر / موبائل میں فنگر پرنٹ سپورٹ نہیں'); return; }
-  try {
-    const { options } = await api('POST', '/api/webauthn/register-start');
-    const cred = await navigator.credentials.create({ publicKey: wbnPre(options) });
-    await api('POST', '/api/webauthn/register-finish', { cred: wbnPost(cred) });
-    alert('فنگر پرنٹ لاگ اِن آن ہو گیا ✅');
-    renderSettingsGeneral();
-  } catch (e) { alert('ناکام — ' + (e.message || 'دوبارہ کوشش کریں')); }
-}
-async function bioRemove() {
-  if (!confirm('فنگر پرنٹ لاگ اِن بند کریں؟')) return;
-  await api('DELETE', '/api/webauthn');
-  renderSettingsGeneral();
-}
-async function bioLogin() {
-  const err = $('#liErr'); err.textContent = '';
-  const dbg = (step, info) => { try { api('POST', '/api/webauthn-debug', { step, info: String(info || '').slice(0, 200) }); } catch (e) {} };
-  dbg('click');
-  if (!window.PublicKeyCredential) { err.textContent = 'اس براؤزر میں فنگر پرنٹ سپورٹ نہیں'; dbg('no-support'); return; }
-  let username = $('#liUser').value.trim();
-  if (!username) { try { username = localStorage.getItem('gf-lastuser') || ''; } catch (e) {} }
-  if (!username) { err.textContent = 'پہلے یوزر نام لکھیں'; dbg('no-username'); return; }
-  $('#liUser').value = username;
-  try {
-    err.textContent = '⏳ سرور سے رابطہ ہو رہا ہے...'; dbg('login-start-begin', username);
-    const { options } = await api('POST', '/api/webauthn/login-start', { username });
-    dbg('login-start-ok');
-    err.textContent = '👆 اب فنگر پرنٹ لگائیں...'; dbg('get-begin');
-    let asrt;
-    try { asrt = await navigator.credentials.get({ publicKey: wbnPre(options) }); }
-    catch (ge) { err.textContent = 'فنگر پرنٹ نہیں کھلا (' + (ge && ge.name || 'error') + ') — دوبارہ کوشش کریں'; dbg('get-error', ge && ge.name); return; }
-    dbg('get-ok');
-    if (!asrt) { err.textContent = 'فنگر پرنٹ منسوخ ہو گیا'; dbg('get-null'); return; }
-    dbg('finish-begin');
-    await api('POST', '/api/webauthn/login-finish', { username, asrt: wbnPost(asrt) });
-    dbg('finish-ok');
-    try { localStorage.setItem('gf-lastuser', username); } catch (e) {}
-    await enterApp();
-  } catch (e) { dbg('outer-error', e.message); err.textContent = e.message === 'no_bio' ? 'اس یوزر کے لیے فنگر پرنٹ سیٹ نہیں — پہلے لاگ اِن کر کے سیٹنگ میں آن کریں' : 'فنگر پرنٹ ناکام — دوبارہ کوشش کریں'; }
-}
-async function renderSettingsPush() {
-  const st = await api('GET', '/api/push-status');
-  $('#setPush').innerHTML = `<h3>🔔 اطلاعات (Notifications)</h3>
-    <p>رجسٹرڈ ڈیوائسز: <b>${st.count}</b></p>
-    ${st.devices.map(d => `<div>📱 ${esc(d.username)} — ${esc(d.created_at)}</div>`).join('') || '<p>ابھی کوئی ڈیوائس رجسٹرڈ نہیں۔</p>'}
-    <button class="btn green" onclick="pushTest()">ٹیسٹ نوٹیفکیشن بھیجو</button>
-    <p style="color:var(--muted);font-size:14px">نوٹ: ہر موبائل پر ایک دفعہ ایپ کھول کر لاگ اِن کریں اور "Allow notifications" دبائیں۔</p>`;
-}
-async function pushTest() {
-  const r = await api('POST', '/api/push-test');
-  alert(r.sent ? 'ٹیسٹ بھیج دیا گیا! اپنا موبائل چیک کرو 📱' : 'کوئی ڈیوائس رجسٹرڈ نہیں — پہلے موبائل پر نوٹیفکیشن Allow کرو');
-}
-// ---------- settings: splash ad ----------
-function fmtDT(iso) {
-  if (!iso) return '';
-  const d = new Date(iso);
-  return d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' }) + ' ' +
-    d.toLocaleTimeString('en-GB', { hour: 'numeric', minute: '2-digit' });
-}
-function toLocalInput(iso) {
-  if (!iso) return '';
-  const d = new Date(iso), p = n => String(n).padStart(2, '0');
-  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}`;
-}
-function adStatusLine(ad) {
-  if (!ad.on) return '⚪ اشتہار بند ہے';
-  const now = Date.now(), s = ad.start ? Date.parse(ad.start) : 0, e = ad.end ? Date.parse(ad.end) : 0;
-  if (s && now < s) return '🕐 ' + fmtDT(ad.start) + ' سے شروع ہوگا';
-  if (e && now > e) return '🔴 مدت ختم (' + fmtDT(ad.end) + ' تک تھا)';
-  if (s && e) return '🟢 چل رہا ہے (' + fmtDT(ad.start) + ' سے ' + fmtDT(ad.end) + ' تک)';
-  if (s) return '🟢 چل رہا ہے (' + fmtDT(ad.start) + ' سے شروع)';
-  if (e) return '🟢 چل رہا ہے (' + fmtDT(ad.end) + ' تک)';
-  return '🟢 چل رہا ہے (ہمیشہ)';
-}
-async function renderSettingsAd() {
-  const ad = await api('GET', '/api/ad');
-  const durs = [2, 3, 4, 5, 6, 8, 10].map(d => `<option value="${d}"${ad.duration === d ? ' selected' : ''}>${d} سیکنڈ</option>`).join('');
-  $('#setAd').innerHTML = `<h3>📢 اشتہار (ایپ کھلنے پر)</h3>
-    ${ad.hasAd ? (ad.type === 'video'
-      ? `<video src="${ad.url}" style="max-width:100%;max-height:220px;border-radius:10px" controls playsinline></video>`
-      : `<img src="${ad.url}" style="max-width:100%;max-height:220px;border-radius:10px">`) : '<p class="note">کوئی اشتہار نہیں لگا</p>'}
-    ${ad.hasAd ? `<p><b>${adStatusLine(ad)}</b></p>` : ''}
-    <div class="formgrid">
-      <label>تصویر / ویڈیو ${ad.hasAd ? '(بدلنے کے لیے نئی فائل چنیں)' : ''}<br><input type="file" id="adFile" accept="image/*,video/*"></label>
-      <label>دکھانے کی مدت<br><select id="adDur">${durs}</select></label>
-      <label>📅 کب سے دکھائیں<br><input type="datetime-local" id="adStart" value="${toLocalInput(ad.start)}"></label>
-      <label>📅 کب تک دکھائیں<br><input type="datetime-local" id="adEnd" value="${toLocalInput(ad.end)}"></label>
-      <label><br><input type="checkbox" id="adOn" ${ad.on ? 'checked' : ''} style="width:auto"> اشتہار دکھائیں</label>
-      <label><br><button class="btn small green" onclick="adSave()">💾 محفوظ کریں</button></label>
-    </div>
-    <p class="note">کب سے / کب تک خالی = ہمیشہ دکھائیں۔ محفوظ کریں سے بغیر فائل بدلے بھی ترمیم ہو جاتی ہے ✏️</p>
-    ${ad.hasAd ? '<button class="btn small danger" onclick="adDel()">🗑 اشتہار حذف کریں</button>' : ''}`;
-}
-async function adSave() {
-  const fd = new FormData();
-  const f = $('#adFile').files[0];
-  if (f) fd.append('file', f);
-  fd.append('enabled', $('#adOn').checked ? '1' : '0');
-  fd.append('duration', $('#adDur').value);
-  const sv = $('#adStart').value, ev = $('#adEnd').value;
-  fd.append('start', sv ? new Date(sv).toISOString() : '');
-  fd.append('end', ev ? new Date(ev).toISOString() : '');
-  const r = await fetch('/api/ads', { method: 'POST', body: fd });
-  if (!r.ok) {
-    const j = await r.json().catch(() => ({}));
-    alert(j.error === 'bad_range' ? '״کب تک״ »کب سے« کے بعد ہونا چاہیے' : 'اپلوڈ ناکام — صرف تصویر یا ویڈیو (زیادہ سے زیادہ 25MB)');
-    return;
-  }
-  alert('اشتہار محفوظ ہو گیا ✅');
-  renderSettingsAd();
-}
-async function adDel() {
-  if (!confirm('اشتہار حذف کریں؟')) return;
-  await api('DELETE', '/api/ads');
-  renderSettingsAd();
-}
-// ---------- splash ad at app start ----------
-function showSplash(ad) {
-  return new Promise(resolve => {
-    const v = $('#splashView'), m = $('#splashMedia');
-    m.innerHTML = ad.type === 'video'
-      ? `<video src="${ad.url}" autoplay muted playsinline style="width:100%;height:100%;object-fit:contain"></video>`
-      : `<img src="${ad.url}" style="width:100%;height:100%;object-fit:contain" alt="اشتہار">`;
-    v.style.display = 'flex';
-    let done = false;
-    window.hideSplash = () => {
-      if (done) return; done = true;
-      v.style.display = 'none'; m.innerHTML = ''; resolve();
-    };
-    setTimeout(window.hideSplash, (ad.duration || 4) * 1000);
+app.post('/api/my-avatar', requireLogin, (req, res) => {
+  const up = imageUpload('av');
+  if (!up) return res.status(500).json({ error: 'upload_not_ready' });
+  up(req, res, (err) => {
+    if (err || !req.file) return res.status(400).json({ error: 'bad_file' });
+    const old = (db.prepare('SELECT avatar FROM users WHERE id=?').get(req.user.id) || {}).avatar;
+    if (old) fs.rmSync(path.join(IMG_DIR, old), { force: true });
+    db.prepare('UPDATE users SET avatar=? WHERE id=?').run(req.file.filename, req.user.id);
+    res.json({ ok: true, avatar: '/images/' + req.file.filename });
   });
-}
-const ACCT_TYPES = {
-  shop: { label: '🏪 دکان (سپلائی)', role: 'shop' },
-  daily_shop: { label: '📝 روزانہ دکان', role: 'shop' },
-  department: { label: '🏭 ڈیپارٹمنٹ', role: 'factory' },
-  supplier: { label: '🚚 سپلائر', role: 'factory' },
-  viewer: { label: '👁 ویور', role: 'factory' },
-  factory_admin: { label: '👑 فیکٹری ایڈمن', role: 'factory' },
-  super_admin: { label: '🔑 سپر ایڈمن', role: 'super_admin' },
-};
-const acctLabel = u => (u.account_type && ACCT_TYPES[u.account_type] ? ACCT_TYPES[u.account_type].label
-  : { super_admin: 'سپر ایڈمن', factory: 'فیکٹری', shop: 'دکان' }[u.role]);
-async function renderSettingsUsers() {
-  const users = await api('GET', '/api/users');
-  await refreshCache();
-  const rows = users.map(u => `<tr><td>${esc(u.username)}</td><td>${acctLabel(u)}</td>
-    <td>${esc(u.shop_name || '—')}</td><td dir="ltr">${esc(u.phone || '—')}</td><td>${u.active ? '<span class="badge">فعال</span>' : '<span class="badge off">بند</span>'}</td>
-    <td><button class="btn small ghost" onclick="userEdit(${u.id})">✏</button>
-    ${u.id !== ME.id ? `<button class="btn small danger" onclick="userDel(${u.id})">🗑</button>` : ''}</td></tr>`).join('');
-  $('#setUsers').innerHTML = `<h3>👥 یوزرز / اکاؤنٹس</h3>
-    <table><tr><th>یوزر نام</th><th>اکاؤنٹ کی قسم</th><th>دکان</th><th>موبائل</th><th>حالت</th><th></th></tr>${rows}</table>
-    <h3>➕ نیا اکاؤنٹ</h3>
-    <div class="formgrid">
-      <label>یوزر نام<br><input id="nu-name"></label>
-      <label>پاس ورڈ<br><input id="nu-pass" type="password"></label>
-      <label>موبائل نمبر<br><input id="nu-phone" dir="ltr" placeholder="03xx-xxxxxxx"></label>
-      <label>اکاؤنٹ کی قسم<br><select id="nu-type" onchange="nuTypeChanged()">
-        ${Object.entries(ACCT_TYPES).map(([k, v]) => `<option value="${k}">${v.label}</option>`).join('')}</select></label>
-      <label id="nu-shoprow">دکان (سپلائی)<br><select id="nu-shop">${CACHE.shops.map(s => `<option value="${s.id}">${esc(s.name)}</option>`).join('')}</select></label>
-      <label id="nu-dshoprow" style="display:none">روزانہ دکان<br><select id="nu-dshop"></select></label>
-      <label><br><button class="btn small green" onclick="userAdd()">بنائیں</button></label>
-    </div>
-    <p class="note">ڈیپارٹمنٹ / سپلائر / ویور خودکار طور پر صرف دیکھ سکیں گے — کیٹیگری/دکان کی سیٹنگ روزانہ آرڈر → ⚙ ایکسس سیٹنگ سے کریں</p>`;
-  loadDailyShopsForUserForm();
-}
-async function loadDailyShopsForUserForm() {
+});
+app.post('/api/shops/:id/image', requireLogin, (req, res) => {
+  if (!can(req.user, 'shops', 'full')) return res.status(403).json({ error: 'forbidden' });
+  const up = imageUpload('shop');
+  if (!up) return res.status(500).json({ error: 'upload_not_ready' });
+  up(req, res, (err) => {
+    if (err || !req.file) return res.status(400).json({ error: 'bad_file' });
+    const old = (db.prepare('SELECT image FROM shops WHERE id=?').get(req.params.id) || {}).image;
+    if (old) fs.rmSync(path.join(IMG_DIR, old), { force: true });
+    db.prepare('UPDATE shops SET image=? WHERE id=?').run(req.file.filename, req.params.id);
+    res.json({ ok: true, image: '/images/' + req.file.filename });
+  });
+});
+// ---------- dependencies: self-install any missing npm package in background (no SSH needed) ----------
+let installRunning = false;
+function ensureDeps() {
+  let missing = [];
   try {
-    const ds = await api('GET', '/api/daily-shops');
-    const sel = $('#nu-dshop');
-    if (sel) sel.innerHTML = ds.map(s => `<option value="${s.id}">${esc(s.name)}</option>`).join('');
+    const deps = Object.keys(require('./package.json').dependencies || {});
+    missing = deps.filter(d => { try { require.resolve(d); return false; } catch (e) { return true; } });
   } catch (e) {}
-}
-function nuTypeChanged() {
-  const t = $('#nu-type').value;
-  $('#nu-shoprow').style.display = t === 'shop' ? 'block' : 'none';
-  $('#nu-dshoprow').style.display = t === 'daily_shop' ? 'block' : 'none';
-}
-async function userAdd() {
-  const atype = $('#nu-type').value;
-  const role = (ACCT_TYPES[atype] || ACCT_TYPES.shop).role;
-  await api('POST', '/api/users', { username: $('#nu-name').value.trim(), password: $('#nu-pass').value,
-    role, account_type: atype,
-    shop_id: atype === 'shop' ? Number($('#nu-shop').value) : null,
-    daily_shop_id: atype === 'daily_shop' ? Number($('#nu-dshop').value) : null,
-    phone: $('#nu-phone').value.trim() });
-  renderSettingsUsers();
-}
-async function userDel(id) { if (!confirm('یوزر حذف کریں؟')) return; await api('DELETE', '/api/users/' + id); renderSettingsUsers(); }
-async function userEdit(id) {
-  const users = await api('GET', '/api/users');
-  const u = users.find(x => x.id === id); if (!u) return;
-  const role = prompt('رول (super_admin / factory / shop):', u.role); if (role === null) return;
-  const phone = prompt('موبائل نمبر:', u.phone || ''); if (phone === null) return;
-  const active = confirm('اکاؤنٹ فعال رکھیں؟ (OK=فعال، Cancel=بند)');
-  const pw = prompt('نیا پاس ورڈ (خالی چھوڑیں تو تبدیل نہیں ہوگا):', '');
-  await api('PUT', '/api/users/' + id, { role: ['super_admin', 'factory', 'shop'].includes(role) ? role : u.role,
-    shop_id: u.shop_id, active: active ? 1 : 0, phone, ...(pw ? { password: pw } : {}) });
-  renderSettingsUsers();
-}
-const SEC_UR = { dashboard: 'ڈیش بورڈ', orders: 'آرڈرز', order_history: 'آرڈر ہسٹری', shops: 'دکانیں', products: 'آئٹمز',
-  categories: 'کیٹیگریز', units: 'یونٹس', vehicles: 'گاڑیاں', routes: 'روٹس', schedule: 'شیڈول', reports: 'رپورٹس', users: 'یوزرز', daily: 'روزانہ آرڈر' };
-const LVL_UR = { none: '⛔ بند', view: '👁 صرف دیکھیں', full: '✅ مکمل اختیار' };
-async function renderSettingsAccess() {
-  const users = (await api('GET', '/api/users')).filter(u => u.role !== 'super_admin');
-  const secs = await api('GET', '/api/sections');
-  $('#setAccess').innerHTML = `<h3>🔐 رسائی / اختیار</h3>
-    <label>یوزر منتخب کریں<br><select id="pa-user" onchange="renderPermMatrix()">${users.map(u => `<option value="${u.id}">${esc(u.username)}</option>`).join('')}</select></label>
-    <div id="pa-matrix"></div><br><button class="btn green" onclick="savePerms()">💾 محفوظ کریں</button>`;
-  renderPermMatrix();
-}
-async function renderPermMatrix() {
-  const uid = $('#pa-user').value; if (!uid) return;
-  const users = await api('GET', '/api/users');
-  const u = users.find(x => x.id === Number(uid));
-  const secs = await api('GET', '/api/sections');
-  $('#pa-matrix').innerHTML = secs.map(s => `<div class="permgrid"><span>${SEC_UR[s] || s}</span>
-    <select data-sec="${s}">${['none', 'view', 'full'].map(l => `<option value="${l}" ${u.permissions[s] === l ? 'selected' : ''}>${LVL_UR[l]}</option>`).join('')}</select>
-  </div>`).join('');
-}
-async function savePerms() {
-  const uid = $('#pa-user').value;
-  const perms = {};
-  document.querySelectorAll('#pa-matrix select').forEach(s => perms[s.dataset.sec] = s.value);
-  await api('PUT', `/api/users/${uid}/permissions`, { permissions: perms });
-  alert('رسائی محفوظ ہو گئی ✅');
-}
-
-// ==================== DAILY ORDERS (روزانہ آرڈر) — separate system ====================
-let DAILY_DATE = null, DAILY_CUTOFF = '20:00', DAILY_VIEW_DATE = null, DAILY_SHOP_FILTER = '';
-function fmtTime(ts) {
-  try { return new Date(ts).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true, timeZone: 'Asia/Karachi' }); }
-  catch (e) { return ''; }
-}
-
-async function renderDaily() {
-  const di = await api('GET', '/api/daily/date');
-  DAILY_DATE = di.order_date; DAILY_CUTOFF = di.cutoff_time;
-  if (ME.role === 'shop' && ME.daily_shop_id) return renderDailyShopForm(di);
-  if (ME.role === 'shop') {
-    $('#v-daily').innerHTML = `<h2 class="st">📝 <span>روزانہ آرڈر</span></h2>
-      <p class="note">آپ کا اکاؤنٹ روزانہ آرڈر سسٹم میں رجسٹرڈ نہیں ہے — صرف روزانہ دکان اکاؤنٹ یہاں آرڈر دے سکتا ہے۔</p>`;
-    return;
-  }
-  return renderDailyBoard(di);
-}
-// countdown target = order_date se ek din pehle, cutoff time par
-function dailyCutDate(orderDate) {
-  const d = new Date(orderDate + 'T12:00:00');
-  d.setDate(d.getDate() - 1);
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-}
-
-// ---------- shop: apna rozana order ----------
-async function renderDailyShopForm(di) {
-  const catalog = await api('GET', '/api/daily/catalog');
-  const allowedIds = await api('GET', '/api/daily/my-items').catch(() => null);
-  const myOrders = await api('GET', '/api/daily/orders?date=' + di.order_date);
-  const mine = myOrders[0] || null;
-  const qty = {};
-  (mine && mine.items || []).forEach(i => qty[i.product_id] = i.quantity);
-  const locked = di.cutoff_passed;
-  const catsHtml = catalog.map(c => {
-    const prods = c.products.filter(p => !allowedIds || allowedIds.includes(p.id));
-    if (!prods.length) return '';
-    return `<div class="cathead">${esc(c.name)}</div>` + prods.map(p =>
-      `<div class="prow"><span class="pn">${esc(p.name)}</span>
-       <input type="number" min="0" step="any" data-pid="${p.id}" value="${qty[p.id] || ''}" placeholder="0"${locked ? ' disabled' : ''}></div>`).join('');
-  }).join('');
-  $('#v-daily').innerHTML = `
-    <h2 class="st">📝 <span>روزانہ آرڈر</span></h2>
-    <div class="supbanner">📦 پیداوار: <b>${esc(di.order_date)}</b></div>
-    ${locked ? `<div class="lockbar">🔒 کٹ آف (${esc(di.cutoff_time)}) گزر چکا ہے — آرڈر بند ہے</div>` : `<div id="dCd"></div>`}
-    ${catsHtml || '<p class="note">کوئی آئٹم نہیں</p>'}
-    <div class="err" id="dErr"></div>
-    <button class="btn green" onclick="submitDailyOrder()"${locked ? ' disabled' : ''}>✅ آرڈر بھیجیں</button>
-    ${mine && !locked ? `<button class="btn small" style="background:#c62828;color:#fff" onclick="delDailyOrder(${mine.id})">🗑 آرڈر حذف کریں</button>` : ''}`;
-  if (!locked) startCountdown(dailyCutDate(di.order_date), di.cutoff_time, 'روزانہ آرڈر', 'dCd', { onDone: () => renderDaily() });
-}
-async function submitDailyOrder() {
-  const items = {};
-  document.querySelectorAll('#v-daily input[data-pid]').forEach(i => { const q = parseFloat(i.value) || 0; if (q > 0) items[i.dataset.pid] = q; });
-  try {
-    await api('POST', '/api/daily/orders', { order_date: DAILY_DATE, items });
-    alert('آرڈر بھیج دیا گیا ✅');
-    renderDaily();
-  } catch (e) { $('#dErr').textContent = 'خرابی: ' + e.message; }
-}
-// ---------- admin: kisi dukan ka order do ----------
-async function renderDailyAdminOrder() {
-  const di = await api('GET', '/api/daily/date');
-  DAILY_DATE = di.order_date;
-  const [shops, catalog] = await Promise.all([api('GET', '/api/daily-shops'), api('GET', '/api/daily/catalog')]);
-  const catsHtml = catalog.map(c => {
-    if (!c.products.length) return '';
-    return `<div class="cathead">🗂 ${esc(c.name)}</div>` + c.products.map(p =>
-      `<div class="prow"><span class="pn">${esc(p.name)}</span>
-       <input type="number" min="0" step="any" data-pid="${p.id}" placeholder="0"></div>`).join('');
-  }).join('');
-  $('#v-daily').innerHTML = `
-    <h2 class="st">📝 <span>دکان کا آرڈر دیں</span></h2>
-    <button class="btn small" onclick="DAILY_VIEW_DATE=null;renderDaily()">← واپس</button>
-    <div class="supbanner">📦 پیداوار: <b>${esc(di.order_date)}</b></div>
-    <div class="formgrid"><label>دکان منتخب کریں<br><select id="dao-shop">
-      ${shops.filter(s => s.active).map(s => `<option value="${s.id}">${esc(s.name)}</option>`).join('')}
-    </select></label></div>
-    ${catsHtml || '<p class="note">⚠️ کوئی آئٹم نہیں — پہلے 📦 روزانہ ڈیٹا سے آئٹمز شامل کریں</p>'}
-    <div class="err" id="dErr"></div>
-    ${catsHtml ? '<button class="btn green" onclick="submitDailyAdminOrder()">✅ آرڈر بھیجیں</button>' : ''}`;
-}
-async function submitDailyAdminOrder() {
-  const shop_id = Number($('#dao-shop').value);
-  if (!shop_id) { alert('دکان منتخب کریں'); return; }
-  const items = {};
-  document.querySelectorAll('#v-daily input[data-pid]').forEach(i => { const q = parseFloat(i.value) || 0; if (q > 0) items[i.dataset.pid] = q; });
-  if (!Object.keys(items).length) { alert('کوئی مقدار درج نہیں کی'); return; }
-  try {
-    await api('POST', '/api/daily/orders', { order_date: DAILY_DATE, shop_id, items });
-    alert('آرڈر بھیج دیا گیا ✅');
-    DAILY_VIEW_DATE = null; renderDaily();
-  } catch (e) { $('#dErr').textContent = 'خرابی: ' + e.message; }
-}
-async function delDailyOrder(id) {
-  if (!confirm('آرڈر حذف کریں؟')) return;
-  await api('DELETE', '/api/daily/orders/' + id);
-  renderDaily();
-}
-
-// ---------- board: viewer / supplier / factory / admin ----------
-async function renderDailyBoard(di) {
-  const isAdmin = ME.role === 'super_admin';
-  const date = DAILY_VIEW_DATE || di.order_date;
-  const [orders, totals, tracker, catalog] = await Promise.all([
-    api('GET', '/api/daily/orders?date=' + encodeURIComponent(date)),
-    api('GET', '/api/daily/totals?date=' + encodeURIComponent(date)),
-    api('GET', '/api/daily/tracker?date=' + encodeURIComponent(date)),
-    api('GET', '/api/daily/catalog'),
-  ]);
-  const isCurrent = date === di.order_date;
-  const rec = tracker.shops.filter(s => s.ordered), pend = tracker.shops.filter(s => !s.ordered);
-  const pct = tracker.total ? Math.round(tracker.received / tracker.total * 100) : 0;
-  const trackerHtml = `
-    <div class="supcard" style="background:linear-gradient(135deg,#1b5e20,#2e7d32);color:#fff;border:none">
-      <div style="display:flex;justify-content:space-between;align-items:center">
-        <div><div style="font-size:13px;opacity:.85">📊 آرڈر ٹریکر</div>
-        <div style="font-size:32px;font-weight:bold">${tracker.received}<span style="font-size:18px;opacity:.7"> / ${tracker.total}</span></div>
-        <div style="font-size:13px;opacity:.85">دکانوں کا آرڈر آ گیا (${pct}%)</div></div>
-        <div style="font-size:40px">${pct === 100 ? '🎉' : '⏳'}</div>
-      </div>
-      <div style="background:rgba(255,255,255,.25);border-radius:8px;height:10px;margin:10px 0;overflow:hidden">
-        <div style="background:#fff;height:100%;width:${pct}%;border-radius:8px;transition:width .5s"></div>
-      </div>
-      ${rec.length ? `<div style="margin:6px 0;font-size:14px"><b>✅ آ گیا:</b> ${rec.map(s => `${esc(s.name)} <small style="opacity:.8">${fmtTime(s.at)} · ${s.items} آئٹم</small>`).join(' ، ')}</div>` : ''}
-      ${pend.length ? `<div style="font-size:14px"><b>⏳ باقی:</b> ${pend.map(s => esc(s.name)).join(' ، ')}</div>` : '<div><b>🎉 سب دکانوں کا آرڈر آ گیا!</b></div>'}
-    </div>`;
-  // Category-wise totals cards
-  const cats = {};
-  totals.forEach(t => { const k = t.category_name || 'متفرق'; (cats[k] = cats[k] || []).push(t); });
-  const totHtml = Object.entries(cats).map(([cn, items]) => `
-    <div class="ocard" style="margin-bottom:12px">
-      <div class="ochead"><b>🗂 ${esc(cn)}</b><span class="obadge">${items.length} آئٹم</span></div>
-      ${items.map(t => `<div class="prow"><span class="pn">${esc(t.product_name)}</span><span class="un">${t.shop_count} دکان</span><b style="font-size:18px">${esc(t.total_qty)}</b></div>`).join('')}
-    </div>`).join('');
-  const shopF = DAILY_SHOP_FILTER;
-  const ordersHtml = orders.filter(o => !shopF || String(o.shop_id) === shopF).map(o => `
-    <div class="ocard">
-      <div class="ochead"><b>🏪 ${esc(o.shop_name)}</b>
-        <span><a class="btn small" target="_blank" href="/print?type=daily_shop&date=${esc(date)}&shop_id=${o.shop_id}">🖨 پرنٹ</a>
-        ${can('daily', 'full') ? `<button class="btn small" style="background:#c62828;color:#fff" onclick="delDailyOrderBoard(${o.id})">🗑</button>` : ''}</span>
-      </div>
-      ${(o.items || []).map(i => `<div class="prow"><span class="pn">${esc(i.product_name)} <small class="note">${esc(i.category_name || '')}</small></span><b>${esc(i.quantity)}</b></div>`).join('') || '<p class="note">کوئی آئٹم نہیں</p>'}
-      ${o.note ? `<div class="note">نوٹ: ${esc(o.note)}</div>` : ''}
-    </div>`).join('');
-  $('#v-daily').innerHTML = `
-    <h2 class="st">📝 <span>روزانہ آرڈر</span></h2>
-    ${isAdmin ? `<div style="margin:8px 0"><button class="btn green" onclick="renderDailyAdminOrder()">📝 دکان کا آرڈر دیں</button></div>` : ''}
-    ${isCurrent && !di.cutoff_passed ? `<div id="dCd"></div>` : ''}
-    ${isCurrent && di.cutoff_passed ? `<div class="lockbar">🔒 کٹ آف (${esc(di.cutoff_time)}) گزر چکا ہے</div>` : ''}
-    ${trackerHtml}
-    <div class="supcard">
-      <div class="suphead">🖨 <b>پرنٹس</b></div>
-      <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px">
-        <a class="btn small dark" target="_blank" href="/print?type=daily_total&date=${esc(date)}">📋 آئٹم وائز کل (تمام دکانیں)</a>
-        <a class="btn small dark" target="_blank" href="/print?type=daily_all&date=${esc(date)}">📦 سب کچھ (کل + تمام دکانوں کی سلپس)</a>
-      </div>
-      <div class="formgrid" style="margin-top:8px">
-        <label>دکان وائز پرنٹ<br><select id="dPrintShop">
-          <option value="all">📦 تمام دکانیں (ہر دکان الگ پرنٹ)</option>
-          ${tracker.shops.map(s => `<option value="${s.id}">🏪 ${esc(s.name)}${s.ordered ? ' ✅' : ''}</option>`).join('')}
-        </select></label>
-        <label><br><button class="btn small dark" onclick="printDailyShop()">🖨 دکان کی سلپ پرنٹ کریں</button></label>
-      </div>
-    </div>
-    <div class="formgrid">
-      <label>پیداوار کی تاریخ<br><input type="date" id="dDate" value="${esc(date)}" onchange="DAILY_VIEW_DATE=this.value;DAILY_SHOP_FILTER='';renderDaily()"></label>
-      <label>دکان<br><select id="dShopF" onchange="DAILY_SHOP_FILTER=this.value;renderDaily()">
-        <option value="">تمام دکانیں</option>
-        ${tracker.shops.map(s => `<option value="${s.id}"${shopF === String(s.id) ? ' selected' : ''}>${esc(s.name)}${s.ordered ? ' ✅' : ''}</option>`).join('')}
-      </select></label>
-      ${isAdmin ? `<label><br><button class="btn small" onclick="renderDailyAccess()">⚙ ایکسس سیٹنگ</button></label>` : ''}
-    </div>
-    <h3 class="st">📋 کل پیداوار</h3>
-    ${totHtml || '<p class="note">کوئی آرڈر نہیں</p>'}
-    <h3 class="st">🏪 دکان وائز آرڈر (${orders.filter(o => !shopF || String(o.shop_id) === shopF).length})</h3>
-    <div class="ocards">${ordersHtml || '<p class="note">کوئی آرڈر نہیں</p>'}</div>`;
-  if (isCurrent && !di.cutoff_passed) startCountdown(dailyCutDate(di.order_date), di.cutoff_time, 'روزانہ آرڈر', 'dCd', { onDone: () => renderDaily() });
-}
-function printDailyShop() {
-  const sel = $('#dPrintShop'); if (!sel || !sel.value) { alert('کوئی دکان منتخب نہیں'); return; }
-  const d = ($('#dDate') || {}).value || DAILY_DATE;
-  window.open(`/print?type=daily_shop&date=${encodeURIComponent(d)}&shop_id=${encodeURIComponent(sel.value)}`, '_blank');
-}
-async function delDailyOrderBoard(id) {
-  if (!confirm('آرڈر حذف کریں؟')) return;
-  await api('DELETE', '/api/daily/orders/' + id);
-  renderDaily();
-}
-
-// ---------- admin: access settings ----------
-async function renderDailyAccess() {
-  const users = (await api('GET', '/api/users')).filter(u => u.role !== 'super_admin');
-  const [cats, shops] = await Promise.all([api('GET', '/api/daily-categories'), api('GET', '/api/daily-shops')]);
-  window._daCats = cats; window._daShops = shops;
-  const groups = {};
-  users.forEach(u => { const k = u.account_type || u.role; (groups[k] = groups[k] || []).push(u); });
-  const optGroups = Object.entries(groups).map(([k, us]) => {
-    const lbl = (ACCT_TYPES[k] ? ACCT_TYPES[k].label : k);
-    return `<optgroup label="${esc(lbl)}">${us.map(u => `<option value="${u.id}">${esc(u.username)}</option>`).join('')}</optgroup>`;
-  }).join('');
-  $('#v-daily').innerHTML = `
-    <h2 class="st">⚙ <span>روزانہ آرڈر — یوزر ایکسس</span></h2>
-    <button class="btn small" onclick="DAILY_VIEW_DATE=null;renderDaily()">← واپس</button>
-    <button class="btn small dark" onclick="renderDailyData()">📦 روزانہ ڈیٹا (کیٹیگری/آئٹم/دکان)</button>
-    <div class="formgrid"><label>یوزر<br><select id="daUser" onchange="renderDailyAccessForm()">
-      <option value="">— منتخب کریں —</option>
-      ${optGroups}
-    </select></label></div>
-    <div id="daForm"><p class="note">👆 پہلے اوپر سے یوزر منتخب کریں — پھر یہاں کیٹیگری اور دکانوں پر ✅ ٹک لگائیں</p></div>
-    <h3 class="st">⏰ روزانہ کٹ آف ٹائم</h3>
-    <div class="formgrid"><label>کٹ آف<br><input type="time" id="daCutoff" value="${esc(DAILY_CUTOFF)}"></label>
-    <label><br><button class="btn small" onclick="saveDailyCutoff()">💾 محفوظ کریں</button></label></div>
-    <h3 class="st">🏪 دکان کے آئٹمز <small class="note">(کونسی دکان کو کونسے آئٹم نظر آئیں — خالی = تمام)</small></h3>
-    <div class="formgrid"><label>دکان<br><select id="daShop" onchange="renderDailyShopItems()">
-      <option value="">— منتخب کریں —</option>
-      ${window._daShops.map(s => `<option value="${s.id}">${esc(s.name)}</option>`).join('')}
-    </select></label></div>
-    <div id="daShopForm"></div>
-    <p class="note">نوٹ: روزانہ آرڈر کی رسائی (بند / صرف دیکھیں / مکمل) یوزر مینجمنٹ → رسائی سے سیٹ کریں۔</p>`;
-}
-async function renderDailyShopItems() {
-  const sid = $('#daShop').value; if (!sid) { $('#daShopForm').innerHTML = ''; return; }
-  const [allowed, catalog] = await Promise.all([
-    api('GET', `/api/daily/shop-items/${sid}`),
-    api('GET', '/api/daily/catalog'),
-  ]);
-  const has = new Set(allowed);
-  const useAll = allowed.length === 0;
-  $('#daShopForm').innerHTML = catalog.map(c => {
-    if (!c.products.length) return '';
-    return `<div class="cathead">${esc(c.name)}</div>` + c.products.map(p =>
-      `<label class="chk"><input type="checkbox" data-pid="${p.id}"${useAll || has.has(p.id) ? ' checked' : ''}> ${esc(p.name)}</label>`).join('');
-  }).join('') + `<button class="btn green" onclick="saveDailyShopItems()">💾 آئٹمز محفوظ کریں</button>
-  <p class="note">سب اَن ٹک کر کے محفوظ کریں = تمام آئٹم نظر آئیں گے</p>`;
-}
-async function saveDailyShopItems() {
-  const sid = $('#daShop').value; if (!sid) return;
-  const boxes = [...document.querySelectorAll('#daShopForm input[data-pid]')];
-  const allChecked = boxes.length > 0 && boxes.every(b => b.checked);
-  const products = allChecked ? [] : boxes.filter(b => b.checked).map(b => Number(b.dataset.pid));
-  await api('PUT', `/api/daily/shop-items/${sid}`, { products });
-  alert('دکان کے آئٹم محفوظ ہو گئے ✅');
-}
-async function renderDailyAccessForm() {
-  const uid = $('#daUser').value; if (!uid) { $('#daForm').innerHTML = '<p class="note">👆 پہلے اوپر سے یوزر منتخب کریں</p>'; return; }
-  const acc = await api('GET', `/api/daily/access/${uid}`);
-  const cats = window._daCats || [], shops = window._daShops || [];
-  $('#daForm').innerHTML = `
-    <h3 class="st">نظر آنے والی کیٹیگریز <small class="note">(خالی = تمام)</small></h3>
-    ${cats.length ? cats.map(c => `<label class="chk"><input type="checkbox" data-cat="${c.id}"${acc.categories.includes(c.id) ? ' checked' : ''}> ${esc(c.name)}</label>`).join('')
-      : '<p class="note">⚠️ کوئی کیٹیگری نہیں — پہلے 📦 روزانہ ڈیٹا سے کیٹیگریز لائیں</p>'}
-    <h3 class="st">دکانیں <small class="note">(خالی = تمام)</small></h3>
-    ${shops.length ? shops.map(s => `<label class="chk"><input type="checkbox" data-shop="${s.id}"${acc.shops.includes(s.id) ? ' checked' : ''}> ${esc(s.name)}</label>`).join('')
-      : '<p class="note">⚠️ کوئی دکان نہیں — پہلے 📦 روزانہ ڈیٹا سے دکانیں لائیں</p>'}
-    <button class="btn green" onclick="saveDailyAccess()">💾 ایکسس محفوظ کریں</button>`;
-}
-async function saveDailyAccess() {
-  const uid = $('#daUser').value; if (!uid) return;
-  const categories = [...document.querySelectorAll('#daForm input[data-cat]:checked')].map(i => Number(i.dataset.cat));
-  const shops = [...document.querySelectorAll('#daForm input[data-shop]:checked')].map(i => Number(i.dataset.shop));
-  await api('PUT', `/api/daily/access/${uid}`, { categories, shops });
-  alert('ایکسس محفوظ ہو گیا ✅');
-}
-async function saveDailyCutoff() {
-  const t = $('#daCutoff').value;
-  if (!t) return;
-  const r = await api('PUT', '/api/daily/settings', { cutoff_time: t });
-  DAILY_CUTOFF = r.cutoff_time;
-  alert('کٹ آف ٹائم محفوظ ہو گیا ✅');
-}
-
-// ---------- Daily data management (separate catalog: categories, units, products, shops) ----------
-function renderDailyData() {
-  $('#v-daily').innerHTML = `
-    <h2 class="st">📦 <span>روزانہ ڈیٹا مینجمنٹ</span></h2>
-    <button class="btn small" onclick="DAILY_VIEW_DATE=null;renderDaily()">← واپس</button>
-    <p class="note">یہ ڈیٹا صرف روزانہ آرڈر کا ہے — سپلائی سسٹم سے بالکل الگ۔ یہاں تبدیلی سپلائی کو متاثر نہیں کرے گی۔</p>
-    <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:12px">
-      <button class="btn" onclick="renderDailyCats()">🗂 روزانہ کیٹیگریز</button>
-      <button class="btn" onclick="renderDailyUnits()">⚖ روزانہ یونٹس</button>
-      <button class="btn" onclick="renderDailyProducts()">🍞 روزانہ آئٹمز</button>
-      <button class="btn" onclick="renderDailyShops()">🏪 روزانہ دکانیں</button>
-    </div>`;
-}
-async function renderDailyCats() {
-  const [daily, supply] = await Promise.all([api('GET', '/api/daily-categories'), api('GET', '/api/categories')]);
-  const inD = new Set(daily.map(x => x.id));
-  const rows = supply.map(c => `<tr><td>${esc(c.name)}</td><td style="text-align:center">
-    ${inD.has(c.id)
-      ? `<button class="btn small green" onclick="toggleDaily('category',${c.id})">✓ شامل ہے</button>`
-      : `<button class="btn small" onclick="toggleDaily('category',${c.id})">➕ شامل کریں</button>`}
-  </td></tr>`).join('');
-  $('#v-daily').innerHTML = `
-    <h2 class="st">🗂 <span>روزانہ کیٹیگریز</span></h2>
-    <button class="btn small" onclick="renderDailyData()">← واپس</button>
-    <p class="note"><b>➕ شامل کریں</b> دبائیں — جو شامل ہے اس پر <b>✓ شامل ہے</b> ہوگا۔ دوبارہ دبائیں تو نکل جائے گی۔</p>
-    <table><tr><th>کیٹیگری</th><th style="text-align:center">روزانہ میں</th></tr>${rows || '<tr><td colspan=2>خالی</td></tr>'}</table>`;
-}
-async function renderDailyUnits() {
-  const [daily, supply] = await Promise.all([api('GET', '/api/daily-units'), api('GET', '/api/units')]);
-  const inD = new Set(daily.map(x => x.id));
-  const rows = supply.map(u => `<tr><td>${esc(u.name)}</td><td style="text-align:center">
-    ${inD.has(u.id)
-      ? `<button class="btn small green" onclick="toggleDaily('unit',${u.id})">✓ شامل ہے</button>`
-      : `<button class="btn small" onclick="toggleDaily('unit',${u.id})">➕ شامل کریں</button>`}
-  </td></tr>`).join('');
-  $('#v-daily').innerHTML = `
-    <h2 class="st">⚖ <span>روزانہ یونٹس</span></h2>
-    <button class="btn small" onclick="renderDailyData()">← واپس</button>
-    <p class="note"><b>➕ شامل کریں</b> دبائیں — جو شامل ہے اس پر <b>✓ شامل ہے</b> ہوگا۔</p>
-    <table><tr><th>یونٹ</th><th style="text-align:center">روزانہ میں</th></tr>${rows || '<tr><td colspan=2>خالی</td></tr>'}</table>`;
-}
-async function renderDailyProducts() {
-  const [daily, supply] = await Promise.all([api('GET', '/api/daily-products'), api('GET', '/api/products')]);
-  const inD = new Map(daily.map(x => [x.id, x]));
-  const sorted = [...supply].sort((a, b) => {
-    const da = inD.has(a.id), db = inD.has(b.id);
-    if (da && !db) return -1; if (!da && db) return 1;
-    if (da && db) return (inD.get(a.id).sort_order || 0) - (inD.get(b.id).sort_order || 0);
-    return a.name.localeCompare(b.name);
+  if (!missing.length || installRunning) return false;
+  installRunning = true;
+  console.warn('[warn] missing deps: ' + missing.join(',') + ' — installing in background...');
+  require('child_process').execFile('npm', ['install', '--omit=dev', '--no-audit', '--no-fund'], { cwd: __dirname, timeout: 300000 }, (err) => {
+    installRunning = false;
+    if (err) console.warn('[warn] auto npm install failed:', String(err && err.message || err).slice(0, 200));
+    else console.log('[info] deps installed OK');
   });
-  const rows = sorted.map(p => `<tr><td>${esc(p.category_name || '—')}</td><td>${esc(p.name)}</td><td style="text-align:center">
-    ${inD.has(p.id)
-      ? `<button class="btn small green" onclick="toggleDaily('product',${p.id})">✓ شامل ہے</button>
-         <button class="btn small ghost" onclick="moveDailyProduct(${p.id},'up')">↑</button><button class="btn small ghost" onclick="moveDailyProduct(${p.id},'down')">↓</button>`
-      : `<button class="btn small" onclick="toggleDaily('product',${p.id})">➕ شامل کریں</button>`}
-  </td></tr>`).join('');
-  $('#v-daily').innerHTML = `
-    <h2 class="st">🍞 <span>روزانہ آئٹمز</span></h2>
-    <button class="btn small" onclick="renderDailyData()">← واپس</button>
-    <p class="note">آئٹم شامل کریں تو اسکی <b>کیٹیگری اور یونٹ خود</b> شامل ہو جائے گی۔<br>↑↓ سے <b>ترتیب</b> بدلیں — یہی ترتیب آرڈر فارم اور پرنٹ میں آئے گی۔</p>
-    <table><tr><th>کیٹیگری</th><th>نام</th><th style="text-align:center">روزانہ میں</th></tr>${rows || '<tr><td colspan=3>خالی</td></tr>'}</table>`;
+  return true;
 }
-async function moveDailyProduct(id, dir) {
-  await api('POST', `/api/daily/products/${id}/move`, { dir });
-  renderDailyProducts();
+ensureDeps();
+let multerLib = null, uploadHandler = null;
+function loadMulter() {
+  if (multerLib) return true;
+  try { multerLib = require('multer'); return true; }
+  catch (e) { ensureDeps(); return false; }
 }
-async function renderDailyShops() {
-  const [daily, supply] = await Promise.all([api('GET', '/api/daily-shops'), api('GET', '/api/shops')]);
-  const inD = new Set(daily.map(x => x.id));
-  const rows = supply.map(s => `<tr><td>${esc(s.name)}</td><td dir="ltr">${esc(s.phone || '—')}</td><td style="text-align:center">
-    ${inD.has(s.id)
-      ? `<button class="btn small green" onclick="toggleDaily('shop',${s.id})">✓ شامل ہے</button>`
-      : `<button class="btn small" onclick="toggleDaily('shop',${s.id})">➕ شامل کریں</button>`}
-  </td></tr>`).join('');
-  $('#v-daily').innerHTML = `
-    <h2 class="st">🏪 <span>روزانہ دکانیں</span></h2>
-    <button class="btn small" onclick="renderDailyData()">← واپس</button>
-    <p class="note"><b>➕ شامل کریں</b> دبائیں — جو شامل ہے اس پر <b>✓ شامل ہے</b> ہوگا۔</p>
-    <table><tr><th>دکان</th><th>فون</th><th style="text-align:center">روزانہ میں</th></tr>${rows || '<tr><td colspan=3>خالی</td></tr>'}</table>`;
+let wbnLib = null;
+function loadWbn() {
+  if (wbnLib) return wbnLib;
+  try { wbnLib = require('@simplewebauthn/server'); }
+  catch (e) { ensureDeps(); }
+  return wbnLib;
 }
-// ---------- Daily: supply se select karke import ----------
-const DIMPORT_CONF = {
-  categories: { title: '🗂 سپلائی کیٹیگریز سے منتخب کریں', api: 'categories', back: 'renderDailyCats', label: c => c.name },
-  units: { title: '⚖ سپلائی یونٹس سے منتخب کریں', api: 'units', back: 'renderDailyUnits', label: u => u.name },
-  products: { title: '🍞 سپلائی آئٹمز سے منتخب کریں', api: 'products', back: 'renderDailyProducts', label: p => `${p.name} (${p.category_name || ''})` },
-  shops: { title: '🏪 سپلائی دکانوں سے منتخب کریں', api: 'shops', back: 'renderDailyShops', label: s => s.name },
-};
-async function openDailyImport(kind) {
-  const conf = DIMPORT_CONF[kind];
-  const [supply, existing] = await Promise.all([
-    api('GET', '/api/' + conf.api),
-    api('GET', '/api/daily-' + kind),
-  ]);
-  const has = new Set(existing.map(x => x.id));
-  const fresh = supply.filter(x => !has.has(x.id));
-  $('#v-daily').innerHTML = `
-    <h2 class="st">${conf.title}</h2>
-    <button class="btn small" onclick="${conf.back}()">← واپس</button>
-    ${fresh.length ? `<p class="note">${fresh.length} نئے دستیاب ہیں — ٹک کریں اور لے آئیں:</p>
-    ${fresh.map(x => `<label class="chk"><input type="checkbox" data-iid="${x.id}"> ${esc(conf.label(x))}</label>`).join('')}
-    <br><button class="btn green" onclick="doDailyImport('${kind}')">📥 منتخب لے آئیں</button>`
-    : '<p class="note">سب پہلے سے روزانہ میں موجود ہیں ✅</p>'}`;
+// base64url helpers
+const b64uE = (buf) => Buffer.from(buf).toString('base64url');
+const b64uD = (s) => Buffer.from(String(s), 'base64url');
+function originOf(req) {
+  const proto = String(req.get('x-forwarded-proto') || req.protocol).split(',')[0].trim();
+  return proto + '://' + req.get('host');
 }
-async function doDailyImport(kind) {
-  const ids = [...document.querySelectorAll('#v-daily input[data-iid]:checked')].map(i => Number(i.dataset.iid));
-  if (!ids.length) { alert('کچھ منتخب کریں'); return; }
-  await api('POST', '/api/daily/import/' + kind, { ids });
-  alert('لے آئے ✅');
-  renderDailyData();
+function rpIDOf(req) { return String(req.get('host')).split(':')[0]; }
+function getUpload() {
+  if (!loadMulter()) return null;
+  if (!uploadHandler) uploadHandler = multerLib({
+    storage: multerLib.diskStorage({
+      destination: AD_DIR,
+      filename: (req, file, cb) => cb(null, 'ad-' + Date.now() + path.extname(file.originalname).toLowerCase()),
+    }),
+    limits: { fileSize: 25 * 1024 * 1024 },
+    fileFilter: (req, file, cb) => {
+      if (/^(image|video)\//.test(file.mimetype)) cb(null, true);
+      else cb(new Error('bad_type'));
+    },
+  }).single('file');
+  return uploadHandler;
 }
-async function dailyShopDel(id) { if (!confirm('حذف کریں؟')) return; await api('DELETE', '/api/daily-shops/' + id); renderDailyShops(); }
-async function dailyShopEdit(id) {
-  const list = await api('GET', '/api/daily-shops');
-  const s = list.find(x => x.id === id); if (!s) return;
-  const name = prompt('دکان کا نام:', s.name); if (name === null) return;
-  const phone = prompt('فون:', s.phone || ''); if (phone === null) return;
-  const address = prompt('پتہ:', s.address || ''); if (address === null) return;
-  const active = confirm('دکان فعال رکھیں؟ (OK=فعال، Cancel=بند)');
-  await api('PUT', '/api/daily-shops/' + id, { name, phone, address, active: active ? 1 : 0 });
-  renderDailyShops();
+app.get('/api/ad', (req, res) => {
+  const file = appSetting('ad_file');
+  if (!file || !fs.existsSync(path.join(AD_DIR, file))) return res.json({ enabled: false, hasAd: false });
+  const start = appSetting('ad_start') || '', end = appSetting('ad_end') || '';
+  const now = Date.now();
+  const inWindow = (!start || now >= Date.parse(start)) && (!end || now <= Date.parse(end));
+  const on = appSetting('ad_enabled') === '1';
+  res.json({ enabled: on && inWindow, on, hasAd: true, type: appSetting('ad_type') || 'image',
+    url: '/ads/' + file, duration: parseInt(appSetting('ad_duration') || '4'), start, end });
+});
+app.post('/api/ads', requireLogin, (req, res) => {
+  if (req.user.role !== 'super_admin') return res.status(403).json({ error: 'forbidden' });
+  const up = getUpload();
+  if (!up) return res.status(500).json({ error: 'ads_not_installed' });
+  up(req, res, (err) => {
+    if (err) return res.status(400).json({ error: 'bad_file' });
+    const old = appSetting('ad_file');
+    if (req.file) {
+      if (old) fs.rmSync(path.join(AD_DIR, old), { force: true });
+      appSetting('ad_file', req.file.filename);
+      appSetting('ad_type', req.file.mimetype.startsWith('video') ? 'video' : 'image');
+    }
+    appSetting('ad_enabled', req.body.enabled === '1' ? '1' : '0');
+    appSetting('ad_duration', String(Math.min(10, Math.max(2, parseInt(req.body.duration) || 4))));
+    const start = String(req.body.start || ''), end = String(req.body.end || '');
+    const ps = start ? Date.parse(start) : NaN, pe = end ? Date.parse(end) : NaN;
+    if ((start && isNaN(ps)) || (end && isNaN(pe))) return res.status(400).json({ error: 'bad_date' });
+    if (start && end && ps >= pe) return res.status(400).json({ error: 'bad_range' });
+    appSetting('ad_start', start); appSetting('ad_end', end);
+    res.json({ ok: true });
+  });
+});
+app.delete('/api/ads', requireLogin, (req, res) => {
+  if (req.user.role !== 'super_admin') return res.status(403).json({ error: 'forbidden' });
+  const old = appSetting('ad_file');
+  if (old) fs.rmSync(path.join(AD_DIR, old), { force: true });
+  appSetting('ad_file', ''); appSetting('ad_enabled', '0');
+  appSetting('ad_start', ''); appSetting('ad_end', '');
+  res.json({ ok: true });
+});
+app.post('/api/logout', (req, res) => req.session.destroy(() => res.json({ ok: true })));
+app.get('/api/me', requireLogin, (req, res) => {
+  const shop = req.user.shop_id ? db.prepare('SELECT id, name, image FROM shops WHERE id=?').get(req.user.shop_id) : null;
+  const dshop = req.user.daily_shop_id ? db.prepare('SELECT id, name FROM daily_shops WHERE id=?').get(req.user.daily_shop_id) : null;
+  const me = db.prepare('SELECT avatar, account_type FROM users WHERE id=?').get(req.user.id) || {};
+  res.json({ id: req.user.id, username: req.user.username, role: req.user.role, shop_id: req.user.shop_id,
+    daily_shop_id: req.user.daily_shop_id || null, account_type: me.account_type || '',
+    shop_name: shop ? shop.name : null, shop_image: shop && shop.image ? '/images/' + shop.image : null,
+    daily_shop_name: dshop ? dshop.name : null,
+    avatar: me.avatar ? '/images/' + me.avatar : null,
+    permissions: req.user.role === 'super_admin' ? Object.fromEntries(SECTIONS.map(s => [s, 'full'])) : getPermissions(req.user.id) });
+});
+app.get('/api/vapid-public-key', (req, res) => {
+  res.json({ publicKey: appSetting('vapid_public') });
+});
+// Forgot-password device subscription (no login): user proves identity with their
+// registered phone number, then this mobile can receive the OTP push.
+const forgotSubHits = new Map();
+app.post('/api/push-subscribe-forgot', (req, res) => {
+  const now = Date.now();
+  const hits = (forgotSubHits.get(req.ip) || []).filter(t => now - t < 3600000);
+  if (hits.length >= 8) return res.status(429).json({ error: 'too_many' });
+  hits.push(now); forgotSubHits.set(req.ip, hits);
+  const { username, phone, subscription } = req.body || {};
+  const s = subscription || {};
+  if (!s.endpoint || !s.keys || !s.keys.p256dh || !s.keys.auth) return res.status(400).json({ error: 'bad_input' });
+  const u = db.prepare('SELECT id, active, phone FROM users WHERE username=?').get(String(username || '').trim());
+  if (!u || !u.active) return res.json({ ok: true }); // don't reveal
+  const regPhone = String(u.phone || '').replace(/\D/g, '');
+  const givenPhone = String(phone || '').replace(/\D/g, '');
+  if (!regPhone || !givenPhone || regPhone.slice(-10) !== givenPhone.slice(-10))
+    return res.status(400).json({ error: 'phone_mismatch' });
+  db.prepare(`INSERT OR REPLACE INTO push_subscriptions (user_id, endpoint, p256dh, auth) VALUES (?,?,?,?)`)
+    .run(u.id, s.endpoint, s.keys.p256dh, s.keys.auth);
+  res.json({ ok: true });
+});
+app.post('/api/push-subscribe', requireLogin, (req, res) => {
+  const s = (req.body || {}).subscription || req.body || {};
+  if (!s.endpoint || !s.keys || !s.keys.p256dh || !s.keys.auth) return res.status(400).json({ error: 'bad_input' });
+  db.prepare(`INSERT OR REPLACE INTO push_subscriptions (user_id, endpoint, p256dh, auth) VALUES (?,?,?,?)`)
+    .run(req.user.id, s.endpoint, s.keys.p256dh, s.keys.auth);
+  res.json({ ok: true });
+});
+app.post('/api/push-unsubscribe', requireLogin, (req, res) => {
+  const ep = ((req.body || {}).endpoint) || '';
+  if (ep) db.prepare('DELETE FROM push_subscriptions WHERE user_id=? AND endpoint=?').run(req.user.id, ep);
+  res.json({ ok: true });
+});
+app.get('/api/push-status', requireLogin, (req, res) => {
+  if (req.user.role !== 'super_admin') return res.status(403).json({ error: 'forbidden' });
+  const subs = db.prepare(`SELECT ps.created_at, u.username FROM push_subscriptions ps
+    JOIN users u ON u.id=ps.user_id WHERE u.role='super_admin' ORDER BY ps.created_at DESC`).all();
+  res.json({ count: subs.length, devices: subs });
+});
+app.post('/api/push-test', requireLogin, (req, res) => {
+  if (req.user.role !== 'super_admin') return res.status(403).json({ error: 'forbidden' });
+  const payload = JSON.stringify({ title: '🔔 ٹیسٹ نوٹیفکیشن', body: 'مبارک ہو! اطلاعات کا نظام کام کر رہا ہے۔', url: '/' });
+  const subs = db.prepare(`SELECT ps.* FROM push_subscriptions ps JOIN users u ON u.id=ps.user_id
+    WHERE u.active=1 AND u.role='super_admin'`).all();
+  pushTo(subs, payload);
+  res.json({ ok: true, sent: subs.length });
+});
+
+// Catalog needed to place an order: active categories, products and routes.
+// Any user who may place orders can read it (ordering must not depend on catalog-management permissions).
+app.get('/api/order-catalog', requireLogin, requireSection('orders', 'view'), (req, res) => {
+  const cats = db.prepare('SELECT id, name FROM categories ORDER BY sort, name').all();
+  const products = db.prepare(`SELECT p.id, p.name, p.category_id, u.name AS unit_name
+    FROM products p LEFT JOIN units u ON u.id = p.unit_id WHERE p.active = 1 ORDER BY p.name`).all();
+  const routes = db.prepare('SELECT id, name, supply_date, cutoff_date, cutoff_time, open_time FROM routes WHERE active = 1 ORDER BY id DESC').all();
+  res.json({ cats, products, routes });
+});
+
+// ---------- Supply calendar ----------
+// Supply days are routes with a supply_date. Admin/factory tap calendar days to announce them;
+// shops get a push and order against the nearest open supply day (no date picking).
+function supplyDayInfo(from, to) {
+  return db.prepare(`SELECT r.*, v.name AS vehicle_name,
+    (SELECT COUNT(*) FROM orders o WHERE o.route_id=r.id) AS order_count
+    FROM routes r LEFT JOIN vehicles v ON v.id=r.vehicle_id
+    WHERE r.active=1 AND r.supply_date >= ? AND r.supply_date <= ? ORDER BY r.supply_date`).all(from, to);
+}
+app.get('/api/supply-days', requireLogin, (req, res) => {
+  const { from, to } = req.query;
+  if (!from || !to) return res.status(400).json({ error: 'range_required' });
+  res.json(supplyDayInfo(from, to));
+});
+app.get('/api/supply-default', requireLogin, requireSection('routes', 'full'), (req, res) => {
+  res.json({ cutoff_time: appSetting('default_cutoff_time') || '20:00',
+             open_time: appSetting('default_open_time') || '10:00' });
+});
+app.post('/api/supply-days', requireLogin, requireSection('routes', 'full'), (req, res) => {
+  const { date, cutoff_time, open_time } = req.body || {};
+  if (!date || !/^\d{4}-\d{2}-\d{2}$/.test(String(date))) return res.status(400).json({ error: 'bad_date' });
+  if (db.prepare('SELECT id FROM routes WHERE active=1 AND supply_date=?').get(date))
+    return res.status(400).json({ error: 'already_exists' });
+  const given = cutoff_time && /^\d{2}:\d{2}$/.test(String(cutoff_time)) ? cutoff_time : null;
+  const ct = given || appSetting('default_cutoff_time') || '20:00';
+  if (given) appSetting('default_cutoff_time', given); // remember last saved time
+  const givenOpen = open_time && /^\d{2}:\d{2}$/.test(String(open_time)) ? open_time : null;
+  const ot = givenOpen || appSetting('default_open_time') || '10:00';
+  if (givenOpen) appSetting('default_open_time', givenOpen); // remember last saved time
+  const cd = new Date(date + 'T12:00:00'); cd.setDate(cd.getDate() - 1);
+  const cutoff_date = cd.toISOString().slice(0, 10);
+  const veh = db.prepare('SELECT id FROM vehicles WHERE active=1 ORDER BY id LIMIT 1').get();
+  const r = db.prepare(`INSERT INTO routes (name, vehicle_id, supply_date, cutoff_date, cutoff_time, open_time, active)
+    VALUES (?,?,?,?,?,?,1)`).run('🚚 سپلائی ' + date, veh ? veh.id : null, date, cutoff_date, ct, ot);
+  notifyAll('🗓 نئی سپلائی — گلشن فیکٹری', `سپلائی: ${date} | آرڈر: ${cutoff_date} ${ot} سے | کٹ آف: ${cutoff_date} ${ct} — آرڈر بنا لیں`);
+  res.json({ ok: true, id: r.lastInsertRowid });
+});
+app.put('/api/supply-days/:id', requireLogin, requireSection('routes', 'full'), (req, res) => {
+  const { cutoff_time, open_time } = req.body || {};
+  const sets = [], args = [];
+  if (cutoff_time && /^\d{2}:\d{2}$/.test(String(cutoff_time))) {
+    sets.push('cutoff_time=?'); args.push(cutoff_time);
+    appSetting('default_cutoff_time', cutoff_time); // remember last saved time
+  }
+  if (open_time && /^\d{2}:\d{2}$/.test(String(open_time))) {
+    sets.push('open_time=?'); args.push(open_time);
+    appSetting('default_open_time', open_time); // remember last saved time
+  }
+  if (!sets.length) return res.status(400).json({ error: 'bad_time' });
+  args.push(req.params.id);
+  db.prepare(`UPDATE routes SET ${sets.join(',')} WHERE id=?`).run(...args);
+  const r = db.prepare('SELECT supply_date, cutoff_date, cutoff_time, open_time FROM routes WHERE id=?').get(req.params.id);
+  if (r) notifyAll('⏰ وقت اپڈیٹ — گلشن فیکٹری', `سپلائی ${r.supply_date}: آرڈر ${r.open_time} سے، کٹ آف ${r.cutoff_date} ${r.cutoff_time}`);
+  res.json({ ok: true });
+});
+app.delete('/api/supply-days/:id', requireLogin, requireSection('routes', 'full'), (req, res) => {
+  const id = Number(req.params.id);
+  const moveTo = Number(req.query.move_to) || 0;
+  const n = db.prepare('SELECT COUNT(*) c FROM orders WHERE route_id=?').get(id).c;
+  if (n > 0 && !moveTo) return res.status(400).json({ error: 'has_orders', count: n });
+  if (n > 0 && moveTo) {
+    const t = db.prepare('SELECT supply_date FROM routes WHERE id=? AND active=1').get(moveTo);
+    if (!t) return res.status(400).json({ error: 'bad_target' });
+    db.prepare('UPDATE orders SET route_id=?, delivery_date=? WHERE route_id=?').run(moveTo, t.supply_date, id);
+  }
+  db.prepare('UPDATE routes SET active=0 WHERE id=?').run(id);
+  res.json({ ok: true, moved: n });
+});
+
+// ==================== DAILY ORDERS (روزانہ آرڈر) ====================
+function dailyCutoffTime() {
+  return (db.prepare(`SELECT value FROM daily_settings WHERE key='cutoff_time'`).get() || {}).value || '20:00';
+}
+function khiNow() { return new Date(Date.now() + 5 * 3600e3); } // Karachi wall-clock via UTC fields
+function dailyCutoffParts() {
+  const [h, m] = dailyCutoffTime().split(':').map(Number);
+  return { h: Number.isFinite(h) ? h : 20, m: Number.isFinite(m) ? m : 0 };
+}
+// Production date shops order for: tomorrow if before today's cutoff, else day after tomorrow
+function dailyOrderDate() {
+  const now = khiNow();
+  const { h, m } = dailyCutoffParts();
+  const cut = new Date(now); cut.setUTCHours(h, m, 0, 0);
+  const d = new Date(now);
+  d.setUTCDate(d.getUTCDate() + (now < cut ? 1 : 2));
+  return d.toISOString().slice(0, 10);
+}
+function dailyCutoffPassed() {
+  const now = khiNow();
+  const { h, m } = dailyCutoffParts();
+  const cut = new Date(now); cut.setUTCHours(h, m, 0, 0);
+  return now >= cut;
+}
+// Scope: shop users -> own shop; viewers/suppliers -> configured categories/shops; admin -> all
+function dailyScope(req) {
+  const u = req.user;
+  if (u.role === 'super_admin') return { shopId: null, catIds: null, shopIds: null };
+  // Daily shop users are scoped to their DAILY shop (separate from supply shops).
+  // A supply-only shop (no daily_shop_id) sees nothing in daily — clean separation.
+  const shopId = (u.role === 'shop') ? (u.daily_shop_id || -1) : null;
+  const catRows = db.prepare('SELECT category_id FROM daily_cat_access WHERE user_id=?').all(u.id);
+  const shopRows = db.prepare('SELECT shop_id FROM daily_shop_access WHERE user_id=?').all(u.id);
+  return {
+    shopId,
+    catIds: catRows.length ? catRows.map(r => r.category_id) : null,
+    shopIds: (!shopId && shopRows.length) ? shopRows.map(r => r.shop_id) : null,
+  };
+}
+function dailyShopFilter(sc, alias) {
+  if (sc.shopId) return { clause: ` AND ${alias}.shop_id=?`, args: [sc.shopId] };
+  if (sc.shopIds) return { clause: ` AND ${alias}.shop_id IN (${sc.shopIds.map(() => '?').join(',')})`, args: [...sc.shopIds] };
+  return { clause: '', args: [] };
 }
 
-document.addEventListener('DOMContentLoaded', init);
+app.get('/api/daily/date', requireLogin, requireSection('daily', 'view'), (req, res) => {
+  res.json({ order_date: dailyOrderDate(), cutoff_time: dailyCutoffTime(), cutoff_passed: dailyCutoffPassed() });
+});
+// Shop's allowed products (null = all visible)
+app.get('/api/daily/my-items', requireLogin, requireSection('daily', 'view'), (req, res) => {
+  const sc = dailyScope(req);
+  if (!sc.shopId) return res.json(null);
+  const rows = db.prepare('SELECT product_id FROM daily_shop_items WHERE shop_id=?').all(sc.shopId);
+  res.json(rows.length ? rows.map(r => r.product_id) : null);
+});
+
+app.get('/api/daily/catalog', requireLogin, requireSection('daily', 'view'), (req, res) => {
+  const cats = db.prepare('SELECT id, name FROM daily_categories WHERE active=1 ORDER BY name').all();
+  const prods = db.prepare(`SELECT p.id, p.name, p.category_id, u.name AS unit_name
+    FROM daily_products p LEFT JOIN daily_units u ON u.id=p.unit_id WHERE p.active=1 ORDER BY p.sort_order, p.name`).all();
+  res.json(cats.map(c => ({ ...c, products: prods.filter(p => p.category_id === c.id) })));
+});
+
+app.get('/api/daily/orders', requireLogin, requireSection('daily', 'view'), (req, res) => {
+  const sc = dailyScope(req);
+  const date = req.query.date || dailyOrderDate();
+  const sf = dailyShopFilter(sc, 'do');
+  const orders = db.prepare(`SELECT do.id, do.shop_id, do.order_date, do.note, s.name AS shop_name,
+      u.username AS created_by FROM daily_orders do
+    JOIN daily_shops s ON s.id=do.shop_id LEFT JOIN users u ON u.id=do.created_by
+    WHERE do.order_date=?${sf.clause} ORDER BY s.name`).all(date, ...sf.args);
+  const itemQ = sc.catIds
+    ? db.prepare(`SELECT di.order_id, di.product_id, di.quantity, p.name AS product_name, p.category_id,
+        c.name AS category_name, un.name AS unit_name FROM daily_order_items di
+      JOIN daily_products p ON p.id=di.product_id LEFT JOIN daily_categories c ON c.id=p.category_id
+      LEFT JOIN daily_units un ON un.id=p.unit_id
+      WHERE di.order_id=? AND p.category_id IN (${sc.catIds.map(() => '?').join(',')}) ORDER BY p.sort_order, p.name`)
+    : db.prepare(`SELECT di.order_id, di.product_id, di.quantity, p.name AS product_name, p.category_id,
+        c.name AS category_name, un.name AS unit_name FROM daily_order_items di
+      JOIN daily_products p ON p.id=di.product_id LEFT JOIN daily_categories c ON c.id=p.category_id
+      LEFT JOIN daily_units un ON un.id=p.unit_id WHERE di.order_id=? ORDER BY p.sort_order, p.name`);
+  res.json(orders.map(o => ({ ...o, items: sc.catIds ? itemQ.all(o.id, ...sc.catIds) : itemQ.all(o.id) })));
+});
+
+app.post('/api/daily/orders', requireLogin, requireSection('daily', 'full'), (req, res) => {
+  const sc = dailyScope(req);
+  const b = req.body || {};
+  const order_date = b.order_date || dailyOrderDate();
+  const shop_id = sc.shopId || Number(b.shop_id) || 0;
+  if (!shop_id) return res.status(400).json({ error: 'shop_required' });
+  if (!db.prepare('SELECT id FROM daily_shops WHERE id=?').get(shop_id)) return res.status(400).json({ error: 'bad_shop' });
+  if (sc.shopId && order_date === dailyOrderDate() && dailyCutoffPassed())
+    return res.status(400).json({ error: 'cutoff_passed' });
+  const items = b.items || {};
+  const now = Date.now();
+  let order = db.prepare('SELECT id FROM daily_orders WHERE shop_id=? AND order_date=?').get(shop_id, order_date);
+  if (!order) {
+    const r = db.prepare('INSERT INTO daily_orders (shop_id, order_date, note, created_by, created_at) VALUES (?,?,?,?,?)')
+      .run(shop_id, order_date, b.note || '', req.user.id, now);
+    order = { id: r.lastInsertRowid };
+  } else {
+    db.prepare('UPDATE daily_orders SET note=?, created_by=? WHERE id=?').run(b.note || '', req.user.id, order.id);
+    db.prepare('DELETE FROM daily_order_items WHERE order_id=?').run(order.id);
+  }
+  const ins = db.prepare('INSERT INTO daily_order_items (order_id, product_id, quantity) VALUES (?,?,?)');
+  const prodExists = db.prepare('SELECT 1 FROM daily_products WHERE id=? AND active=1');
+  for (const [pid, q] of Object.entries(items)) {
+    const qty = Number(q) || 0;
+    if (qty > 0 && Number(pid) > 0 && prodExists.get(Number(pid))) ins.run(order.id, Number(pid), qty);
+  }
+  res.json({ ok: true, id: order.id });
+});
+
+app.delete('/api/daily/orders/:id', requireLogin, requireSection('daily', 'full'), (req, res) => {
+  const sc = dailyScope(req);
+  const o = db.prepare('SELECT * FROM daily_orders WHERE id=?').get(req.params.id);
+  if (!o) return res.status(404).json({ error: 'not_found' });
+  if (sc.shopId && o.shop_id !== sc.shopId) return res.status(403).json({ error: 'forbidden' });
+  if (sc.shopId && o.order_date === dailyOrderDate() && dailyCutoffPassed())
+    return res.status(400).json({ error: 'cutoff_passed' });
+  db.prepare('DELETE FROM daily_orders WHERE id=?').run(o.id);
+  res.json({ ok: true });
+});
+
+app.get('/api/daily/totals', requireLogin, requireSection('daily', 'view'), (req, res) => {
+  const sc = dailyScope(req);
+  const date = req.query.date || dailyOrderDate();
+  const sf = dailyShopFilter(sc, 'do');
+  let sql = `SELECT p.id AS product_id, p.name AS product_name, p.category_id, c.name AS category_name,
+      un.name AS unit_name, SUM(di.quantity) AS total_qty, COUNT(DISTINCT do.shop_id) AS shop_count
+    FROM daily_order_items di JOIN daily_orders do ON do.id=di.order_id
+    JOIN daily_products p ON p.id=di.product_id
+    LEFT JOIN daily_categories c ON c.id=p.category_id LEFT JOIN daily_units un ON un.id=p.unit_id
+    WHERE do.order_date=?${sf.clause}`;
+  const args = [date, ...sf.args];
+  if (sc.catIds) { sql += ` AND p.category_id IN (${sc.catIds.map(() => '?').join(',')})`; args.push(...sc.catIds); }
+  sql += ' GROUP BY p.id ORDER BY p.sort_order, p.name';
+  res.json(db.prepare(sql).all(...args));
+});
+
+app.get('/api/daily/access/:uid', requireLogin, isAdmin, (req, res) => {
+  const uid = Number(req.params.uid);
+  res.json({
+    categories: db.prepare('SELECT category_id FROM daily_cat_access WHERE user_id=?').all(uid).map(r => r.category_id),
+    shops: db.prepare('SELECT shop_id FROM daily_shop_access WHERE user_id=?').all(uid).map(r => r.shop_id),
+  });
+});
+app.put('/api/daily/access/:uid', requireLogin, isAdmin, (req, res) => {
+  const uid = Number(req.params.uid);
+  const b = req.body || {};
+  db.transaction(() => {
+    db.prepare('DELETE FROM daily_cat_access WHERE user_id=?').run(uid);
+    db.prepare('DELETE FROM daily_shop_access WHERE user_id=?').run(uid);
+    const ic = db.prepare('INSERT OR IGNORE INTO daily_cat_access (user_id, category_id) VALUES (?,?)');
+    const is = db.prepare('INSERT OR IGNORE INTO daily_shop_access (user_id, shop_id) VALUES (?,?)');
+    for (const c of (b.categories || [])) ic.run(uid, Number(c));
+    for (const s of (b.shops || [])) is.run(uid, Number(s));
+  })();
+  res.json({ ok: true });
+});
+// Tracker: kin shops ka order aaya / kin ka baqi hai (department ke liye)
+app.get('/api/daily/tracker', requireLogin, requireSection('daily', 'view'), (req, res) => {
+  const sc = dailyScope(req);
+  const date = req.query.date || dailyOrderDate();
+  let shops;
+  if (sc.shopId && sc.shopId > 0) shops = db.prepare('SELECT id, name FROM daily_shops WHERE id=?').all(sc.shopId);
+  else if (sc.shopIds) shops = db.prepare(`SELECT id, name FROM daily_shops WHERE id IN (${sc.shopIds.map(() => '?').join(',')}) ORDER BY name`).all(...sc.shopIds);
+  else shops = db.prepare('SELECT id, name FROM daily_shops WHERE active=1 ORDER BY name').all();
+  const ord = db.prepare('SELECT created_at FROM daily_orders WHERE shop_id=? AND order_date=?');
+  const nItems = db.prepare(`SELECT COUNT(*) c FROM daily_order_items
+    WHERE order_id=(SELECT id FROM daily_orders WHERE shop_id=? AND order_date=?)`);
+  const out = shops.map(s => {
+    const o = ord.get(s.id, date);
+    return { id: s.id, name: s.name, ordered: !!o, at: o ? o.created_at : null, items: o ? nItems.get(s.id, date).c : 0 };
+  });
+  res.json({ date, shops: out, received: out.filter(s => s.ordered).length, total: out.length });
+});
+app.put('/api/daily/settings', requireLogin, isAdmin, (req, res) => {
+  const ct = String((req.body || {}).cutoff_time || '').trim();
+  if (!/^\d{2}:\d{2}$/.test(ct)) return res.status(400).json({ error: 'bad_time' });
+  db.prepare(`INSERT INTO daily_settings (key, value) VALUES ('cutoff_time', ?)
+    ON CONFLICT(key) DO UPDATE SET value=excluded.value`).run(ct);
+  res.json({ ok: true, cutoff_time: ct });
+});
+// Per-shop product visibility (empty = all products visible)
+app.get('/api/daily/shop-items/:shopId', requireLogin, isAdmin, (req, res) => {
+  const rows = db.prepare('SELECT product_id FROM daily_shop_items WHERE shop_id=?').all(req.params.shopId);
+  res.json(rows.map(r => r.product_id));
+});
+app.put('/api/daily/shop-items/:shopId', requireLogin, isAdmin, (req, res) => {
+  const sid = Number(req.params.shopId);
+  if (!db.prepare('SELECT id FROM daily_shops WHERE id=?').get(sid)) return res.status(400).json({ error: 'bad_shop' });
+  const prods = (req.body || {}).products || [];
+  db.transaction(() => {
+    db.prepare('DELETE FROM daily_shop_items WHERE shop_id=?').run(sid);
+    const ins = db.prepare('INSERT OR IGNORE INTO daily_shop_items (shop_id, product_id) VALUES (?,?)');
+    const ok = db.prepare('SELECT 1 FROM daily_products WHERE id=?');
+    for (const p of prods) { const pid = Number(p); if (pid > 0 && ok.get(pid)) ins.run(sid, pid); }
+  })();
+  res.json({ ok: true });
+});
+
+// ---------- Generic CRUD helper ----------
+function cleanVals(table_cols, body) {
+  return table_cols.map(c => {
+    let v = (body || {})[c];
+    if (v === undefined || v === null || v === '') {
+      if (c === 'active') return 1;          // default active
+      if (c.endsWith('_id')) return null;    // FK columns: null, not ''
+      return '';
+    }
+    return v;
+  });
+}
+function crud(path, table, section, cols, hooks) {
+  app.get('/api/' + path, requireLogin, requireSection(section, 'view'), (req, res) => {
+    res.json(db.prepare(`SELECT * FROM ${table} ORDER BY id DESC`).all());
+  });
+  app.post('/api/' + path, requireLogin, requireSection(section, 'full'), (req, res) => {
+    const vals = cleanVals(cols, req.body);
+    const r = db.prepare(`INSERT INTO ${table} (${cols.join(',')}) VALUES (${cols.map(() => '?').join(',')})`).run(...vals);
+    if (hooks && hooks.afterWrite) hooks.afterWrite('create', r.lastInsertRowid, null);
+    res.json({ ok: true, id: r.lastInsertRowid });
+  });
+  app.put('/api/' + path + '/:id', requireLogin, requireSection(section, 'full'), (req, res) => {
+    const old = (hooks && hooks.needOld) ? db.prepare(`SELECT * FROM ${table} WHERE id=?`).get(req.params.id) : null;
+    const vals = cleanVals(cols, req.body);
+    db.prepare(`UPDATE ${table} SET ${cols.map(c => `${c}=?`).join(',')} WHERE id=?`).run(...vals, req.params.id);
+    if (hooks && hooks.afterWrite) hooks.afterWrite('update', req.params.id, old);
+    res.json({ ok: true });
+  });
+  app.delete('/api/' + path + '/:id', requireLogin, requireSection(section, 'full'), (req, res) => {
+    db.prepare(`DELETE FROM ${table} WHERE id=?`).run(req.params.id);
+    res.json({ ok: true });
+  });
+}
+crud('vehicles', 'vehicles', 'vehicles', ['name', 'plate', 'active']);
+crud('routes', 'routes', 'routes', ['name', 'vehicle_id', 'supply_date', 'cutoff_date', 'cutoff_time', 'active'], {
+  needOld: true,
+  afterWrite(method, id, old) {
+    const row = db.prepare('SELECT * FROM routes WHERE id=?').get(id);
+    if (!row) return;
+    const sched = `سپلائی: ${row.supply_date || '—'} | کٹ آف: ${row.cutoff_date || ''} ${row.cutoff_time || ''}`;
+    if (method === 'create') {
+      notifyAll('🚚 نیا روٹ', `${row.name} — ${sched}`);
+    } else if (old) {
+      const changed = [];
+      if (String(old.supply_date || '') !== String(row.supply_date || '')) changed.push(`نئی سپلائی تاریخ: ${row.supply_date}`);
+      if (String(old.cutoff_date || '') !== String(row.cutoff_date || '') || String(old.cutoff_time || '') !== String(row.cutoff_time || ''))
+        changed.push(`نیا کٹ آف: ${row.cutoff_date} ${row.cutoff_time}`);
+      if (changed.length) notifyAll('🚚 روٹ اپڈیٹ', `${row.name} — ${changed.join(' | ')}`);
+    }
+  }
+});
+crud('categories', 'categories', 'categories', ['name', 'sort']);
+crud('units', 'units', 'units', ['name']);
+crud('shops', 'shops', 'shops', ['name', 'phone', 'address', 'active']);
+// ---------- Daily catalog management (fully separate from supply catalog) ----------
+crud('daily-categories', 'daily_categories', 'daily', ['name', 'active']);
+crud('daily-units', 'daily_units', 'daily', ['name']);
+crud('daily-shops', 'daily_shops', 'daily', ['name', 'phone', 'address', 'active']);
+app.get('/api/daily-products', requireLogin, requireSection('daily', 'view'), (req, res) => {
+  res.json(db.prepare(`SELECT p.*, c.name AS category_name, u.name AS unit_name
+    FROM daily_products p LEFT JOIN daily_categories c ON c.id=p.category_id LEFT JOIN daily_units u ON u.id=p.unit_id
+    ORDER BY c.id, p.name`).all());
+});
+app.post('/api/daily-products', requireLogin, requireSection('daily', 'full'), (req, res) => {
+  const b = req.body || {};
+  const r = db.prepare('INSERT INTO daily_products (name, category_id, unit_id, active) VALUES (?,?,?,?)')
+    .run(b.name || '', b.category_id || null, b.unit_id || null, b.active ?? 1);
+  res.json({ ok: true, id: r.lastInsertRowid });
+});
+app.put('/api/daily-products/:id', requireLogin, requireSection('daily', 'full'), (req, res) => {
+  const b = req.body || {};
+  db.prepare('UPDATE daily_products SET name=?, category_id=?, unit_id=?, active=? WHERE id=?')
+    .run(b.name || '', b.category_id || null, b.unit_id || null, b.active ?? 1, req.params.id);
+  res.json({ ok: true });
+});
+app.delete('/api/daily-products/:id', requireLogin, requireSection('daily', 'full'), (req, res) => {
+  db.prepare('DELETE FROM daily_products WHERE id=?').run(req.params.id);
+  res.json({ ok: true });
+});
+// ---------- Daily: supply se select karke import (dobara type nahi karna) ----------
+app.post('/api/daily/import/:kind', requireLogin, requireSection('daily', 'full'), (req, res) => {
+  const kind = req.params.kind;
+  const ids = ((req.body || {}).ids || []).map(Number).filter(n => n > 0);
+  if (!ids.length) return res.status(400).json({ error: 'no_ids' });
+  if (!['categories', 'units', 'products', 'shops'].includes(kind)) return res.status(400).json({ error: 'bad_kind' });
+  const ph = ids.map(() => '?').join(',');
+  db.transaction(() => {
+    if (kind === 'categories') {
+      db.prepare(`INSERT OR IGNORE INTO daily_categories (id, name) SELECT id, name FROM categories WHERE id IN (${ph})`).run(...ids);
+    } else if (kind === 'units') {
+      db.prepare(`INSERT OR IGNORE INTO daily_units (id, name) SELECT id, name FROM units WHERE id IN (${ph})`).run(...ids);
+    } else if (kind === 'products') {
+      // pehle unki categories/units bhi le aao taake link na toote
+      db.prepare(`INSERT OR IGNORE INTO daily_categories (id, name) SELECT id, name FROM categories WHERE id IN (SELECT category_id FROM products WHERE id IN (${ph}))`).run(...ids);
+      db.prepare(`INSERT OR IGNORE INTO daily_units (id, name) SELECT id, name FROM units WHERE id IN (SELECT unit_id FROM products WHERE id IN (${ph}))`).run(...ids);
+      db.prepare(`INSERT OR IGNORE INTO daily_products (id, name, category_id, unit_id) SELECT id, name, category_id, unit_id FROM products WHERE id IN (${ph})`).run(...ids);
+    } else if (kind === 'shops') {
+      db.prepare(`INSERT OR IGNORE INTO daily_shops (id, name, phone, address, image, active)
+        SELECT id, name, phone, address, image, active FROM shops WHERE id IN (${ph})`).run(...ids);
+    }
+  })();
+  res.json({ ok: true });
+});
+// ---------- Daily: main screens se tick karke select (separate data me copy) ----------
+app.post('/api/daily/toggle/:kind/:id', requireLogin, requireSection('daily', 'full'), (req, res) => {
+  const kind = req.params.kind, id = Number(req.params.id), on = !!(req.body || {}).on;
+  if (!['category', 'unit', 'product', 'shop'].includes(kind) || !id) return res.status(400).json({ error: 'bad_input' });
+  try {
+    db.transaction(() => {
+      if (on) {
+        if (kind === 'category') db.prepare(`INSERT OR IGNORE INTO daily_categories (id, name) SELECT id, name FROM categories WHERE id=?`).run(id);
+        else if (kind === 'unit') db.prepare(`INSERT OR IGNORE INTO daily_units (id, name) SELECT id, name FROM units WHERE id=?`).run(id);
+        else if (kind === 'shop') db.prepare(`INSERT OR IGNORE INTO daily_shops (id, name, phone, address, image, active) SELECT id, name, phone, address, image, active FROM shops WHERE id=?`).run(id);
+        else if (kind === 'product') {
+          const p = db.prepare('SELECT * FROM products WHERE id=?').get(id);
+          if (!p) throw new Error('not_found');
+          if (p.category_id) db.prepare(`INSERT OR IGNORE INTO daily_categories (id, name) SELECT id, name FROM categories WHERE id=?`).run(p.category_id);
+          if (p.unit_id) db.prepare(`INSERT OR IGNORE INTO daily_units (id, name) SELECT id, name FROM units WHERE id=?`).run(p.unit_id);
+          const mx = db.prepare('SELECT COALESCE(MAX(sort_order),0) m FROM daily_products').get().m;
+          db.prepare(`INSERT OR IGNORE INTO daily_products (id, name, category_id, unit_id, sort_order) SELECT id, name, category_id, unit_id, ? FROM products WHERE id=?`).run(mx + 1, id);
+        }
+      } else {
+        const tbl = { category: 'daily_categories', unit: 'daily_units', product: 'daily_products', shop: 'daily_shops' }[kind];
+        db.prepare(`DELETE FROM ${tbl} WHERE id=?`).run(id);
+      }
+    })();
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(400).json({ error: e.message === 'not_found' ? 'not_found' : 'in_use' });
+  }
+});
+// ---------- Daily: item sequence (↑↓) ----------
+app.post('/api/daily/products/:id/move', requireLogin, requireSection('daily', 'full'), (req, res) => {
+  const id = Number(req.params.id), dir = (req.body || {}).dir;
+  if (!id || !['up', 'down'].includes(dir)) return res.status(400).json({ error: 'bad_input' });
+  const cur = db.prepare('SELECT id, sort_order FROM daily_products WHERE id=?').get(id);
+  if (!cur) return res.status(404).json({ error: 'not_found' });
+  const neighbor = dir === 'up'
+    ? db.prepare('SELECT id, sort_order FROM daily_products WHERE sort_order < ? ORDER BY sort_order DESC, id DESC LIMIT 1').get(cur.sort_order)
+    : db.prepare('SELECT id, sort_order FROM daily_products WHERE sort_order > ? ORDER BY sort_order ASC, id ASC LIMIT 1').get(cur.sort_order);
+  if (!neighbor) return res.json({ ok: true, moved: false });
+  db.transaction(() => {
+    db.prepare('UPDATE daily_products SET sort_order=? WHERE id=?').run(neighbor.sort_order, cur.id);
+    db.prepare('UPDATE daily_products SET sort_order=? WHERE id=?').run(cur.sort_order, neighbor.id);
+  })();
+  res.json({ ok: true, moved: true });
+});
+app.get('/api/products', requireLogin, requireSection('products', 'view'), (req, res) => {
+  res.json(db.prepare(`SELECT p.*, c.name AS category_name, u.name AS unit_name
+    FROM products p LEFT JOIN categories c ON c.id=p.category_id LEFT JOIN units u ON u.id=p.unit_id
+    ORDER BY c.sort, c.id, p.name`).all());
+});
+app.post('/api/products', requireLogin, requireSection('products', 'full'), (req, res) => {
+  const b = req.body || {};
+  const r = db.prepare('INSERT INTO products (name, category_id, unit_id, active) VALUES (?,?,?,?)')
+    .run(b.name || '', b.category_id || null, b.unit_id || null, b.active ?? 1);
+  res.json({ ok: true, id: r.lastInsertRowid });
+});
+app.put('/api/products/:id', requireLogin, requireSection('products', 'full'), (req, res) => {
+  const b = req.body || {};
+  db.prepare('UPDATE products SET name=?, category_id=?, unit_id=?, active=? WHERE id=?')
+    .run(b.name || '', b.category_id || null, b.unit_id || null, b.active ?? 1, req.params.id);
+  res.json({ ok: true });
+});
+app.delete('/api/products/:id', requireLogin, requireSection('products', 'full'), (req, res) => {
+  db.prepare('DELETE FROM products WHERE id=?').run(req.params.id);
+  res.json({ ok: true });
+});
+
+// ---------- Users & permissions (super admin) ----------
+app.get('/api/users', requireLogin, isAdmin, (req, res) => {
+  const users = db.prepare(`SELECT u.id, u.username, u.role, u.shop_id, u.daily_shop_id, u.active, u.created_at, u.phone, u.account_type,
+      COALESCE(s.name, ds.name) AS shop_name
+    FROM users u LEFT JOIN shops s ON s.id=u.shop_id LEFT JOIN daily_shops ds ON ds.id=u.daily_shop_id ORDER BY u.id`).all();
+  res.json(users.map(u => ({ ...u, permissions: u.role === 'super_admin' ? Object.fromEntries(SECTIONS.map(s => [s, 'full'])) : getPermissions(u.id) })));
+});
+// Public app version — clients detect updates against this.
+app.get('/api/version', (req, res) => res.json({ version: require('./package.json').version }));
+app.post('/api/users', requireLogin, isAdmin, (req, res) => {
+  const { username, password, role, shop_id, daily_shop_id, phone, account_type } = req.body || {};
+  if (!username || !password || !['super_admin', 'factory', 'shop'].includes(role)) return res.status(400).json({ error: 'bad_input' });
+  const atype = String(account_type || '').trim().slice(0, 20);
+  try {
+    const r = db.prepare('INSERT INTO users (username, password_hash, role, shop_id, daily_shop_id, phone, account_type) VALUES (?,?,?,?,?,?,?)')
+      .run(String(username).trim(), bcrypt.hashSync(String(password), 10), role, shop_id || null, daily_shop_id || null, String(phone || ''), atype);
+    if (role !== 'super_admin') seedPermissions(r.lastInsertRowid, role);
+    // department / supplier / viewer: daily sirf view (kuch add/edit nahi)
+    if (['department', 'supplier', 'viewer'].includes(atype))
+      db.prepare(`INSERT OR REPLACE INTO permissions (user_id, section, level) VALUES (?, 'daily', 'view')`).run(r.lastInsertRowid);
+    res.json({ ok: true, id: r.lastInsertRowid });
+  } catch (e) { res.status(400).json({ error: 'username_taken' }); }
+});
+app.put('/api/users/:id', requireLogin, isAdmin, (req, res) => {
+  const { role, shop_id, daily_shop_id, active, password, phone, account_type } = req.body || {};
+  const u = db.prepare('SELECT * FROM users WHERE id=?').get(req.params.id);
+  if (!u) return res.status(404).json({ error: 'not_found' });
+  if (role) db.prepare('UPDATE users SET role=?, shop_id=?, daily_shop_id=? WHERE id=?').run(role, shop_id || null, daily_shop_id || null, u.id);
+  if (active !== undefined) db.prepare('UPDATE users SET active=? WHERE id=?').run(active ? 1 : 0, u.id);
+  if (password) db.prepare('UPDATE users SET password_hash=? WHERE id=?').run(bcrypt.hashSync(String(password), 10), u.id);
+  if (phone !== undefined) db.prepare('UPDATE users SET phone=? WHERE id=?').run(String(phone), u.id);
+  if (account_type !== undefined) db.prepare('UPDATE users SET account_type=? WHERE id=?').run(String(account_type).trim().slice(0, 20), u.id);
+  res.json({ ok: true });
+});
+app.delete('/api/users/:id', requireLogin, isAdmin, (req, res) => {
+  if (Number(req.params.id) === req.user.id) return res.status(400).json({ error: 'cannot_delete_self' });
+  db.prepare('DELETE FROM users WHERE id=?').run(req.params.id);
+  res.json({ ok: true });
+});
+app.put('/api/users/:id/permissions', requireLogin, isAdmin, (req, res) => {
+  const perms = (req.body || {}).permissions || {};
+  const u = db.prepare('SELECT * FROM users WHERE id=?').get(req.params.id);
+  if (!u || u.role === 'super_admin') return res.status(400).json({ error: 'bad_input' });
+  const ins = db.prepare('INSERT OR REPLACE INTO permissions (user_id, section, level) VALUES (?,?,?)');
+  for (const s of SECTIONS) {
+    const lvl = perms[s];
+    if (['none', 'view', 'full'].includes(lvl)) ins.run(u.id, s, lvl);
+  }
+  res.json({ ok: true });
+});
+app.get('/api/sections', requireLogin, (req, res) => res.json(SECTIONS));
+
+// ---------- Cutoff helper (Asia/Karachi) ----------
+function cutoffPassed(route) {
+  if (!route || !route.cutoff_date) return false;
+  const t = route.cutoff_time || '23:59';
+  // interpret cutoff in Asia/Karachi
+  const dt = new Date(`${route.cutoff_date}T${t}:00+05:00`);
+  return Date.now() > dt.getTime();
+}
+function notOpenYet(route) {
+  if (!route || !route.cutoff_date) return false;
+  const t = route.open_time || appSetting('default_open_time') || '10:00';
+  // ordering opens on the cutoff date at open_time (Asia/Karachi)
+  const dt = new Date(`${route.cutoff_date}T${t}:00+05:00`);
+  return Date.now() < dt.getTime();
+}
+
+// ---------- Orders ----------
+app.get('/api/orders', requireLogin, requireSection('orders', 'view'), (req, res) => {
+  const { date, route_id } = req.query;
+  let sql = `SELECT o.*, s.name AS shop_name, s.image AS shop_image, r.name AS route_name FROM orders o
+    JOIN shops s ON s.id=o.shop_id LEFT JOIN routes r ON r.id=o.route_id WHERE 1=1`;
+  const args = [];
+  const own = scopedShopId(req);
+  if (own) { sql += ' AND o.shop_id=?'; args.push(own); }
+  if (date) { sql += ' AND o.delivery_date=?'; args.push(date); }
+  if (route_id) { sql += ' AND o.route_id=?'; args.push(route_id); }
+  sql += ' ORDER BY o.delivery_date DESC, o.id DESC';
+  const orders = db.prepare(sql).all(...args);
+  const items = db.prepare(`SELECT oi.*, p.name AS product_name, u.name AS unit_name, c.name AS category_name
+    FROM order_items oi JOIN products p ON p.id=oi.product_id
+    LEFT JOIN units u ON u.id=p.unit_id LEFT JOIN categories c ON c.id=p.category_id
+    WHERE oi.order_id=?`);
+  res.json(orders.map(o => ({ ...o, items: items.all(o.id) })));
+});
+app.post('/api/orders', requireLogin, requireSection('orders', 'full'), (req, res) => {
+  const b = req.body || {};
+  let shop_id = b.shop_id;
+  const own = scopedShopId(req);
+  if (own) shop_id = own; // shop users can only order for themselves
+  if (!shop_id || !b.delivery_date || !Array.isArray(b.items)) return res.status(400).json({ error: 'bad_input' });
+  if (!b.route_id) return res.status(400).json({ error: 'route_required' }); // cutoff is per-route: route is mandatory
+  const route = db.prepare('SELECT * FROM routes WHERE id=?').get(b.route_id);
+  if (!route) return res.status(400).json({ error: 'route_required' });
+  const override = req.user.role === 'super_admin' && b.override_cutoff;
+  if (route && cutoffPassed(route) && !override) return res.status(400).json({ error: 'cutoff_passed' });
+  if (route && notOpenYet(route) && !override) return res.status(400).json({ error: 'not_open_yet' });
+  const ins = db.transaction(() => {
+    const r = db.prepare('INSERT INTO orders (shop_id, route_id, delivery_date, note, created_by) VALUES (?,?,?,?,?)')
+      .run(shop_id, b.route_id || null, b.delivery_date, b.note || '', req.user.id);
+    const ii = db.prepare('INSERT INTO order_items (order_id, product_id, quantity) VALUES (?,?,?)');
+    for (const it of b.items) {
+      if (it.product_id && Number(it.quantity) > 0) ii.run(r.lastInsertRowid, it.product_id, Number(it.quantity));
+    }
+    return r.lastInsertRowid;
+  });
+  const orderId = ins();
+  const itemCount = b.items.filter(it => it.product_id && Number(it.quantity) > 0).length;
+  notifyNewOrder(orderId, shop_id, b.delivery_date, itemCount, req.user.id);
+  res.json({ ok: true, id: orderId });
+});
+app.put('/api/orders/:id', requireLogin, requireSection('orders', 'full'), (req, res) => {
+  const o = db.prepare('SELECT * FROM orders WHERE id=?').get(req.params.id);
+  if (!o) return res.status(404).json({ error: 'not_found' });
+  const own = scopedShopId(req);
+  if (own && o.shop_id !== own) return res.status(403).json({ error: 'forbidden' });
+  const b = req.body || {};
+  const route = b.route_id ? db.prepare('SELECT * FROM routes WHERE id=?').get(b.route_id) : null;
+  const override = req.user.role === 'super_admin' && b.override_cutoff;
+  if (route && cutoffPassed(route) && !override && req.user.role === 'shop') return res.status(400).json({ error: 'cutoff_passed' });
+  if (route && notOpenYet(route) && !override && req.user.role === 'shop') return res.status(400).json({ error: 'not_open_yet' });
+  db.transaction(() => {
+    db.prepare('UPDATE orders SET route_id=?, delivery_date=?, note=? WHERE id=?')
+      .run(b.route_id ?? o.route_id, b.delivery_date || o.delivery_date, b.note ?? o.note, o.id);
+    if (Array.isArray(b.items)) {
+      db.prepare('DELETE FROM order_items WHERE order_id=?').run(o.id);
+      const ii = db.prepare('INSERT INTO order_items (order_id, product_id, quantity) VALUES (?,?,?)');
+      for (const it of b.items) if (it.product_id && Number(it.quantity) > 0) ii.run(o.id, it.product_id, Number(it.quantity));
+    }
+  })();
+  res.json({ ok: true });
+});
+app.delete('/api/orders/:id', requireLogin, requireSection('orders', 'full'), (req, res) => {
+  const o = db.prepare('SELECT * FROM orders WHERE id=?').get(req.params.id);
+  if (!o) return res.status(404).json({ error: 'not_found' });
+  const own = scopedShopId(req);
+  if (own && o.shop_id !== own) return res.status(403).json({ error: 'forbidden' });
+  db.prepare('DELETE FROM orders WHERE id=?').run(o.id);
+  res.json({ ok: true });
+});
+// Shop order history grouped by delivery date (own only)
+app.get('/api/order-history', requireLogin, requireSection('order_history', 'view'), (req, res) => {
+  const own = scopedShopId(req);
+  const shopFilter = own ? 'AND o.shop_id=' + own : (req.query.shop_id ? 'AND o.shop_id=' + Number(req.query.shop_id) : '');
+  const orders = db.prepare(`SELECT o.*, s.name AS shop_name FROM orders o JOIN shops s ON s.id=o.shop_id
+    WHERE 1=1 ${shopFilter} ORDER BY o.delivery_date DESC, o.id DESC`).all();
+  const items = db.prepare(`SELECT oi.*, p.name AS product_name, u.name AS unit_name FROM order_items oi
+    JOIN products p ON p.id=oi.product_id LEFT JOIN units u ON u.id=p.unit_id WHERE oi.order_id=?`);
+  const groups = {};
+  for (const o of orders) {
+    (groups[o.delivery_date] = groups[o.delivery_date] || []).push({ ...o, items: items.all(o.id) });
+  }
+  res.json(groups);
+});
+// Item-wise totals for production
+app.get('/api/totals', requireLogin, requireSection('reports', 'view'), (req, res) => {
+  const { date, route_id } = req.query;
+  let f = 'WHERE 1=1'; const args = [];
+  if (date) { f += ' AND o.delivery_date=?'; args.push(date); }
+  if (route_id) { f += ' AND o.route_id=?'; args.push(route_id); }
+  const rows = db.prepare(`SELECT p.id AS product_id, p.name AS product_name, c.name AS category_name, u.name AS unit_name,
+      SUM(oi.quantity) AS total_qty, COUNT(DISTINCT o.shop_id) AS shop_count
+    FROM order_items oi JOIN orders o ON o.id=oi.order_id JOIN products p ON p.id=oi.product_id
+    LEFT JOIN categories c ON c.id=p.category_id LEFT JOIN units u ON u.id=p.unit_id
+    ${f} GROUP BY p.id ORDER BY c.sort, c.id, p.name`).all(...args);
+  res.json(rows);
+});
+app.get('/api/dashboard', requireLogin, requireSection('dashboard'), (req, res) => {
+  const own = scopedShopId(req);
+  const sf = own ? `AND shop_id=${own}` : '';
+  const sfj = own ? `AND o.shop_id=${own}` : ''; // JOINed queries (orders+users both have shop_id)
+  const today = new Date().toISOString().slice(0, 10);
+  const ktoday = new Date(Date.now() + 5 * 3600e3).toISOString().slice(0, 10); // Karachi date
+  const shopName = own ? (db.prepare('SELECT name FROM shops WHERE id=?').get(own) || {}).name || '' : '';
+  const upcoming = db.prepare(`SELECT r.*, v.name AS vehicle_name,
+      (SELECT COUNT(*) FROM orders o WHERE o.route_id=r.id) AS order_count FROM routes r
+      LEFT JOIN vehicles v ON v.id=r.vehicle_id
+      WHERE r.active=1 AND r.supply_date >= ? ORDER BY r.supply_date LIMIT 5`).all(ktoday);
+  const dailyRows = db.prepare(`SELECT date(created_at, '+5 hours') d, COUNT(*) c FROM orders
+    WHERE date(created_at, '+5 hours') >= date('now', '+5 hours', '-6 days') ${sf} GROUP BY d`).all();
+  const daily = [];
+  for (let i = 6; i >= 0; i--) {
+    const key = new Date(Date.now() + 5 * 3600e3 - i * 864e5).toISOString().slice(0, 10);
+    const r = dailyRows.find(x => x.d === key);
+    daily.push(r ? r.c : 0);
+  }
+  res.json({
+    scope: own ? 'shop' : 'admin',
+    shop_name: shopName,
+    daily,
+    today_orders: db.prepare(`SELECT COUNT(*) c FROM orders WHERE delivery_date=? ${sf}`).get(today).c,
+    total_orders: db.prepare(`SELECT COUNT(*) c FROM orders WHERE 1=1 ${sf}`).get().c,
+    shops: own ? undefined : db.prepare('SELECT COUNT(*) c FROM shops WHERE active=1').get().c,
+    vehicles: own ? undefined : db.prepare('SELECT COUNT(*) c FROM vehicles WHERE active=1').get().c,
+    routes: own ? undefined : db.prepare('SELECT COUNT(*) c FROM routes WHERE active=1').get().c,
+    products: own ? undefined : db.prepare('SELECT COUNT(*) c FROM products WHERE active=1').get().c,
+    users: own ? undefined : db.prepare('SELECT COUNT(*) c FROM users WHERE active=1').get().c,
+    recent_orders: db.prepare(`SELECT o.id, o.created_at, o.delivery_date, s.name AS shop_name,
+      s.image AS shop_image, u.username AS created_by, u.avatar AS user_avatar,
+      (SELECT COUNT(*) FROM order_items WHERE order_id=o.id) AS items
+      FROM orders o JOIN shops s ON s.id=o.shop_id LEFT JOIN users u ON u.id=o.created_by WHERE o.delivery_date >= ? ${sfj} ORDER BY o.id DESC LIMIT 10`).all(ktoday),
+    upcoming,
+  });
+});
+
+// ---------- assetlinks (PWABuilder APK: net.alwaysdata.kashf.twa) ----------
+app.get('/.well-known/assetlinks.json', (req, res) => {
+  res.json([{
+    relation: ['delegate_permission/common.handle_all_urls'],
+    target: {
+      namespace: 'android_app',
+      package_name: 'net.alwaysdata.kashf.twa',
+      sha256_cert_fingerprints: ['D5:15:E3:01:60:5D:D8:A3:C4:52:A8:AC:2C:1C:68:47:DD:53:78:DC:24:02:44:38:C7:F2:8B:02:C4:4E:3E:1E']
+    }
+  }]);
+});
+
+// ---------- Printable A4 sheets (server-rendered) ----------
+// ?type=totals — item-wise production sheet (kul miqdar)
+// ?type=shops  — shop-wise packing slips (har dukan alag A4 page)
+function esc(s) { return String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c])); }
+app.get('/print', requireLogin, (req, res) => {
+  const { date, route_id, type, shop_id } = req.query;
+  const own = scopedShopId(req);
+  const isHistory = type === 'shop_history' || type === 'date_history';
+  if (isHistory) {
+    if (!can(req.user, 'reports', 'view') && !can(req.user, 'order_history', 'view')) return res.status(403).send('forbidden');
+  } else if (!can(req.user, 'reports', 'view')) return res.status(403).send('forbidden');
+  const printBtn = `<br><button class="printbtn" onclick="window.print()" style="padding:10px 24px;font-size:16px">پرنٹ کریں</button>`;
+  const css = `<style>
+ @page{size:A4;margin:10mm} *{box-sizing:border-box}
+ body{font-family:'Noto Nastaliq Urdu','Jameel Noori Nastaleeq',serif;direction:rtl;color:#111;margin:0;padding:10mm}
+ .head{display:flex;align-items:center;gap:12px;border-bottom:3px solid #e8721c;padding-bottom:8px;margin-bottom:10px}
+ .head img{height:64px} .head h1{margin:0;font-size:26px;color:#1a1a1a} .head h1 span{color:#e8721c}
+ .meta{color:#2e7d32;font-size:14px;margin-bottom:8px}
+ table{width:100%;border-collapse:collapse;font-size:14px;margin-bottom:14px}
+ th{background:#1a1a1a;color:#fff;padding:6px} td{border:1px solid #999;padding:5px 8px}
+ tr:nth-child(even) td{background:#fdf3e7}
+ .catrow td{background:#e8721c !important;color:#fff;font-size:15px}
+ .slip{break-inside:avoid}
+ .slip h2.shopname{font-size:24px;color:#e8721c;margin:0 0 4px}
+ .slip .smeta{color:#555;font-size:14px;margin-bottom:8px}
+ .hdate{background:#1a1a1a;color:#fff;font-size:18px;padding:6px 14px;border-radius:8px;margin:16px 0 8px;break-after:avoid}
+ .hshop{font-size:19px;color:#b3540e;margin:10px 0 4px;border-bottom:2px solid #e8721c;padding-bottom:2px;break-after:avoid}
+ .sig{display:flex;justify-content:space-between;margin-top:26px;font-size:14px}
+ .sig div{border-top:1px solid #333;padding-top:4px;width:40%;text-align:center}
+ .note{background:#fdf3e7;border:1px dashed #e8721c;padding:6px 10px;margin:8px 0;font-size:13px}
+ @media print{ .printbtn{display:none} .pagebreak{break-after:page} }
+</style>`;
+  // rozana print — compact, sab categories ek A4 page par
+  const dcss = `<style>
+ @page{size:A4;margin:8mm} *{box-sizing:border-box}
+ body{font-family:'Noto Nastaliq Urdu','Jameel Noori Nastaleeq',serif;direction:rtl;color:#111;margin:0}
+ .head{display:flex;align-items:center;gap:8px;border-bottom:2px solid #e8721c;padding-bottom:6px;margin-bottom:8px}
+ .head img{height:44px} .head h1{margin:0;font-size:20px;color:#1a1a1a} .head h1 span{color:#e8721c}
+ .meta{color:#2e7d32;font-size:12px;margin-bottom:6px}
+ table{width:100%;border-collapse:collapse;font-size:12px;margin-bottom:8px}
+ th{background:#1a1a1a;color:#fff;padding:4px;font-size:12px} td{border:1px solid #999;padding:3px 6px}
+ tr:nth-child(even) td{background:#fdf3e7}
+ .catrow td{background:#e8721c !important;color:#fff;font-size:13px;padding:4px 6px}
+ .slip{break-inside:avoid}
+ .slip h2.shopname{font-size:20px;color:#e8721c;margin:0 0 4px}
+ .slip .smeta{color:#555;font-size:12px;margin-bottom:6px}
+ .hshop{font-size:15px;color:#b3540e;margin:8px 0 3px;border-bottom:2px solid #e8721c;padding-bottom:2px;break-after:avoid}
+ .sig{display:flex;justify-content:space-between;margin-top:18px;font-size:12px}
+ .sig div{border-top:1px solid #333;padding-top:4px;width:40%;text-align:center}
+ .note{background:#fdf3e7;border:1px dashed #e8721c;padding:4px 8px;margin:6px 0;font-size:11px}
+ @media print{ .printbtn{display:none} .pagebreak{break-after:page} }
+</style>`;
+  const head = (title, extra) => `<div class="head"><img src="/logo.png" alt="logo"><div><h1>گلشن فیکٹری <span>Gulshan Factory</span></h1><div class="meta">${esc(title)}${extra ? ' — ' + esc(extra) : ''}</div></div></div>`;
+  const itemsByOrder = db.prepare(`SELECT p.name AS product_name, u.name AS unit_name, oi.quantity
+    FROM order_items oi JOIN products p ON p.id=oi.product_id LEFT JOIN units u ON u.id=p.unit_id WHERE oi.order_id=? ORDER BY p.name`);
+  const orderTable = (o) => {
+    const its = itemsByOrder.all(o.id);
+    const rows = its.map((it, i) => `<tr><td>${i + 1}</td><td>${esc(it.product_name)}</td><td><b>${esc(it.quantity)} ${esc(it.unit_name || '')}</b></td></tr>`).join('')
+      || '<tr><td colspan=3>کوئی آئٹم نہیں</td></tr>';
+    return `<table><tr><th style="width:40px">#</th><th>آئٹم</th><th>مقدار</th></tr>${rows}</table>${o.note ? `<div class="note">نوٹ: ${esc(o.note)}</div>` : ''}`;
+  };
+  // ---------- shop-wise full order history (grouped by date) ----------
+  if (type === 'shop_history') {
+    const sid = own || parseInt(shop_id, 10) || 0;
+    if (!sid) return res.status(400).send('shop_required');
+    const shop = db.prepare('SELECT name FROM shops WHERE id=?').get(sid);
+    if (!shop) return res.status(404).send('shop_not_found');
+    const dates = db.prepare(`SELECT DISTINCT delivery_date FROM orders WHERE shop_id=? ORDER BY delivery_date DESC`).all(sid);
+    const ordersByDate = db.prepare(`SELECT o.id, o.delivery_date, o.note, r.name AS route_name FROM orders o
+      LEFT JOIN routes r ON r.id=o.route_id WHERE o.shop_id=? AND o.delivery_date=? ORDER BY o.id DESC`);
+    const body = dates.map((d, di) => {
+      const orders = ordersByDate.all(sid, d.delivery_date);
+      return `<div class="hdate">📅 ${esc(d.delivery_date)}</div>` + orders.map((o, oi) =>
+        `<div class="slip${(di < dates.length - 1 || oi < orders.length - 1) ? ' pagebreak' : ''}">
+          <div class="hshop">🧾 آرڈر #${o.id} ${o.route_name ? '| روٹ: ' + esc(o.route_name) : ''}</div>
+          ${orderTable(o)}
+        </div>`).join('');
+    }).join('');
+    return res.send(`<!DOCTYPE html><html lang="ur" dir="rtl"><head><meta charset="utf-8"><title>آرڈر ہسٹری — ${esc(shop.name)}</title>${css}</head><body>
+${head('دکان وائز آرڈر ہسٹری', shop.name)}${body || '<p>کوئی آرڈر نہیں</p>'}${printBtn}</body></html>`);
+  }
+  // ---------- date-wise order history (grouped by shop) ----------
+  if (type === 'date_history') {
+    if (!date) return res.status(400).send('date_required');
+    const sf = own ? 'AND o.shop_id=' + own : '';
+    const shops = db.prepare(`SELECT DISTINCT s.id, s.name FROM orders o JOIN shops s ON s.id=o.shop_id
+      WHERE o.delivery_date=? ${sf} ORDER BY s.name`).all(date);
+    const ordersByShop = db.prepare(`SELECT o.id, o.delivery_date, o.note, r.name AS route_name FROM orders o
+      LEFT JOIN routes r ON r.id=o.route_id WHERE o.shop_id=? AND o.delivery_date=? ${sf} ORDER BY o.id DESC`);
+    const body = shops.map((s, si) => {
+      const orders = ordersByShop.all(s.id, date);
+      return `<div class="hshop">🏪 ${esc(s.name)}</div>` + orders.map((o, oi) =>
+        `<div class="slip${(si < shops.length - 1 || oi < orders.length - 1) ? ' pagebreak' : ''}">
+          <div class="smeta">🧾 آرڈر #${o.id}${o.route_name ? ' | روٹ: ' + esc(o.route_name) : ''}</div>
+          ${orderTable(o)}
+        </div>`).join('');
+    }).join('');
+    return res.send(`<!DOCTYPE html><html lang="ur" dir="rtl"><head><meta charset="utf-8"><title>آرڈر ہسٹری — ${esc(date)}</title>${css}</head><body>
+${head('تاریخ وائز آرڈر ہسٹری', 'تاریخ: ' + date)}${body || '<p>کوئی آرڈر نہیں</p>'}${printBtn}</body></html>`);
+  }
+  // ---------- DAILY: total production sheet (category-wise, scoped) ----------
+  // ---------- DAILY: DEMAND DASHBOARD (RateVault pattern) ----------
+  const ddCss = `<style>
+ @page{size:A4;margin:5mm} *{box-sizing:border-box}
+ body{font-family:'Noto Nastaliq Urdu','Jameel Noori Nastaleeq',serif;direction:rtl;color:#111;margin:0;font-size:11px}
+ .phead{display:flex;align-items:center;gap:10px;border-bottom:2.5px solid #e8721c;padding-bottom:6px;margin-bottom:8px}
+ .plogo{width:46px;height:46px;object-fit:contain;border-radius:8px}
+ .pcenter{flex:1;text-align:center}
+ .ptitle{font-size:20px;font-weight:bold;color:#111;line-height:1.4}
+ .psub{font-size:13px;color:#e8721c;font-weight:bold}
+ .pmeta{font-size:10px;color:#555;text-align:left;white-space:nowrap;line-height:1.7}
+ .dcols{display:flex;flex-wrap:wrap;gap:8px;align-items:flex-start}
+ .cat-block{flex:1 1 155px;min-width:145px;border:1.5px solid #111;break-inside:avoid;margin-bottom:8px}
+ .cat-head{background:#111;color:#fff;text-align:center;font-size:11px;font-weight:bold;padding:4px 2px}
+ .cat-block table{width:100%;border-collapse:collapse;font-size:11px}
+ .cat-block th{padding:3px 4px;border-bottom:1px solid #111;font-size:10px;font-family:Arial,sans-serif}
+ .cat-block th.total-h{color:#e8721c;text-align:left}
+ .cat-block th.num-h{color:#888;text-align:right}
+ .cat-block td{border-bottom:1px solid #ddd;padding:3px 4px}
+ .cat-block td.num{width:24px;text-align:right;color:#555;font-size:10px}
+ .cat-block td.name{text-align:right}
+ .cat-block td.total{width:44px;text-align:center;font-weight:bold;border-left:1.5px solid #111;font-size:13px}
+ .shoptitle{text-align:center;font-size:16px;font-weight:bold;margin:0 0 6px;color:#e8721c}
+ .shoppage{page-break-inside:avoid}
+ .slip{break-inside:avoid;border:1.5px solid #111;margin:10px 0;padding:8px;page-break-before:always}
+ .slip h2.shopname{font-size:20px;color:#e8721c;margin:0 0 4px;text-align:center}
+ .slip table{width:100%;border-collapse:collapse;font-size:12px;margin:6px 0}
+ .slip th{background:#111;color:#fff;padding:4px;font-size:12px}
+ .slip td{border:1px solid #999;padding:3px 6px}
+ .slip .catrow td{background:#e8721c !important;color:#fff;font-size:13px}
+ .sig{display:flex;justify-content:space-between;margin-top:14px;font-size:11px}
+ .sig div{border-top:1px solid #333;padding-top:4px;width:40%;text-align:center}
+ .note{background:#fdf3e7;border:1px dashed #e8721c;padding:4px 8px;margin:6px 0;font-size:11px}
+ @media print{ .printbtn{display:none} }
+</style>`;
+  function printHead(ddate, username) {
+    const now = new Date();
+    const pd = String(now.getDate()).padStart(2, '0') + '-' + String(now.getMonth() + 1).padStart(2, '0') + '-' + now.getFullYear();
+    const pt = String(now.getHours()).padStart(2, '0') + ':' + String(now.getMinutes()).padStart(2, '0');
+    return `<div class="phead"><img src="/logo.png" class="plogo"><div class="pcenter"><div class="ptitle">🏭 گلشن فیکٹری</div><div class="psub">روزانہ ڈیمانڈ شیٹ</div></div><div class="pmeta">📅 پیداوار: ${fmtD(ddate)}<br>👤 پرنٹ: ${esc(username)}<br>🕐 ${pd} ${pt}</div></div>`;
+  }
+  const fmtD = d => { const M = ['JAN','FEB','MAR','APR','MAY','JUN','JUL','AUG','SEP','OCT','NOV','DEC']; const p = String(d).split('-'); return p.length === 3 ? `${p[2]} ${M[Number(p[1]) - 1]} ${p[0]}` : d; };
+  // category blocks builder (RateVault pattern) — rows: [{product_name, total_qty}]
+  function demandBlocks(rows, ddate) {
+    const cats = {}, order = [];
+    rows.forEach(r => { const k = r.category_name || 'متفرق'; if (!cats[k]) { cats[k] = []; order.push(k); } cats[k].push(r); });
+    const dstr = fmtD(ddate);
+    return order.map(cn => {
+      const trs = cats[cn].map((r, i) =>
+        `<tr><td class="num">${i + 1}</td><td class="name">${esc(r.product_name)}</td><td class="total"></td></tr>`).join('');
+      return `<div class="cat-block"><div class="cat-head">${esc(cn)} — ${dstr}</div>
+        <table><tr><th class="num-h">#S</th><th>ALL PARTIES</th><th class="total-h">TOTAL</th></tr>${trs}</table></div>`;
+    }).join('');
+  }
+  // shop RateVault blocks — rows: [{product_name, category_name, qty}], header: CATEGORY — DATE, mid col: shop name, left: QTY
+  function shopDemandBlocks(shopName, rows, ddate) {
+    const cats = {}, order = [];
+    rows.forEach(r => { const k = r.category_name || 'متفرق'; if (!cats[k]) { cats[k] = []; order.push(k); } cats[k].push(r); });
+    const dstr = fmtD(ddate);
+    return order.map(cn => {
+      const trs = cats[cn].map((r, i) =>
+        `<tr><td class="num">${i + 1}</td><td class="name">${esc(r.product_name)}</td><td class="total">${r.qty != null ? esc(r.qty) : ''}</td></tr>`).join('');
+      return `<div class="cat-block"><div class="cat-head">${esc(cn)} — ${dstr}</div>
+        <table><tr><th class="num-h">#S</th><th>${esc(shopName)}</th><th class="total-h">QTY</th></tr>${trs}</table></div>`;
+    }).join('');
+  }
+  if (type === 'daily_total') {
+    if (!can(req.user, 'daily', 'view')) return res.status(403).send('forbidden');
+    const sc = dailyScope(req);
+    const ddate = date || dailyOrderDate();
+    const sf = dailyShopFilter(sc, 'do');
+    let sql = `SELECT p.name AS product_name, c.name AS category_name,
+        COALESCE(SUM(di.quantity), 0) AS total_qty
+      FROM daily_products p
+      LEFT JOIN daily_order_items di ON di.product_id=p.id
+      LEFT JOIN daily_orders do ON do.id=di.order_id AND do.order_date=?${sf.clause}
+      LEFT JOIN daily_categories c ON c.id=p.category_id
+      WHERE p.active=1`;
+    const args = [ddate, ...sf.args];
+    if (sc.catIds) { sql += ` AND p.category_id IN (${sc.catIds.map(() => '?').join(',')})`; args.push(...sc.catIds); }
+    sql += ' GROUP BY p.id ORDER BY p.sort_order, p.name';
+    const rows = db.prepare(sql).all(...args);
+    const blocks = demandBlocks(rows, ddate);
+    return res.send(`<!DOCTYPE html><html lang="ur" dir="rtl"><head><meta charset="utf-8"><title>روزانہ ڈیمانڈ شیٹ — ${esc(ddate)}</title>${ddCss}</head><body>
+${printHead(ddate, req.user.username)}
+<div class="dcols">${blocks || '<p>کوئی آئٹم نہیں</p>'}</div>${printBtn}</body></html>`);
+  }
+  // ---------- DAILY: per-shop (RateVault pattern) ----------
+  if (type === 'daily_shop') {
+    if (!can(req.user, 'daily', 'view')) return res.status(403).send('forbidden');
+    const sc = dailyScope(req);
+    const ddate = date || dailyOrderDate();
+    const sidParam = sc.shopId ? String(sc.shopId) : (shop_id || '');
+    let shops = [];
+    if (sc.shopId) {
+      const s = db.prepare('SELECT id, name FROM daily_shops WHERE id=?').get(sc.shopId);
+      if (s) shops = [s];
+    } else if (!sidParam || sidParam === 'all') {
+      shops = db.prepare(`SELECT id, name FROM daily_shops WHERE active=1${sc.shopIds ? ` AND id IN (${sc.shopIds.map(() => '?').join(',')})` : ''} ORDER BY name`).all(...(sc.shopIds || []));
+    } else {
+      const sid = Number(sidParam);
+      if (sc.shopIds && !sc.shopIds.includes(sid)) return res.status(403).send('forbidden');
+      const s = db.prepare('SELECT id, name FROM daily_shops WHERE id=?').get(sid);
+      if (!s) return res.status(404).send('shop_not_found');
+      shops = [s];
+    }
+    if (!shops.length) return res.status(404).send('shop_not_found');
+    const allProds = db.prepare(`SELECT p.id, p.name AS product_name, c.name AS category_name
+      FROM daily_products p LEFT JOIN daily_categories c ON c.id=p.category_id
+      WHERE p.active=1${sc.catIds ? ` AND p.category_id IN (${sc.catIds.map(() => '?').join(',')})` : ''}
+      ORDER BY p.sort_order, p.name`).all(...(sc.catIds || []));
+    const pages = shops.map((shop, si) => {
+      const o = db.prepare('SELECT id, note FROM daily_orders WHERE shop_id=? AND order_date=?').get(shop.id, ddate);
+      const qtyMap = {};
+      if (o) db.prepare('SELECT product_id, quantity FROM daily_order_items WHERE order_id=?').all(o.id).forEach(r => { qtyMap[r.product_id] = r.quantity; });
+      const rows = allProds.map(p => ({ product_name: p.product_name, category_name: p.category_name, qty: qtyMap[p.id] }));
+      const blocks = shopDemandBlocks(shop.name, rows, ddate);
+      const note = o && o.note ? `<div class="note">نوٹ: ${esc(o.note)}</div>` : '';
+      return `<div class="shoppage"${si > 0 ? ' style="page-break-before:always"' : ''}>${printHead(ddate, req.user.username)}
+        <div class="shoptitle">🏪 ${esc(shop.name)}</div>
+        <div class="dcols">${blocks || '<p>کوئی آئٹم نہیں</p>'}</div>${note}
+        <div class="sig"><div>فیکٹری (دستخط)</div><div>وصول کنندہ (دستخط)</div></div></div>`;
+    }).join('');
+    return res.send(`<!DOCTYPE html><html lang="ur" dir="rtl"><head><meta charset="utf-8"><title>روزانہ سلپ — ${esc(ddate)}</title>${ddCss}</head><body>${pages}${printBtn}</body></html>`);
+  }
+  // ---------- DAILY: sab kuch ek saath (کل پیداوار + تمام دکانوں کی سلپس) ----------
+  if (type === 'daily_all') {
+    if (!can(req.user, 'daily', 'view')) return res.status(403).send('forbidden');
+    const sc = dailyScope(req);
+    const ddate = date || dailyOrderDate();
+    const sf = dailyShopFilter(sc, 'do');
+    // Totals — tamam active items (DEMAND DASHBOARD pattern)
+    let tsql = `SELECT p.name AS product_name, c.name AS category_name,
+        COALESCE(SUM(di.quantity), 0) AS total_qty
+      FROM daily_products p
+      LEFT JOIN daily_order_items di ON di.product_id=p.id
+      LEFT JOIN daily_orders do ON do.id=di.order_id AND do.order_date=?${sf.clause}
+      LEFT JOIN daily_categories c ON c.id=p.category_id
+      WHERE p.active=1`;
+    const targs = [ddate, ...sf.args];
+    if (sc.catIds) { tsql += ` AND p.category_id IN (${sc.catIds.map(() => '?').join(',')})`; targs.push(...sc.catIds); }
+    tsql += ' GROUP BY p.id ORDER BY p.sort_order, p.name';
+    const trows = db.prepare(tsql).all(...targs);
+    const totBody = demandBlocks(trows, ddate);
+    // Per-shop slips — tamam items, har dukan ki quantity
+    const orders = db.prepare(`SELECT do.id, do.shop_id, do.note, s.name AS shop_name FROM daily_orders do
+      JOIN daily_shops s ON s.id=do.shop_id WHERE do.order_date=?${sf.clause} ORDER BY s.name`).all(ddate, ...sf.args);
+    const allProds = db.prepare(`SELECT p.id, p.name AS product_name, c.name AS category_name
+      FROM daily_products p LEFT JOIN daily_categories c ON c.id=p.category_id
+      WHERE p.active=1${sc.catIds ? ` AND p.category_id IN (${sc.catIds.map(() => '?').join(',')})` : ''}
+      ORDER BY p.sort_order, p.name`).all(...(sc.catIds || []));
+    const qByOrder = db.prepare('SELECT product_id, quantity FROM daily_order_items WHERE order_id=?');
+    const slips = orders.map(o => {
+      const qtyMap = {};
+      qByOrder.all(o.id).forEach(r => { qtyMap[r.product_id] = r.quantity; });
+      const rows = allProds.map(pp => ({ product_name: pp.product_name, category_name: pp.category_name, qty: qtyMap[pp.id] }));
+      const blocks = shopDemandBlocks(o.shop_name, rows, ddate);
+      return `<div class="shoppage" style="page-break-before:always">${printHead(ddate, req.user.username)}
+        <div class="shoptitle">🏪 ${esc(o.shop_name)}</div>
+        <div class="dcols">${blocks || '<p>کوئی آئٹم نہیں</p>'}</div>
+        ${o.note ? `<div class="note">نوٹ: ${esc(o.note)}</div>` : ''}
+        <div class="sig"><div>فیکٹری (دستخط)</div><div>وصول کنندہ (دستخط)</div></div></div>`;
+    }).join('');
+    return res.send(`<!DOCTYPE html><html lang="ur" dir="rtl"><head><meta charset="utf-8"><title>روزانہ مکمل — ${esc(ddate)}</title>${ddCss}</head><body>
+${printHead(ddate, req.user.username)}
+<div class="dcols">${totBody || '<p>کوئی آئٹم نہیں</p>'}</div>${slips}${printBtn}</body></html>`);
+  }
+  const mode = type === 'shops' ? 'shops' : 'totals';
+  let f = 'WHERE 1=1'; const args = [];
+  if (date) { f += ' AND o.delivery_date=?'; args.push(date); }
+  if (route_id) { f += ' AND o.route_id=?'; args.push(route_id); }
+  const routeName = route_id ? (db.prepare('SELECT name FROM routes WHERE id=?').get(route_id) || {}).name : 'تمام روٹس';
+  const dateLabel = date || 'تمام';
+  if (mode === 'shops') {
+    const orders = db.prepare(`SELECT o.id, o.delivery_date, o.note, s.name AS shop_name, r.name AS route_name FROM orders o
+      JOIN shops s ON s.id=o.shop_id LEFT JOIN routes r ON r.id=o.route_id ${f} ORDER BY s.name`).all(...args);
+    const slips = orders.map((o, idx) => {
+      const its = itemsByOrder.all(o.id);
+      const rows = its.map((it, i) => `<tr><td>${i + 1}</td><td>${esc(it.product_name)}</td><td><b>${esc(it.quantity)} ${esc(it.unit_name || '')}</b></td></tr>`).join('')
+        || '<tr><td colspan=4>کوئی آئٹم نہیں</td></tr>';
+      return `<div class="slip${idx < orders.length - 1 ? ' pagebreak' : ''}">
+        ${head('ڈیلیوری سلپ', 'تاریخ: ' + dateLabel + ' | روٹ: ' + routeName)}
+        <h2 class="shopname">${esc(o.shop_name)}</h2>
+        <div class="smeta">تاریخ: ${esc(o.delivery_date)} | روٹ: ${esc(o.route_name || '—')}</div>
+        <table><tr><th>#</th><th>آئٹم</th><th>مقدار</th></tr>${rows}</table>
+        ${o.note ? `<div class="note">نوٹ: ${esc(o.note)}</div>` : ''}
+        <div class="sig"><div>فیکٹری (دستخط)</div><div>وصول کنندہ (دستخط)</div></div>
+      </div>`;
+    }).join('');
+    return res.send(`<!DOCTYPE html><html lang="ur" dir="rtl"><head><meta charset="utf-8"><title>دکان وائز سلپس — گلشن فیکٹری</title>${css}</head><body>${slips || '<p>کوئی آرڈر نہیں</p>'}${printBtn}</body></html>`);
+  }
+  const totals = db.prepare(`SELECT p.name AS product_name, c.name AS category_name, u.name AS unit_name, SUM(oi.quantity) AS total_qty,
+      COUNT(DISTINCT o.shop_id) AS shop_count
+    FROM order_items oi JOIN orders o ON o.id=oi.order_id JOIN products p ON p.id=oi.product_id
+    LEFT JOIN categories c ON c.id=p.category_id LEFT JOIN units u ON u.id=p.unit_id
+    ${f} GROUP BY p.id ORDER BY c.sort, c.id, p.name`).all(...args);
+  const rows = totals.map(t => `<tr><td>${esc(t.category_name || '')}</td><td>${esc(t.product_name)}</td><td><b>${esc(t.total_qty)} ${esc(t.unit_name || '')}</b></td><td>${t.shop_count} دکان</td></tr>`).join('');
+  res.send(`<!DOCTYPE html><html lang="ur" dir="rtl"><head><meta charset="utf-8"><title>پروڈکشن شیٹ — گلشن فیکٹری</title>${css}</head><body>
+${head('پروڈکشن شیٹ — آئٹم وائز کل مقدار', 'تاریخ: ' + dateLabel + ' | روٹ: ' + routeName)}
+<table><tr><th>کیٹیگری</th><th>آئٹم</th><th>کل مقدار</th><th>دکانیں</th></tr>${rows || '<tr><td colspan=4>کوئی آرڈر نہیں</td></tr>'}</table>
+${printBtn}</body></html>`);
+});
+
+app.use(express.static(path.join(__dirname, 'public'), {
+  // Frontend files (app.js etc.) hamesha fresh — purana cache masla khatam
+  setHeaders(res, filePath) {
+    if (/\.(js|css|html)$/.test(filePath)) res.set('Cache-Control', 'no-cache');
+  }
+}));
+app.get('*', (req, res) => res.sendFile(path.join(__dirname, 'public', 'index.html')));
+
+app.listen(PORT, () => console.log(`Gulshan Factory online on :${PORT}`));
