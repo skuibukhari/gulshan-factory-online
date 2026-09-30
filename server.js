@@ -1506,12 +1506,12 @@ ${head('تاریخ وائز آرڈر ہسٹری', 'تاریخ: ' + date)}${body 
   const ddCss = `<style>
  @page{size:A4;margin:8mm} *{box-sizing:border-box}
  body{font-family:'Noto Nastaliq Urdu','Jameel Noori Nastaleeq',serif;direction:rtl;color:#111;margin:0;font-size:11px}
- .phead{display:flex;align-items:center;gap:8px;border-bottom:2px solid #e8721c;padding:2px 0 5px;margin:0 0 6px;overflow:hidden}
- .plogo{width:38px;height:38px;object-fit:contain;flex-shrink:0}
+ .phead{display:flex;align-items:center;gap:10px;border:2px solid #111;border-radius:6px;padding:10px;margin:0 0 8px;background:#fff}
+ .plogo{width:52px;height:52px;object-fit:contain;flex-shrink:0}
  .pcenter{flex:1;text-align:center;min-width:0}
- .ptitle{font-size:17px;font-weight:bold;color:#111;line-height:1.3;margin:0}
- .psub{font-size:11px;color:#e8721c;font-weight:bold;margin:0}
- .pmeta{font-size:9px;color:#555;text-align:left;white-space:nowrap;line-height:1.6;flex-shrink:0}
+ .ptitle{font-size:24px;font-weight:bold;color:#111;line-height:1.6;margin:0;padding:4px 0 0}
+ .psub{font-size:13px;color:#e8721c;font-weight:bold;margin:2px 0 0}
+ .pmeta{font-size:9px;color:#444;text-align:left;white-space:nowrap;line-height:1.7;flex-shrink:0;background:#f5f5f5;padding:6px 10px;border-radius:4px}
  .dcols{column-count:3;column-gap:10px}
  .cat-block{break-inside:avoid;margin:0 0 10px;border:2px solid #111;border-radius:4px;overflow:hidden}
  .cat-head{background:#111;color:#fff;text-align:center;font-size:12px;font-weight:bold;padding:6px 2px;letter-spacing:.3px}
@@ -1543,7 +1543,7 @@ ${head('تاریخ وائز آرڈر ہسٹری', 'تاریخ: ' + date)}${body 
     const now = new Date();
     const pd = String(now.getDate()).padStart(2, '0') + '-' + String(now.getMonth() + 1).padStart(2, '0') + '-' + now.getFullYear();
     const pt = String(now.getHours()).padStart(2, '0') + ':' + String(now.getMinutes()).padStart(2, '0');
-    return `<div class="phead"><img src="/logo.png" class="plogo"><div class="pcenter"><div class="ptitle">🏭 گلشن فیکٹری</div><div class="psub">روزانہ ڈیمانڈ شیٹ</div></div><div class="pmeta">📅 پیداوار: ${fmtD(ddate)}<br>👤 پرنٹ: ${esc(username)}<br>🕐 ${pd} ${pt}</div></div>`;
+    return `<div class="phead"><div class="pmeta">📅 پیداوار: ${fmtD(ddate)}<br>👤 پرنٹ: ${esc(username)}<br>🕐 ${pd} ${pt}</div><div class="pcenter"><div class="ptitle">گلشن فیکٹری</div><div class="psub">روزانہ ڈیمانڈ شیٹ</div></div><img src="/logo.png" class="plogo"></div>`;
   }
   const fmtD = d => { const M = ['JAN','FEB','MAR','APR','MAY','JUN','JUL','AUG','SEP','OCT','NOV','DEC']; const p = String(d).split('-'); return p.length === 3 ? `${p[2]} ${M[Number(p[1]) - 1]} ${p[0]}` : d; };
   // category blocks builder (RateVault pattern) — rows: [{product_name, total_qty}]
