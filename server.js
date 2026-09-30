@@ -1504,22 +1504,26 @@ ${head('تاریخ وائز آرڈر ہسٹری', 'تاریخ: ' + date)}${body 
   // ---------- DAILY: total production sheet (category-wise, scoped) ----------
   // ---------- DAILY: DEMAND DASHBOARD (RateVault pattern) ----------
   const ddCss = `<style>
- @page{size:A4;margin:8mm} *{box-sizing:border-box}
- body{font-family:'Noto Nastaliq Urdu','Jameel Noori Nastaleeq',serif;direction:rtl;color:#111;margin:0}
- .dtitle{text-align:center;font-size:22px;font-weight:bold;margin:0 0 10px;padding-bottom:6px;border-bottom:2px solid #111;letter-spacing:1px;font-family:Arial,sans-serif}
- .dcols{display:flex;flex-wrap:wrap;gap:10px;align-items:flex-start}
- .cat-block{flex:1 1 200px;min-width:180px;border:1.5px solid #111;break-inside:avoid;margin-bottom:10px}
- .cat-head{background:#111;color:#fff;text-align:center;font-size:13px;font-weight:bold;padding:6px 4px}
- .cat-block table{width:100%;border-collapse:collapse;font-size:13px}
- .cat-block th{padding:4px 6px;border-bottom:1px solid #111;font-size:11px;font-family:Arial,sans-serif}
+ @page{size:A4;margin:5mm} *{box-sizing:border-box}
+ body{font-family:'Noto Nastaliq Urdu','Jameel Noori Nastaleeq',serif;direction:rtl;color:#111;margin:0;font-size:11px}
+ .phead{display:flex;align-items:center;gap:10px;border-bottom:2.5px solid #e8721c;padding-bottom:6px;margin-bottom:8px}
+ .plogo{width:46px;height:46px;object-fit:contain;border-radius:8px}
+ .pcenter{flex:1;text-align:center}
+ .ptitle{font-size:20px;font-weight:bold;color:#111;line-height:1.4}
+ .psub{font-size:13px;color:#e8721c;font-weight:bold}
+ .pmeta{font-size:10px;color:#555;text-align:left;white-space:nowrap;line-height:1.7}
+ .dcols{display:flex;flex-wrap:wrap;gap:8px;align-items:flex-start}
+ .cat-block{flex:1 1 155px;min-width:145px;border:1.5px solid #111;break-inside:avoid;margin-bottom:8px}
+ .cat-head{background:#111;color:#fff;text-align:center;font-size:11px;font-weight:bold;padding:4px 2px}
+ .cat-block table{width:100%;border-collapse:collapse;font-size:11px}
+ .cat-block th{padding:3px 4px;border-bottom:1px solid #111;font-size:10px;font-family:Arial,sans-serif}
  .cat-block th.total-h{color:#e8721c;text-align:left}
  .cat-block th.num-h{color:#888;text-align:right}
- .cat-block td{border-bottom:1px solid #ddd;padding:5px 6px}
- .cat-block td.num{width:28px;text-align:right;color:#555;font-size:11px}
+ .cat-block td{border-bottom:1px solid #ddd;padding:3px 4px}
+ .cat-block td.num{width:24px;text-align:right;color:#555;font-size:10px}
  .cat-block td.name{text-align:right}
- .cat-block td.total{width:52px;text-align:center;font-weight:bold;border-left:1.5px solid #111;font-size:15px}
- .dfoot{text-align:center;color:#999;font-size:10px;margin-top:14px;font-family:Arial,sans-serif}
- .shoptitle{text-align:center;font-size:18px;font-weight:bold;margin:0 0 8px;color:#e8721c}
+ .cat-block td.total{width:44px;text-align:center;font-weight:bold;border-left:1.5px solid #111;font-size:13px}
+ .shoptitle{text-align:center;font-size:16px;font-weight:bold;margin:0 0 6px;color:#e8721c}
  .shoppage{page-break-inside:avoid}
  .slip{break-inside:avoid;border:1.5px solid #111;margin:10px 0;padding:8px;page-break-before:always}
  .slip h2.shopname{font-size:20px;color:#e8721c;margin:0 0 4px;text-align:center}
@@ -1527,11 +1531,17 @@ ${head('تاریخ وائز آرڈر ہسٹری', 'تاریخ: ' + date)}${body 
  .slip th{background:#111;color:#fff;padding:4px;font-size:12px}
  .slip td{border:1px solid #999;padding:3px 6px}
  .slip .catrow td{background:#e8721c !important;color:#fff;font-size:13px}
- .sig{display:flex;justify-content:space-between;margin-top:18px;font-size:12px}
+ .sig{display:flex;justify-content:space-between;margin-top:14px;font-size:11px}
  .sig div{border-top:1px solid #333;padding-top:4px;width:40%;text-align:center}
  .note{background:#fdf3e7;border:1px dashed #e8721c;padding:4px 8px;margin:6px 0;font-size:11px}
  @media print{ .printbtn{display:none} }
 </style>`;
+  function printHead(ddate, username) {
+    const now = new Date();
+    const pd = String(now.getDate()).padStart(2, '0') + '-' + String(now.getMonth() + 1).padStart(2, '0') + '-' + now.getFullYear();
+    const pt = String(now.getHours()).padStart(2, '0') + ':' + String(now.getMinutes()).padStart(2, '0');
+    return `<div class="phead"><img src="/logo.png" class="plogo"><div class="pcenter"><div class="ptitle">🏭 گلشن فیکٹری</div><div class="psub">روزانہ ڈیمانڈ شیٹ</div></div><div class="pmeta">📅 پیداوار: ${fmtD(ddate)}<br>👤 پرنٹ: ${esc(username)}<br>🕐 ${pd} ${pt}</div></div>`;
+  }
   const fmtD = d => { const M = ['JAN','FEB','MAR','APR','MAY','JUN','JUL','AUG','SEP','OCT','NOV','DEC']; const p = String(d).split('-'); return p.length === 3 ? `${p[2]} ${M[Number(p[1]) - 1]} ${p[0]}` : d; };
   // category blocks builder (RateVault pattern) — rows: [{product_name, total_qty}]
   function demandBlocks(rows, ddate) {
@@ -1574,9 +1584,9 @@ ${head('تاریخ وائز آرڈر ہسٹری', 'تاریخ: ' + date)}${body 
     sql += ' GROUP BY p.id ORDER BY p.sort_order, p.name';
     const rows = db.prepare(sql).all(...args);
     const blocks = demandBlocks(rows, ddate);
-    return res.send(`<!DOCTYPE html><html lang="ur" dir="rtl"><head><meta charset="utf-8"><title>روزانہ کل — ${esc(ddate)}</title>${ddCss}</head><body>
-<div class="dcols">${blocks || '<p>کوئی آئٹم نہیں</p>'}</div>
-<div class="dfoot">Generated by Gulshan Factory © 2026</div>${printBtn}</body></html>`);
+    return res.send(`<!DOCTYPE html><html lang="ur" dir="rtl"><head><meta charset="utf-8"><title>روزانہ ڈیمانڈ شیٹ — ${esc(ddate)}</title>${ddCss}</head><body>
+${printHead(ddate, req.user.username)}
+<div class="dcols">${blocks || '<p>کوئی آئٹم نہیں</p>'}</div>${printBtn}</body></html>`);
   }
   // ---------- DAILY: per-shop (RateVault pattern) ----------
   if (type === 'daily_shop') {
@@ -1609,7 +1619,7 @@ ${head('تاریخ وائز آرڈر ہسٹری', 'تاریخ: ' + date)}${body 
       const rows = allProds.map(p => ({ product_name: p.product_name, category_name: p.category_name, qty: qtyMap[p.id] }));
       const blocks = shopDemandBlocks(shop.name, rows, ddate);
       const note = o && o.note ? `<div class="note">نوٹ: ${esc(o.note)}</div>` : '';
-      return `<div class="shoppage"${si > 0 ? ' style="page-break-before:always"' : ''}>
+      return `<div class="shoppage"${si > 0 ? ' style="page-break-before:always"' : ''}>${printHead(ddate, req.user.username)}
         <div class="shoptitle">🏪 ${esc(shop.name)}</div>
         <div class="dcols">${blocks || '<p>کوئی آئٹم نہیں</p>'}</div>${note}
         <div class="sig"><div>فیکٹری (دستخط)</div><div>وصول کنندہ (دستخط)</div></div></div>`;
@@ -1648,15 +1658,15 @@ ${head('تاریخ وائز آرڈر ہسٹری', 'تاریخ: ' + date)}${body 
       qByOrder.all(o.id).forEach(r => { qtyMap[r.product_id] = r.quantity; });
       const rows = allProds.map(pp => ({ product_name: pp.product_name, category_name: pp.category_name, qty: qtyMap[pp.id] }));
       const blocks = shopDemandBlocks(o.shop_name, rows, ddate);
-      return `<div class="shoppage" style="page-break-before:always">
+      return `<div class="shoppage" style="page-break-before:always">${printHead(ddate, req.user.username)}
         <div class="shoptitle">🏪 ${esc(o.shop_name)}</div>
         <div class="dcols">${blocks || '<p>کوئی آئٹم نہیں</p>'}</div>
         ${o.note ? `<div class="note">نوٹ: ${esc(o.note)}</div>` : ''}
         <div class="sig"><div>فیکٹری (دستخط)</div><div>وصول کنندہ (دستخط)</div></div></div>`;
     }).join('');
     return res.send(`<!DOCTYPE html><html lang="ur" dir="rtl"><head><meta charset="utf-8"><title>روزانہ مکمل — ${esc(ddate)}</title>${ddCss}</head><body>
-<div class="dcols">${totBody || '<p>کوئی آئٹم نہیں</p>'}</div>
-<div class="dfoot">Generated by Gulshan Factory © 2026</div>${slips}${printBtn}</body></html>`);
+${printHead(ddate, req.user.username)}
+<div class="dcols">${totBody || '<p>کوئی آئٹم نہیں</p>'}</div>${slips}${printBtn}</body></html>`);
   }
   const mode = type === 'shops' ? 'shops' : 'totals';
   let f = 'WHERE 1=1'; const args = [];
