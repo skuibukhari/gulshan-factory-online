@@ -1307,7 +1307,7 @@ async function renderDailyAccess() {
       <option value="">— منتخب کریں —</option>
       ${optGroups}
     </select></label></div>
-    <div id="daForm"></div>
+    <div id="daForm"><p class="note">👆 پہلے اوپر سے یوزر منتخب کریں — پھر یہاں کیٹیگری اور دکانوں پر ✅ ٹک لگائیں</p></div>
     <h3 class="st">⏰ روزانہ کٹ آف ٹائم</h3>
     <div class="formgrid"><label>کٹ آف<br><input type="time" id="daCutoff" value="${esc(DAILY_CUTOFF)}"></label>
     <label><br><button class="btn small" onclick="saveDailyCutoff()">💾 محفوظ کریں</button></label></div>
@@ -1343,14 +1343,16 @@ async function saveDailyShopItems() {
   alert('دکان کے آئٹم محفوظ ہو گئے ✅');
 }
 async function renderDailyAccessForm() {
-  const uid = $('#daUser').value; if (!uid) { $('#daForm').innerHTML = ''; return; }
+  const uid = $('#daUser').value; if (!uid) { $('#daForm').innerHTML = '<p class="note">👆 پہلے اوپر سے یوزر منتخب کریں</p>'; return; }
   const acc = await api('GET', `/api/daily/access/${uid}`);
   const cats = window._daCats || [], shops = window._daShops || [];
   $('#daForm').innerHTML = `
     <h3 class="st">نظر آنے والی کیٹیگریز <small class="note">(خالی = تمام)</small></h3>
-    ${cats.map(c => `<label class="chk"><input type="checkbox" data-cat="${c.id}"${acc.categories.includes(c.id) ? ' checked' : ''}> ${esc(c.name)}</label>`).join('')}
+    ${cats.length ? cats.map(c => `<label class="chk"><input type="checkbox" data-cat="${c.id}"${acc.categories.includes(c.id) ? ' checked' : ''}> ${esc(c.name)}</label>`).join('')
+      : '<p class="note">⚠️ کوئی کیٹیگری نہیں — پہلے 📦 روزانہ ڈیٹا سے کیٹیگریز لائیں</p>'}
     <h3 class="st">دکانیں <small class="note">(خالی = تمام)</small></h3>
-    ${shops.map(s => `<label class="chk"><input type="checkbox" data-shop="${s.id}"${acc.shops.includes(s.id) ? ' checked' : ''}> ${esc(s.name)}</label>`).join('')}
+    ${shops.length ? shops.map(s => `<label class="chk"><input type="checkbox" data-shop="${s.id}"${acc.shops.includes(s.id) ? ' checked' : ''}> ${esc(s.name)}</label>`).join('')
+      : '<p class="note">⚠️ کوئی دکان نہیں — پہلے 📦 روزانہ ڈیٹا سے دکانیں لائیں</p>'}
     <button class="btn green" onclick="saveDailyAccess()">💾 ایکسس محفوظ کریں</button>`;
 }
 async function saveDailyAccess() {
