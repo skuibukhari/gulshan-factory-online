@@ -1366,6 +1366,7 @@ async function renderDailyBoard(di) {
       </div>
       <div class="formgrid" style="margin-top:8px">
         <label>دکان وائز پرنٹ<br><select id="dPrintShop">
+          <option value="all">📦 تمام دکانیں (ہر دکان الگ پرنٹ)</option>
           ${tracker.shops.map(s => `<option value="${s.id}">🏪 ${esc(s.name)}${s.ordered ? ' ✅' : ''}</option>`).join('')}
         </select></label>
         <label><br><button class="btn small dark" onclick="printDailyShop()">🖨 دکان کی سلپ پرنٹ کریں</button></label>
