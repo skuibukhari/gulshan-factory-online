@@ -216,11 +216,12 @@ async function refreshCache() {
 // ---------- menu / views ----------
 const MENU = [
   ['dashboard', '📊 ڈیش بورڈ'], ['supply', '🗓 سپلائی کیلنڈر'], ['order', '🧾 نیا آرڈر'], ['orders', '📦 آرڈرز'],
+  ['daily', '📝 روزانہ آرڈر'],
   ['order_history', '🕘 آرڈر ہسٹری'], ['reports', '🖨 رپورٹس'],
   ['vehicles', '🚚 گاڑیاں'], ['routes', '🗺 روٹس و شیڈول'], ['cats', '🗂 کیٹیگریز'],
   ['units', '⚖ یونٹس'], ['products', '🍞 آئٹمز'], ['shops', '🏪 دکانیں'],
 ];
-const VIEW_SEC = { dashboard: 'dashboard', supply: 'routes', order: 'orders', orders: 'orders', order_history: 'order_history', reports: 'reports',
+const VIEW_SEC = { dashboard: 'dashboard', supply: 'routes', order: 'orders', orders: 'orders', daily: 'daily', order_history: 'order_history', reports: 'reports',
   vehicles: 'vehicles', routes: 'routes', cats: 'categories', units: 'units', products: 'products', shops: 'shops' };
 function viewAllowed(key) {
   const sec = VIEW_SEC[key];
@@ -254,7 +255,7 @@ function _showView(name) {
   document.querySelectorAll('.view').forEach(v => v.classList.remove('on'));
   const el = $('#v-' + (name === 'order_history' ? 'history' : name)); if (el) el.classList.add('on');
   document.querySelectorAll('#menuNav button').forEach(b => b.classList.toggle('active', b.dataset.view === name));
-  ({ dashboard: renderDashboard, supply: renderSupplyCalendar, order: renderOrderForm, orders: renderOrders, order_history: renderHistory,
+  ({ dashboard: renderDashboard, supply: renderSupplyCalendar, order: renderOrderForm, orders: renderOrders, daily: renderDaily, order_history: renderHistory,
      vehicles: () => renderMaster('vehicles'), routes: renderRoutes, cats: () => renderMaster('cats'),
      units: () => renderMaster('units'), products: renderProducts, shops: () => renderMaster('shops'),
      reports: renderReports }[name] || (() => {}))();
@@ -1105,7 +1106,7 @@ async function userEdit(id) {
   renderSettingsUsers();
 }
 const SEC_UR = { dashboard: 'ڈیش بورڈ', orders: 'آرڈرز', order_history: 'آرڈر ہسٹری', shops: 'دکانیں', products: 'آئٹمز',
-  categories: 'کیٹیگریز', units: 'یونٹس', vehicles: 'گاڑیاں', routes: 'روٹس', schedule: 'شیڈول', reports: 'رپورٹس', users: 'یوزرز' };
+  categories: 'کیٹیگریز', units: 'یونٹس', vehicles: 'گاڑیاں', routes: 'روٹس', schedule: 'شیڈول', reports: 'رپورٹس', users: 'یوزرز', daily: 'روزانہ آرڈر' };
 const LVL_UR = { none: '⛔ بند', view: '👁 صرف دیکھیں', full: '✅ مکمل اختیار' };
 async function renderSettingsAccess() {
   const users = (await api('GET', '/api/users')).filter(u => u.role !== 'super_admin');
@@ -1130,6 +1131,150 @@ async function savePerms() {
   document.querySelectorAll('#pa-matrix select').forEach(s => perms[s.dataset.sec] = s.value);
   await api('PUT', `/api/users/${uid}/permissions`, { permissions: perms });
   alert('رسائی محفوظ ہو گئی ✅');
+}
+
+// ==================== DAILY ORDERS (روزانہ آرڈر) — separate system ====================
+let DAILY_DATE = null, DAILY_CUTOFF = '20:00', DAILY_VIEW_DATE = null;
+
+async function renderDaily() {
+  const di = await api('GET', '/api/daily/date');
+  DAILY_DATE = di.order_date; DAILY_CUTOFF = di.cutoff_time;
+  if (ME.role === 'shop') return renderDailyShopForm(di);
+  return renderDailyBoard(di);
+}
+// countdown target = order_date se ek din pehle, cutoff time par
+function dailyCutDate(orderDate) {
+  const d = new Date(orderDate + 'T12:00:00');
+  d.setDate(d.getDate() - 1);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
+// ---------- shop: apna rozana order ----------
+async function renderDailyShopForm(di) {
+  const catalog = await api('GET', '/api/daily/catalog');
+  const myOrders = await api('GET', '/api/daily/orders?date=' + di.order_date);
+  const mine = myOrders[0] || null;
+  const qty = {};
+  (mine && mine.items || []).forEach(i => qty[i.product_id] = i.quantity);
+  const locked = di.cutoff_passed;
+  const catsHtml = catalog.map(c => {
+    if (!c.products.length) return '';
+    return `<div class="cathead">${esc(c.name)}</div>` + c.products.map(p =>
+      `<div class="prow"><span class="pn">${esc(p.name)}</span><span class="un">${esc(p.unit_name || '')}</span>
+       <input type="number" min="0" step="any" data-pid="${p.id}" value="${qty[p.id] || ''}" placeholder="0"${locked ? ' disabled' : ''}></div>`).join('');
+  }).join('');
+  $('#v-daily').innerHTML = `
+    <h2 class="st">📝 <span>روزانہ آرڈر</span></h2>
+    <div class="supbanner">📦 پیداوار: <b>${esc(di.order_date)}</b></div>
+    ${locked ? `<div class="lockbar">🔒 کٹ آف (${esc(di.cutoff_time)}) گزر چکا ہے — آرڈر بند ہے</div>` : `<div id="dCd"></div>`}
+    ${catsHtml || '<p class="note">کوئی آئٹم نہیں</p>'}
+    <div class="err" id="dErr"></div>
+    <button class="btn green" onclick="submitDailyOrder()"${locked ? ' disabled' : ''}>✅ آرڈر بھیجیں</button>
+    ${mine && !locked ? `<button class="btn small" style="background:#c62828;color:#fff" onclick="delDailyOrder(${mine.id})">🗑 آرڈر حذف کریں</button>` : ''}`;
+  if (!locked) startCountdown(dailyCutDate(di.order_date), di.cutoff_time, 'روزانہ آرڈر', 'dCd', { onDone: () => renderDaily() });
+}
+async function submitDailyOrder() {
+  const items = {};
+  document.querySelectorAll('#v-daily input[data-pid]').forEach(i => { const q = parseFloat(i.value) || 0; if (q > 0) items[i.dataset.pid] = q; });
+  try {
+    await api('POST', '/api/daily/orders', { order_date: DAILY_DATE, items });
+    alert('آرڈر بھیج دیا گیا ✅');
+    renderDaily();
+  } catch (e) { $('#dErr').textContent = 'خرابی: ' + e.message; }
+}
+async function delDailyOrder(id) {
+  if (!confirm('آرڈر حذف کریں؟')) return;
+  await api('DELETE', '/api/daily/orders/' + id);
+  renderDaily();
+}
+
+// ---------- board: viewer / supplier / factory / admin ----------
+async function renderDailyBoard(di) {
+  const isAdmin = ME.role === 'super_admin';
+  const date = DAILY_VIEW_DATE || di.order_date;
+  const [orders, totals] = await Promise.all([
+    api('GET', '/api/daily/orders?date=' + encodeURIComponent(date)),
+    api('GET', '/api/daily/totals?date=' + encodeURIComponent(date)),
+  ]);
+  const isCurrent = date === di.order_date;
+  let cur = null;
+  const totHtml = totals.map(t => {
+    const h = t.category_name !== cur ? `<div class="cathead">${esc(t.category_name || 'متفرق')}</div>` : '';
+    cur = t.category_name;
+    return h + `<div class="prow"><span class="pn">${esc(t.product_name)}</span><span class="un">${esc(t.unit_name || '')} · ${t.shop_count} دکان</span><b>${esc(t.total_qty)}</b></div>`;
+  }).join('');
+  const ordersHtml = orders.map(o => `
+    <div class="ocard">
+      <div class="ochead"><b>🏪 ${esc(o.shop_name)}</b>
+        <span><a class="btn small" target="_blank" href="/print?type=daily_shop&date=${esc(date)}&shop_id=${o.shop_id}">🖨 پرنٹ</a>
+        ${can('daily', 'full') ? `<button class="btn small" style="background:#c62828;color:#fff" onclick="delDailyOrderBoard(${o.id})">🗑</button>` : ''}</span>
+      </div>
+      ${(o.items || []).map(i => `<div class="prow"><span class="pn">${esc(i.product_name)} <small class="note">${esc(i.category_name || '')}</small></span><span class="un">${esc(i.unit_name || '')}</span><b>${esc(i.quantity)}</b></div>`).join('') || '<p class="note">کوئی آئٹم نہیں</p>'}
+      ${o.note ? `<div class="note">نوٹ: ${esc(o.note)}</div>` : ''}
+    </div>`).join('');
+  $('#v-daily').innerHTML = `
+    <h2 class="st">📝 <span>روزانہ آرڈر</span></h2>
+    <div class="formgrid">
+      <label>پیداوار کی تاریخ<br><input type="date" id="dDate" value="${esc(date)}" onchange="DAILY_VIEW_DATE=this.value;renderDaily()"></label>
+      <label><br><a class="btn small dark" target="_blank" href="/print?type=daily_total&date=${esc(date)}">🖨 کل پیداوار پرنٹ</a></label>
+      ${isAdmin ? `<label><br><button class="btn small" onclick="renderDailyAccess()">⚙ ایکسس سیٹنگ</button></label>` : ''}
+    </div>
+    ${isCurrent && !di.cutoff_passed ? `<div id="dCd"></div>` : ''}
+    ${isCurrent && di.cutoff_passed ? `<div class="lockbar">🔒 کٹ آف (${esc(di.cutoff_time)}) گزر چکا ہے</div>` : ''}
+    <h3 class="st">📋 کل پیداوار</h3>
+    ${totHtml || '<p class="note">کوئی آرڈر نہیں</p>'}
+    <h3 class="st">🏪 دکان وائز آرڈر (${orders.length})</h3>
+    <div class="ocards">${ordersHtml || '<p class="note">کوئی آرڈر نہیں</p>'}</div>`;
+  if (isCurrent && !di.cutoff_passed) startCountdown(dailyCutDate(di.order_date), di.cutoff_time, 'روزانہ آرڈر', 'dCd', { onDone: () => renderDaily() });
+}
+async function delDailyOrderBoard(id) {
+  if (!confirm('آرڈر حذف کریں؟')) return;
+  await api('DELETE', '/api/daily/orders/' + id);
+  renderDaily();
+}
+
+// ---------- admin: access settings ----------
+async function renderDailyAccess() {
+  const users = (await api('GET', '/api/users')).filter(u => u.role !== 'super_admin');
+  const [cats, shops] = await Promise.all([api('GET', '/api/categories'), api('GET', '/api/shops')]);
+  window._daCats = cats; window._daShops = shops;
+  $('#v-daily').innerHTML = `
+    <h2 class="st">⚙ <span>روزانہ آرڈر — یوزر ایکسس</span></h2>
+    <button class="btn small" onclick="DAILY_VIEW_DATE=null;renderDaily()">← واپس</button>
+    <div class="formgrid"><label>یوزر<br><select id="daUser" onchange="renderDailyAccessForm()">
+      <option value="">— منتخب کریں —</option>
+      ${users.map(u => `<option value="${u.id}">${esc(u.username)} (${esc(u.role)})</option>`).join('')}
+    </select></label></div>
+    <div id="daForm"></div>
+    <h3 class="st">⏰ روزانہ کٹ آف ٹائم</h3>
+    <div class="formgrid"><label>کٹ آف<br><input type="time" id="daCutoff" value="${esc(DAILY_CUTOFF)}"></label>
+    <label><br><button class="btn small" onclick="saveDailyCutoff()">💾 محفوظ کریں</button></label></div>
+    <p class="note">نوٹ: روزانہ آرڈر کی رسائی (بند / صرف دیکھیں / مکمل) یوزر مینجمنٹ → رسائی سے سیٹ کریں۔</p>`;
+}
+async function renderDailyAccessForm() {
+  const uid = $('#daUser').value; if (!uid) { $('#daForm').innerHTML = ''; return; }
+  const acc = await api('GET', `/api/daily/access/${uid}`);
+  const cats = window._daCats || [], shops = window._daShops || [];
+  $('#daForm').innerHTML = `
+    <h3 class="st">نظر آنے والی کیٹیگریز <small class="note">(خالی = تمام)</small></h3>
+    ${cats.map(c => `<label class="chk"><input type="checkbox" data-cat="${c.id}"${acc.categories.includes(c.id) ? ' checked' : ''}> ${esc(c.name)}</label>`).join('')}
+    <h3 class="st">دکانیں <small class="note">(خالی = تمام)</small></h3>
+    ${shops.map(s => `<label class="chk"><input type="checkbox" data-shop="${s.id}"${acc.shops.includes(s.id) ? ' checked' : ''}> ${esc(s.name)}</label>`).join('')}
+    <button class="btn green" onclick="saveDailyAccess()">💾 ایکسس محفوظ کریں</button>`;
+}
+async function saveDailyAccess() {
+  const uid = $('#daUser').value; if (!uid) return;
+  const categories = [...document.querySelectorAll('#daForm input[data-cat]:checked')].map(i => Number(i.dataset.cat));
+  const shops = [...document.querySelectorAll('#daForm input[data-shop]:checked')].map(i => Number(i.dataset.shop));
+  await api('PUT', `/api/daily/access/${uid}`, { categories, shops });
+  alert('ایکسس محفوظ ہو گیا ✅');
+}
+async function saveDailyCutoff() {
+  const t = $('#daCutoff').value;
+  if (!t) return;
+  const r = await api('PUT', '/api/daily/settings', { cutoff_time: t });
+  DAILY_CUTOFF = r.cutoff_time;
+  alert('کٹ آف ٹائم محفوظ ہو گیا ✅');
 }
 
 document.addEventListener('DOMContentLoaded', init);

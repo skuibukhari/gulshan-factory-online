@@ -120,11 +120,44 @@ try { db.exec(`ALTER TABLE users ADD COLUMN avatar TEXT DEFAULT ''`); } catch (e
 try { db.exec(`ALTER TABLE shops ADD COLUMN image TEXT DEFAULT ''`); } catch (e) {}
 try { db.exec(`ALTER TABLE routes ADD COLUMN open_time TEXT DEFAULT '10:00'`); } catch (e) {}
 
-const SECTIONS = ['dashboard','orders','order_history','shops','products','categories','units','vehicles','routes','schedule','reports','users'];
+// ---------- Daily Orders (روزانہ آرڈر) — separate system, does not touch existing order flow ----------
+db.exec(`CREATE TABLE IF NOT EXISTS daily_orders (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  shop_id INTEGER NOT NULL REFERENCES shops(id) ON DELETE CASCADE,
+  order_date TEXT NOT NULL,
+  note TEXT DEFAULT '',
+  created_by INTEGER REFERENCES users(id),
+  created_at INTEGER NOT NULL,
+  UNIQUE(shop_id, order_date)
+);
+CREATE TABLE IF NOT EXISTS daily_order_items (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  order_id INTEGER NOT NULL REFERENCES daily_orders(id) ON DELETE CASCADE,
+  product_id INTEGER NOT NULL REFERENCES products(id),
+  quantity REAL NOT NULL DEFAULT 0,
+  UNIQUE(order_id, product_id)
+);
+CREATE TABLE IF NOT EXISTS daily_settings (
+  key TEXT PRIMARY KEY,
+  value TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS daily_cat_access (
+  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  category_id INTEGER NOT NULL REFERENCES categories(id) ON DELETE CASCADE,
+  UNIQUE(user_id, category_id)
+);
+CREATE TABLE IF NOT EXISTS daily_shop_access (
+  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  shop_id INTEGER NOT NULL REFERENCES shops(id) ON DELETE CASCADE,
+  UNIQUE(user_id, shop_id)
+);`);
+db.prepare(`INSERT OR IGNORE INTO daily_settings (key, value) VALUES ('cutoff_time', '20:00')`).run();
+
+const SECTIONS = ['dashboard','orders','order_history','shops','products','categories','units','vehicles','routes','schedule','reports','users','daily'];
 
 const DEFAULT_PERMS = {
-  factory: { dashboard:'full', orders:'full', order_history:'full', shops:'view', products:'view', categories:'view', units:'view', vehicles:'view', routes:'view', schedule:'full', reports:'full', users:'none' },
-  shop:    { dashboard:'view', orders:'full', order_history:'view', shops:'none', products:'none', categories:'none', units:'none', vehicles:'none', routes:'none', schedule:'view', reports:'none', users:'none' },
+  factory: { dashboard:'full', orders:'full', order_history:'full', shops:'view', products:'view', categories:'view', units:'view', vehicles:'view', routes:'view', schedule:'full', reports:'full', users:'none', daily:'full' },
+  shop:    { dashboard:'view', orders:'full', order_history:'view', shops:'none', products:'none', categories:'none', units:'none', vehicles:'none', routes:'none', schedule:'view', reports:'none', users:'none', daily:'full' },
 };
 
 function seedPermissions(userId, role) {
@@ -137,6 +170,12 @@ function getPermissions(userId) {
   const p = {};
   for (const s of SECTIONS) p[s] = 'none';
   for (const r of rows) p[r.section] = r.level;
+  // 'daily' is new: users created before it existed have no row — fall back to role default
+  // (existing saved settings are never overwritten)
+  if (!rows.some(r => r.section === 'daily')) {
+    const role = (db.prepare('SELECT role FROM users WHERE id=?').get(userId) || {}).role;
+    p.daily = (DEFAULT_PERMS[role] || {}).daily || 'none';
+  }
   return p;
 }
 
@@ -720,6 +759,165 @@ app.delete('/api/supply-days/:id', requireLogin, requireSection('routes', 'full'
   res.json({ ok: true, moved: n });
 });
 
+// ==================== DAILY ORDERS (روزانہ آرڈر) ====================
+function dailyCutoffTime() {
+  return (db.prepare(`SELECT value FROM daily_settings WHERE key='cutoff_time'`).get() || {}).value || '20:00';
+}
+function khiNow() { return new Date(Date.now() + 5 * 3600e3); } // Karachi wall-clock via UTC fields
+function dailyCutoffParts() {
+  const [h, m] = dailyCutoffTime().split(':').map(Number);
+  return { h: Number.isFinite(h) ? h : 20, m: Number.isFinite(m) ? m : 0 };
+}
+// Production date shops order for: tomorrow if before today's cutoff, else day after tomorrow
+function dailyOrderDate() {
+  const now = khiNow();
+  const { h, m } = dailyCutoffParts();
+  const cut = new Date(now); cut.setUTCHours(h, m, 0, 0);
+  const d = new Date(now);
+  d.setUTCDate(d.getUTCDate() + (now < cut ? 1 : 2));
+  return d.toISOString().slice(0, 10);
+}
+function dailyCutoffPassed() {
+  const now = khiNow();
+  const { h, m } = dailyCutoffParts();
+  const cut = new Date(now); cut.setUTCHours(h, m, 0, 0);
+  return now >= cut;
+}
+// Scope: shop users -> own shop; viewers/suppliers -> configured categories/shops; admin -> all
+function dailyScope(req) {
+  const u = req.user;
+  if (u.role === 'super_admin') return { shopId: null, catIds: null, shopIds: null };
+  const shopId = scopedShopId(req);
+  const catRows = db.prepare('SELECT category_id FROM daily_cat_access WHERE user_id=?').all(u.id);
+  const shopRows = db.prepare('SELECT shop_id FROM daily_shop_access WHERE user_id=?').all(u.id);
+  return {
+    shopId,
+    catIds: catRows.length ? catRows.map(r => r.category_id) : null,
+    shopIds: (!shopId && shopRows.length) ? shopRows.map(r => r.shop_id) : null,
+  };
+}
+function dailyShopFilter(sc, alias) {
+  if (sc.shopId) return { clause: ` AND ${alias}.shop_id=?`, args: [sc.shopId] };
+  if (sc.shopIds) return { clause: ` AND ${alias}.shop_id IN (${sc.shopIds.map(() => '?').join(',')})`, args: [...sc.shopIds] };
+  return { clause: '', args: [] };
+}
+
+app.get('/api/daily/date', requireLogin, requireSection('daily', 'view'), (req, res) => {
+  res.json({ order_date: dailyOrderDate(), cutoff_time: dailyCutoffTime(), cutoff_passed: dailyCutoffPassed() });
+});
+
+app.get('/api/daily/catalog', requireLogin, requireSection('daily', 'view'), (req, res) => {
+  const cats = db.prepare('SELECT id, name FROM categories ORDER BY name').all();
+  const prods = db.prepare(`SELECT p.id, p.name, p.category_id, u.name AS unit_name
+    FROM products p LEFT JOIN units u ON u.id=p.unit_id ORDER BY p.name`).all();
+  res.json(cats.map(c => ({ ...c, products: prods.filter(p => p.category_id === c.id) })));
+});
+
+app.get('/api/daily/orders', requireLogin, requireSection('daily', 'view'), (req, res) => {
+  const sc = dailyScope(req);
+  const date = req.query.date || dailyOrderDate();
+  const sf = dailyShopFilter(sc, 'do');
+  const orders = db.prepare(`SELECT do.id, do.shop_id, do.order_date, do.note, s.name AS shop_name,
+      u.username AS created_by FROM daily_orders do
+    JOIN shops s ON s.id=do.shop_id LEFT JOIN users u ON u.id=do.created_by
+    WHERE do.order_date=?${sf.clause} ORDER BY s.name`).all(date, ...sf.args);
+  const itemQ = sc.catIds
+    ? db.prepare(`SELECT di.order_id, di.product_id, di.quantity, p.name AS product_name, p.category_id,
+        c.name AS category_name, un.name AS unit_name FROM daily_order_items di
+      JOIN products p ON p.id=di.product_id LEFT JOIN categories c ON c.id=p.category_id
+      LEFT JOIN units un ON un.id=p.unit_id
+      WHERE di.order_id=? AND p.category_id IN (${sc.catIds.map(() => '?').join(',')}) ORDER BY c.name, p.name`)
+    : db.prepare(`SELECT di.order_id, di.product_id, di.quantity, p.name AS product_name, p.category_id,
+        c.name AS category_name, un.name AS unit_name FROM daily_order_items di
+      JOIN products p ON p.id=di.product_id LEFT JOIN categories c ON c.id=p.category_id
+      LEFT JOIN units un ON un.id=p.unit_id WHERE di.order_id=? ORDER BY c.name, p.name`);
+  res.json(orders.map(o => ({ ...o, items: sc.catIds ? itemQ.all(o.id, ...sc.catIds) : itemQ.all(o.id) })));
+});
+
+app.post('/api/daily/orders', requireLogin, requireSection('daily', 'full'), (req, res) => {
+  const sc = dailyScope(req);
+  const b = req.body || {};
+  const order_date = b.order_date || dailyOrderDate();
+  const shop_id = sc.shopId || Number(b.shop_id) || 0;
+  if (!shop_id) return res.status(400).json({ error: 'shop_required' });
+  if (!db.prepare('SELECT id FROM shops WHERE id=?').get(shop_id)) return res.status(400).json({ error: 'bad_shop' });
+  if (sc.shopId && order_date === dailyOrderDate() && dailyCutoffPassed())
+    return res.status(400).json({ error: 'cutoff_passed' });
+  const items = b.items || {};
+  const now = Date.now();
+  let order = db.prepare('SELECT id FROM daily_orders WHERE shop_id=? AND order_date=?').get(shop_id, order_date);
+  if (!order) {
+    const r = db.prepare('INSERT INTO daily_orders (shop_id, order_date, note, created_by, created_at) VALUES (?,?,?,?,?)')
+      .run(shop_id, order_date, b.note || '', req.user.id, now);
+    order = { id: r.lastInsertRowid };
+  } else {
+    db.prepare('UPDATE daily_orders SET note=?, created_by=? WHERE id=?').run(b.note || '', req.user.id, order.id);
+    db.prepare('DELETE FROM daily_order_items WHERE order_id=?').run(order.id);
+  }
+  const ins = db.prepare('INSERT INTO daily_order_items (order_id, product_id, quantity) VALUES (?,?,?)');
+  const prodExists = db.prepare('SELECT 1 FROM products WHERE id=?');
+  for (const [pid, q] of Object.entries(items)) {
+    const qty = Number(q) || 0;
+    if (qty > 0 && Number(pid) > 0 && prodExists.get(Number(pid))) ins.run(order.id, Number(pid), qty);
+  }
+  res.json({ ok: true, id: order.id });
+});
+
+app.delete('/api/daily/orders/:id', requireLogin, requireSection('daily', 'full'), (req, res) => {
+  const sc = dailyScope(req);
+  const o = db.prepare('SELECT * FROM daily_orders WHERE id=?').get(req.params.id);
+  if (!o) return res.status(404).json({ error: 'not_found' });
+  if (sc.shopId && o.shop_id !== sc.shopId) return res.status(403).json({ error: 'forbidden' });
+  if (sc.shopId && o.order_date === dailyOrderDate() && dailyCutoffPassed())
+    return res.status(400).json({ error: 'cutoff_passed' });
+  db.prepare('DELETE FROM daily_orders WHERE id=?').run(o.id);
+  res.json({ ok: true });
+});
+
+app.get('/api/daily/totals', requireLogin, requireSection('daily', 'view'), (req, res) => {
+  const sc = dailyScope(req);
+  const date = req.query.date || dailyOrderDate();
+  const sf = dailyShopFilter(sc, 'do');
+  let sql = `SELECT p.id AS product_id, p.name AS product_name, p.category_id, c.name AS category_name,
+      un.name AS unit_name, SUM(di.quantity) AS total_qty, COUNT(DISTINCT do.shop_id) AS shop_count
+    FROM daily_order_items di JOIN daily_orders do ON do.id=di.order_id
+    JOIN products p ON p.id=di.product_id
+    LEFT JOIN categories c ON c.id=p.category_id LEFT JOIN units un ON un.id=p.unit_id
+    WHERE do.order_date=?${sf.clause}`;
+  const args = [date, ...sf.args];
+  if (sc.catIds) { sql += ` AND p.category_id IN (${sc.catIds.map(() => '?').join(',')})`; args.push(...sc.catIds); }
+  sql += ' GROUP BY p.id ORDER BY c.name, p.name';
+  res.json(db.prepare(sql).all(...args));
+});
+
+app.get('/api/daily/access/:uid', requireLogin, isAdmin, (req, res) => {
+  const uid = Number(req.params.uid);
+  res.json({
+    categories: db.prepare('SELECT category_id FROM daily_cat_access WHERE user_id=?').all(uid).map(r => r.category_id),
+    shops: db.prepare('SELECT shop_id FROM daily_shop_access WHERE user_id=?').all(uid).map(r => r.shop_id),
+  });
+});
+app.put('/api/daily/access/:uid', requireLogin, isAdmin, (req, res) => {
+  const uid = Number(req.params.uid);
+  const b = req.body || {};
+  db.transaction(() => {
+    db.prepare('DELETE FROM daily_cat_access WHERE user_id=?').run(uid);
+    db.prepare('DELETE FROM daily_shop_access WHERE user_id=?').run(uid);
+    const ic = db.prepare('INSERT OR IGNORE INTO daily_cat_access (user_id, category_id) VALUES (?,?)');
+    const is = db.prepare('INSERT OR IGNORE INTO daily_shop_access (user_id, shop_id) VALUES (?,?)');
+    for (const c of (b.categories || [])) ic.run(uid, Number(c));
+    for (const s of (b.shops || [])) is.run(uid, Number(s));
+  })();
+  res.json({ ok: true });
+});
+app.put('/api/daily/settings', requireLogin, isAdmin, (req, res) => {
+  const ct = String((req.body || {}).cutoff_time || '').trim();
+  if (!/^\d{2}:\d{2}$/.test(ct)) return res.status(400).json({ error: 'bad_time' });
+  db.prepare(`INSERT INTO daily_settings (key, value) VALUES ('cutoff_time', ?)
+    ON CONFLICT(key) DO UPDATE SET value=excluded.value`).run(ct);
+  res.json({ ok: true, cutoff_time: ct });
+});
+
 // ---------- Generic CRUD helper ----------
 function cleanVals(table_cols, body) {
   return table_cols.map(c => {
@@ -1087,6 +1285,62 @@ ${head('دکان وائز آرڈر ہسٹری', shop.name)}${body || '<p>کوئ�
     }).join('');
     return res.send(`<!DOCTYPE html><html lang="ur" dir="rtl"><head><meta charset="utf-8"><title>آرڈر ہسٹری — ${esc(date)}</title>${css}</head><body>
 ${head('تاریخ وائز آرڈر ہسٹری', 'تاریخ: ' + date)}${body || '<p>کوئی آرڈر نہیں</p>'}${printBtn}</body></html>`);
+  }
+  // ---------- DAILY: total production sheet (category-wise, scoped) ----------
+  if (type === 'daily_total') {
+    if (!can(req.user, 'daily', 'view')) return res.status(403).send('forbidden');
+    const sc = dailyScope(req);
+    const ddate = date || dailyOrderDate();
+    const sf = dailyShopFilter(sc, 'do');
+    let sql = `SELECT p.name AS product_name, c.name AS category_name, u.name AS unit_name,
+        SUM(di.quantity) AS total_qty, COUNT(DISTINCT do.shop_id) AS shop_count
+      FROM daily_order_items di JOIN daily_orders do ON do.id=di.order_id
+      JOIN products p ON p.id=di.product_id
+      LEFT JOIN categories c ON c.id=p.category_id LEFT JOIN units u ON u.id=p.unit_id
+      WHERE do.order_date=?${sf.clause}`;
+    const args = [ddate, ...sf.args];
+    if (sc.catIds) { sql += ` AND p.category_id IN (${sc.catIds.map(() => '?').join(',')})`; args.push(...sc.catIds); }
+    sql += ' GROUP BY p.id ORDER BY c.name, p.name';
+    const rows = db.prepare(sql).all(...args);
+    let cur = null, body = '';
+    rows.forEach(r => {
+      if (r.category_name !== cur) {
+        if (cur !== null) body += '</table>';
+        cur = r.category_name;
+        body += `<div class="hshop">🗂 ${esc(cur || 'متفرق')}</div><table><tr><th style="width:40px">#</th><th>آئٹم</th><th>کل مقدار</th><th>دکانیں</th></tr>`;
+      }
+      body += `<tr><td></td><td>${esc(r.product_name)}</td><td><b>${esc(r.total_qty)} ${esc(r.unit_name || '')}</b></td><td>${esc(r.shop_count)}</td></tr>`;
+    });
+    if (cur !== null) body += '</table>';
+    return res.send(`<!DOCTYPE html><html lang="ur" dir="rtl"><head><meta charset="utf-8"><title>روزانہ کل پیداوار — ${esc(ddate)}</title>${css}</head><body>
+${head('روزانہ آرڈر — کل پیداوار', 'پیداوار کی تاریخ: ' + ddate)}${body || '<p>کوئی آرڈر نہیں</p>'}${printBtn}</body></html>`);
+  }
+  // ---------- DAILY: per-shop slip ----------
+  if (type === 'daily_shop') {
+    if (!can(req.user, 'daily', 'view')) return res.status(403).send('forbidden');
+    const sc = dailyScope(req);
+    const ddate = date || dailyOrderDate();
+    const sid = sc.shopId || Number(shop_id) || 0;
+    if (!sid) return res.status(400).send('shop_required');
+    if (sc.shopIds && !sc.shopIds.includes(sid)) return res.status(403).send('forbidden');
+    const shop = db.prepare('SELECT name FROM shops WHERE id=?').get(sid);
+    if (!shop) return res.status(404).send('shop_not_found');
+    const o = db.prepare('SELECT id, note FROM daily_orders WHERE shop_id=? AND order_date=?').get(sid, ddate);
+    const dItems = db.prepare(`SELECT p.name AS product_name, u.name AS unit_name, di.quantity, c.name AS category_name
+      FROM daily_order_items di JOIN products p ON p.id=di.product_id
+      LEFT JOIN units u ON u.id=p.unit_id LEFT JOIN categories c ON c.id=p.category_id
+      WHERE di.order_id=?${sc.catIds ? ` AND p.category_id IN (${sc.catIds.map(() => '?').join(',')})` : ''}
+      ORDER BY c.name, p.name`);
+    const its = o ? dItems.all(o.id, ...(sc.catIds || [])) : [];
+    const rows = its.map((it, i) => `<tr><td>${i + 1}</td><td>${esc(it.product_name)} <span style="color:#888">(${esc(it.category_name || '')})</span></td><td><b>${esc(it.quantity)} ${esc(it.unit_name || '')}</b></td><td style="width:70px">☐</td></tr>`).join('')
+      || '<tr><td colspan=4>کوئی آئٹم نہیں</td></tr>';
+    const slip = `<div class="slip">${head('روزانہ آرڈر سلپ', 'پیداوار: ' + ddate)}
+      <h2 class="shopname">${esc(shop.name)}</h2>
+      <div class="smeta">پیداوار کی تاریخ: ${esc(ddate)}</div>
+      <table><tr><th>#</th><th>آئٹم</th><th>مقدار</th><th>پیک ✓</th></tr>${rows}</table>
+      ${o && o.note ? `<div class="note">نوٹ: ${esc(o.note)}</div>` : ''}
+      <div class="sig"><div>فیکٹری (دستخط)</div><div>وصول کنندہ (دستخط)</div></div></div>`;
+    return res.send(`<!DOCTYPE html><html lang="ur" dir="rtl"><head><meta charset="utf-8"><title>روزانہ سلپ — ${esc(shop.name)}</title>${css}</head><body>${slip}${printBtn}</body></html>`);
   }
   const mode = type === 'shops' ? 'shops' : 'totals';
   let f = 'WHERE 1=1'; const args = [];

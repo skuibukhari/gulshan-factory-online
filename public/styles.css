@@ -236,6 +236,8 @@ button[disabled]{opacity:.45}
 .cbo{font-size:11px}
 .caldetail{background:var(--card);border:1px solid var(--border);border-radius:16px;padding:14px;margin-top:12px;box-shadow:0 3px 10px rgba(0,0,0,.06)}
 .supbanner{background:#e8f5e9;border:1px solid #2e7d32;border-radius:14px;padding:10px 14px;margin-bottom:10px;font-size:16px}
+.chk{display:flex;align-items:center;gap:10px;background:var(--card);border:1px solid var(--border);border-radius:10px;padding:8px 14px;margin:6px 0;cursor:pointer}
+.chk input{width:20px;height:20px;accent-color:var(--orange)}
 .obadge{background:#e8721c;color:#fff;border-radius:12px;padding:1px 10px;font-size:12px;font-weight:700;white-space:nowrap}
 [data-theme="dark"] .cald.sup{background:#1d3325}
 [data-theme="dark"] .supbanner{background:#1d3325}
