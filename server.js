@@ -1538,7 +1538,7 @@ ${head('تاریخ وائز آرڈر ہسٹری', 'تاریخ: ' + date)}${body 
     const dstr = fmtD(ddate);
     return order.map(cn => {
       const trs = cats[cn].map((r, i) =>
-        `<tr><td class="num">${i + 1}</td><td class="name">${esc(r.product_name)}</td><td class="total">${r.total_qty ? esc(r.total_qty) : ''}</td></tr>`).join('');
+        `<tr><td class="num">${i + 1}</td><td class="name">${esc(r.product_name)}</td><td class="total"></td></tr>`).join('');
       return `<div class="cat-block"><div class="cat-head">${esc(cn)} — ${dstr}</div>
         <table><tr><th class="num-h">#S</th><th>ALL PARTIES</th><th class="total-h">TOTAL</th></tr>${trs}</table></div>`;
     }).join('');
