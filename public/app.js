@@ -1386,6 +1386,7 @@ async function renderDailyCats() {
   $('#v-daily').innerHTML = `
     <h2 class="st">🗂 <span>روزانہ کیٹیگریز</span></h2>
     <button class="btn small" onclick="renderDailyData()">← واپس</button>
+    <button class="btn small dark" onclick="openDailyImport('categories')">📥 سپلائی سے منتخب کریں</button>
     <div class="formgrid"><label>نئی کیٹیگری<br><input id="dc-name" placeholder="مثلاً Dry Cake"></label>
     <label><br><button class="btn small green" onclick="dailyCatAdd()">➕ شامل کریں</button></label></div>
     <table><tr><th>نام</th><th>حالت</th><th></th></tr>
@@ -1406,6 +1407,7 @@ async function renderDailyUnits() {
   $('#v-daily').innerHTML = `
     <h2 class="st">⚖ <span>روزانہ یونٹس</span></h2>
     <button class="btn small" onclick="renderDailyData()">← واپس</button>
+    <button class="btn small dark" onclick="openDailyImport('units')">📥 سپلائی سے منتخب کریں</button>
     <div class="formgrid"><label>نیا یونٹ<br><input id="du-name" placeholder="مثلاً پیکٹ"></label>
     <label><br><button class="btn small green" onclick="dailyUnitAdd()">➕ شامل کریں</button></label></div>
     <table><tr><th>نام</th><th></th></tr>
@@ -1428,6 +1430,7 @@ async function renderDailyProducts() {
   $('#v-daily').innerHTML = `
     <h2 class="st">🍞 <span>روزانہ آئٹمز</span></h2>
     <button class="btn small" onclick="renderDailyData()">← واپس</button>
+    <button class="btn small dark" onclick="openDailyImport('products')">📥 سپلائی سے منتخب کریں</button>
     <div class="formgrid">
       <label>کیٹیگری<br><select id="dp-cat">${cats.filter(c => c.active).map(c => `<option value="${c.id}">${esc(c.name)}</option>`).join('')}</select></label>
       <label>آئٹم کا نام<br><input id="dp-name" placeholder="مثلاً Milky Bread"></label>
@@ -1455,6 +1458,7 @@ async function renderDailyShops() {
   $('#v-daily').innerHTML = `
     <h2 class="st">🏪 <span>روزانہ دکانیں</span></h2>
     <button class="btn small" onclick="renderDailyData()">← واپس</button>
+    <button class="btn small dark" onclick="openDailyImport('shops')">📥 سپلائی سے منتخب کریں</button>
     <div class="formgrid">
       <label>دکان کا نام<br><input id="ds-name" placeholder="مثلاً Mega Gulshan"></label>
       <label>فون<br><input id="ds-phone" dir="ltr"></label>
@@ -1471,6 +1475,36 @@ async function dailyShopAdd() {
   const name = $('#ds-name').value.trim(); if (!name) return;
   await api('POST', '/api/daily-shops', { name, phone: $('#ds-phone').value.trim(), address: $('#ds-address').value.trim() });
   renderDailyShops();
+}
+// ---------- Daily: supply se select karke import ----------
+const DIMPORT_CONF = {
+  categories: { title: '🗂 سپلائی کیٹیگریز سے منتخب کریں', api: 'categories', back: 'renderDailyCats', label: c => c.name },
+  units: { title: '⚖ سپلائی یونٹس سے منتخب کریں', api: 'units', back: 'renderDailyUnits', label: u => u.name },
+  products: { title: '🍞 سپلائی آئٹمز سے منتخب کریں', api: 'products', back: 'renderDailyProducts', label: p => `${p.name} (${p.category_name || ''} · ${p.unit_name || ''})` },
+  shops: { title: '🏪 سپلائی دکانوں سے منتخب کریں', api: 'shops', back: 'renderDailyShops', label: s => s.name },
+};
+async function openDailyImport(kind) {
+  const conf = DIMPORT_CONF[kind];
+  const [supply, existing] = await Promise.all([
+    api('GET', '/api/' + conf.api),
+    api('GET', '/api/daily-' + kind),
+  ]);
+  const has = new Set(existing.map(x => x.id));
+  const fresh = supply.filter(x => !has.has(x.id));
+  $('#v-daily').innerHTML = `
+    <h2 class="st">${conf.title}</h2>
+    <button class="btn small" onclick="${conf.back}()">← واپس</button>
+    ${fresh.length ? `<p class="note">${fresh.length} نئے دستیاب ہیں — ٹک کریں اور لے آئیں:</p>
+    ${fresh.map(x => `<label class="chk"><input type="checkbox" data-iid="${x.id}"> ${esc(conf.label(x))}</label>`).join('')}
+    <br><button class="btn green" onclick="doDailyImport('${kind}')">📥 منتخب لے آئیں</button>`
+    : '<p class="note">سب پہلے سے روزانہ میں موجود ہیں ✅</p>'}`;
+}
+async function doDailyImport(kind) {
+  const ids = [...document.querySelectorAll('#v-daily input[data-iid]:checked')].map(i => Number(i.dataset.iid));
+  if (!ids.length) { alert('کچھ منتخب کریں'); return; }
+  await api('POST', '/api/daily/import/' + kind, { ids });
+  alert('لے آئے ✅');
+  renderDailyData();
 }
 async function dailyShopDel(id) { if (!confirm('حذف کریں؟')) return; await api('DELETE', '/api/daily-shops/' + id); renderDailyShops(); }
 async function dailyShopEdit(id) {

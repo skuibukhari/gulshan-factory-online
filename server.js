@@ -1089,6 +1089,30 @@ app.delete('/api/daily-products/:id', requireLogin, requireSection('daily', 'ful
   db.prepare('DELETE FROM daily_products WHERE id=?').run(req.params.id);
   res.json({ ok: true });
 });
+// ---------- Daily: supply se select karke import (dobara type nahi karna) ----------
+app.post('/api/daily/import/:kind', requireLogin, requireSection('daily', 'full'), (req, res) => {
+  const kind = req.params.kind;
+  const ids = ((req.body || {}).ids || []).map(Number).filter(n => n > 0);
+  if (!ids.length) return res.status(400).json({ error: 'no_ids' });
+  if (!['categories', 'units', 'products', 'shops'].includes(kind)) return res.status(400).json({ error: 'bad_kind' });
+  const ph = ids.map(() => '?').join(',');
+  db.transaction(() => {
+    if (kind === 'categories') {
+      db.prepare(`INSERT OR IGNORE INTO daily_categories (id, name) SELECT id, name FROM categories WHERE id IN (${ph})`).run(...ids);
+    } else if (kind === 'units') {
+      db.prepare(`INSERT OR IGNORE INTO daily_units (id, name) SELECT id, name FROM units WHERE id IN (${ph})`).run(...ids);
+    } else if (kind === 'products') {
+      // pehle unki categories/units bhi le aao taake link na toote
+      db.prepare(`INSERT OR IGNORE INTO daily_categories (id, name) SELECT id, name FROM categories WHERE id IN (SELECT category_id FROM products WHERE id IN (${ph}))`).run(...ids);
+      db.prepare(`INSERT OR IGNORE INTO daily_units (id, name) SELECT id, name FROM units WHERE id IN (SELECT unit_id FROM products WHERE id IN (${ph}))`).run(...ids);
+      db.prepare(`INSERT OR IGNORE INTO daily_products (id, name, category_id, unit_id) SELECT id, name, category_id, unit_id FROM products WHERE id IN (${ph})`).run(...ids);
+    } else if (kind === 'shops') {
+      db.prepare(`INSERT OR IGNORE INTO daily_shops (id, name, phone, address, image, active)
+        SELECT id, name, phone, address, image, active FROM shops WHERE id IN (${ph})`).run(...ids);
+    }
+  })();
+  res.json({ ok: true });
+});
 app.get('/api/products', requireLogin, requireSection('products', 'view'), (req, res) => {
   res.json(db.prepare(`SELECT p.*, c.name AS category_name, u.name AS unit_name
     FROM products p LEFT JOIN categories c ON c.id=p.category_id LEFT JOIN units u ON u.id=p.unit_id
