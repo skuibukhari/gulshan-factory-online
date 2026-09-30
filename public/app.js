@@ -1236,18 +1236,18 @@ async function renderDailyShopForm(di) {
   }).join('');
   $('#v-daily').innerHTML = `
     <h2 class="st">📝 <span>روزانہ آرڈر</span></h2>
-    <div class="supcard">
-      <div class="suphead">🖨 <b>پرنٹس</b></div>
-      <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px">
-        <a class="btn small dark" target="_blank" href="/print?type=daily_total&date=${esc(date)}">📋 آئٹم وائز کل (تمام دکانیں)</a>
-        <a class="btn small dark" target="_blank" href="/print?type=daily_all&date=${esc(date)}">📦 سب کچھ (کل + تمام دکانوں کی سلپس)</a>
+    <div class="supcard" style="border:2px solid #e8721c">
+      <div class="suphead" style="font-size:18px">🖨 <b>پرنٹ آپشنز</b></div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:10px">
+        <a class="btn dark" style="padding:14px;font-size:15px;text-align:center" target="_blank" href="/print?type=daily_total&date=${esc(date)}">📋<br>آئٹم وائز کل<br><small>تمام دکانوں کا ٹوٹل</small></a>
+        <a class="btn dark" style="padding:14px;font-size:15px;text-align:center" target="_blank" href="/print?type=daily_all&date=${esc(date)}">📦<br>تمام دکانیں<br><small>ہر دکان الگ پیج</small></a>
       </div>
-      <div class="formgrid" style="margin-top:8px">
-        <label>دکان وائز پرنٹ<br><select id="dPrintShop">
-          <option value="all">📦 تمام دکانیں (ہر دکان الگ پرنٹ)</option>
+      <div class="formgrid" style="margin-top:10px">
+        <label style="font-size:15px"><b>🏪 دکان منتخب کریں</b><br><select id="dPrintShop" style="font-size:15px;padding:10px">
+          <option value="">-- دکان چنیں --</option>
           ${tracker.shops.map(s => `<option value="${s.id}">🏪 ${esc(s.name)}${s.ordered ? ' ✅' : ''}</option>`).join('')}
         </select></label>
-        <label><br><button class="btn small dark" onclick="printDailyShop()">🖨 دکان کی سلپ پرنٹ کریں</button></label>
+        <label><br><button class="btn dark" style="padding:12px 20px;font-size:15px" onclick="printDailyShop()">🖨 منتخب دکان پرنٹ کریں</button></label>
       </div>
     </div>
     <div class="supbanner">📦 پیداوار: <b>${esc(di.order_date)}</b></div>
