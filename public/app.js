@@ -3,6 +3,11 @@
 if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').catch(() => {});
 const $ = s => document.querySelector(s);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+// mouse wheel se number input ki value na badle — sirf type karne se
+document.addEventListener('wheel', () => {
+  const a = document.activeElement;
+  if (a && a.tagName === 'INPUT' && a.type === 'number') a.blur();
+}, { passive: true });
 
 // ---------- theme: auto (system) / light / dark ----------
 const THEME_META = { auto: ['🖥️', 'تھیم: خودکار (سسٹم)'], light: ['☀️', 'تھیم: لائٹ'], dark: ['🌙', 'تھیم: ڈارک'] };
@@ -1323,7 +1328,7 @@ async function renderDailyBoard(di) {
       ${menuCats.map(c => `
         <div style="margin:10px 0">
           <div class="cathead">🗂 ${esc(c.name)}</div>
-          ${c.products.map(p => `<div class="prow"><span class="pn">${esc(p.name)}</span><span class="un">${esc(p.unit_name || '')}</span></div>`).join('')}
+          ${c.products.map(p => `<div class="prow"><span class="pn">${esc(p.name)}</span></div>`).join('')}
         </div>`).join('') || '<p class="note">⚠️ کوئی آئٹم منتخب نہیں — 📦 روزانہ ڈیٹا سے شامل کریں</p>'}
       <div class="cathead">🏪 دکانیں</div>
       ${tracker.shops.length ? `<p>${tracker.shops.map(s => `🏪 ${esc(s.name)}`).join(' ، ')}</p>` : '<p class="note">⚠️ کوئی دکان منتخب نہیں — 📦 روزانہ ڈیٹا سے شامل کریں</p>'}
@@ -1334,7 +1339,7 @@ async function renderDailyBoard(di) {
   const totHtml = Object.entries(cats).map(([cn, items]) => `
     <div class="ocard" style="margin-bottom:12px">
       <div class="ochead"><b>🗂 ${esc(cn)}</b><span class="obadge">${items.length} آئٹم</span></div>
-      ${items.map(t => `<div class="prow"><span class="pn">${esc(t.product_name)}</span><span class="un">${esc(t.unit_name || '')} · ${t.shop_count} دکان</span><b style="font-size:18px">${esc(t.total_qty)}</b></div>`).join('')}
+      ${items.map(t => `<div class="prow"><span class="pn">${esc(t.product_name)}</span><span class="un">${t.shop_count} دکان</span><b style="font-size:18px">${esc(t.total_qty)}</b></div>`).join('')}
     </div>`).join('');
   const shopF = DAILY_SHOP_FILTER;
   const ordersHtml = orders.filter(o => !shopF || String(o.shop_id) === shopF).map(o => `
@@ -1343,7 +1348,7 @@ async function renderDailyBoard(di) {
         <span><a class="btn small" target="_blank" href="/print?type=daily_shop&date=${esc(date)}&shop_id=${o.shop_id}">🖨 پرنٹ</a>
         ${can('daily', 'full') ? `<button class="btn small" style="background:#c62828;color:#fff" onclick="delDailyOrderBoard(${o.id})">🗑</button>` : ''}</span>
       </div>
-      ${(o.items || []).map(i => `<div class="prow"><span class="pn">${esc(i.product_name)} <small class="note">${esc(i.category_name || '')}</small></span><span class="un">${esc(i.unit_name || '')}</span><b>${esc(i.quantity)}</b></div>`).join('') || '<p class="note">کوئی آئٹم نہیں</p>'}
+      ${(o.items || []).map(i => `<div class="prow"><span class="pn">${esc(i.product_name)} <small class="note">${esc(i.category_name || '')}</small></span><b>${esc(i.quantity)}</b></div>`).join('') || '<p class="note">کوئی آئٹم نہیں</p>'}
       ${o.note ? `<div class="note">نوٹ: ${esc(o.note)}</div>` : ''}
     </div>`).join('');
   $('#v-daily').innerHTML = `
@@ -1433,7 +1438,7 @@ async function renderDailyShopItems() {
   $('#daShopForm').innerHTML = catalog.map(c => {
     if (!c.products.length) return '';
     return `<div class="cathead">${esc(c.name)}</div>` + c.products.map(p =>
-      `<label class="chk"><input type="checkbox" data-pid="${p.id}"${useAll || has.has(p.id) ? ' checked' : ''}> ${esc(p.name)} <small class="note">${esc(p.unit_name || '')}</small></label>`).join('');
+      `<label class="chk"><input type="checkbox" data-pid="${p.id}"${useAll || has.has(p.id) ? ' checked' : ''}> ${esc(p.name)}</label>`).join('');
   }).join('') + `<button class="btn green" onclick="saveDailyShopItems()">💾 آئٹمز محفوظ کریں</button>
   <p class="note">سب اَن ٹک کر کے محفوظ کریں = تمام آئٹم نظر آئیں گے</p>`;
 }
@@ -1523,7 +1528,7 @@ async function renderDailyProducts() {
     if (da && db) return (inD.get(a.id).sort_order || 0) - (inD.get(b.id).sort_order || 0);
     return a.name.localeCompare(b.name);
   });
-  const rows = sorted.map(p => `<tr><td>${esc(p.category_name || '—')}</td><td>${esc(p.name)}</td><td>${esc(p.unit_name || '—')}</td><td style="text-align:center">
+  const rows = sorted.map(p => `<tr><td>${esc(p.category_name || '—')}</td><td>${esc(p.name)}</td><td style="text-align:center">
     ${inD.has(p.id)
       ? `<button class="btn small green" onclick="toggleDaily('product',${p.id})">✓ شامل ہے</button>
          <button class="btn small ghost" onclick="moveDailyProduct(${p.id},'up')">↑</button><button class="btn small ghost" onclick="moveDailyProduct(${p.id},'down')">↓</button>`
@@ -1533,7 +1538,7 @@ async function renderDailyProducts() {
     <h2 class="st">🍞 <span>روزانہ آئٹمز</span></h2>
     <button class="btn small" onclick="renderDailyData()">← واپس</button>
     <p class="note">آئٹم شامل کریں تو اسکی <b>کیٹیگری اور یونٹ خود</b> شامل ہو جائے گی۔<br>↑↓ سے <b>ترتیب</b> بدلیں — یہی ترتیب آرڈر فارم اور پرنٹ میں آئے گی۔</p>
-    <table><tr><th>کیٹیگری</th><th>نام</th><th>یونٹ</th><th style="text-align:center">روزانہ میں</th></tr>${rows || '<tr><td colspan=4>خالی</td></tr>'}</table>`;
+    <table><tr><th>کیٹیگری</th><th>نام</th><th style="text-align:center">روزانہ میں</th></tr>${rows || '<tr><td colspan=3>خالی</td></tr>'}</table>`;
 }
 async function moveDailyProduct(id, dir) {
   await api('POST', `/api/daily/products/${id}/move`, { dir });
@@ -1557,7 +1562,7 @@ async function renderDailyShops() {
 const DIMPORT_CONF = {
   categories: { title: '🗂 سپلائی کیٹیگریز سے منتخب کریں', api: 'categories', back: 'renderDailyCats', label: c => c.name },
   units: { title: '⚖ سپلائی یونٹس سے منتخب کریں', api: 'units', back: 'renderDailyUnits', label: u => u.name },
-  products: { title: '🍞 سپلائی آئٹمز سے منتخب کریں', api: 'products', back: 'renderDailyProducts', label: p => `${p.name} (${p.category_name || ''} · ${p.unit_name || ''})` },
+  products: { title: '🍞 سپلائی آئٹمز سے منتخب کریں', api: 'products', back: 'renderDailyProducts', label: p => `${p.name} (${p.category_name || ''})` },
   shops: { title: '🏪 سپلائی دکانوں سے منتخب کریں', api: 'shops', back: 'renderDailyShops', label: s => s.name },
 };
 async function openDailyImport(kind) {

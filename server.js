@@ -1422,6 +1422,7 @@ app.get('/print', requireLogin, (req, res) => {
  table{width:100%;border-collapse:collapse;font-size:14px;margin-bottom:14px}
  th{background:#1a1a1a;color:#fff;padding:6px} td{border:1px solid #999;padding:5px 8px}
  tr:nth-child(even) td{background:#fdf3e7}
+ .catrow td{background:#e8721c !important;color:#fff;font-size:15px}
  .slip{break-inside:avoid}
  .slip h2.shopname{font-size:24px;color:#e8721c;margin:0 0 4px}
  .slip .smeta{color:#555;font-size:14px;margin-bottom:8px}
@@ -1486,12 +1487,14 @@ ${head('تاریخ وائز آرڈر ہسٹری', 'تاریخ: ' + date)}${body 
     const sc = dailyScope(req);
     const ddate = date || dailyOrderDate();
     const sf = dailyShopFilter(sc, 'do');
+    // tamam active items (order ho ya na ho) — category wise
     let sql = `SELECT p.name AS product_name, c.name AS category_name, u.name AS unit_name,
-        SUM(di.quantity) AS total_qty, COUNT(DISTINCT do.shop_id) AS shop_count
-      FROM daily_order_items di JOIN daily_orders do ON do.id=di.order_id
-      JOIN daily_products p ON p.id=di.product_id
+        COALESCE(SUM(di.quantity), 0) AS total_qty, COUNT(DISTINCT do.shop_id) AS shop_count
+      FROM daily_products p
+      LEFT JOIN daily_order_items di ON di.product_id=p.id
+      LEFT JOIN daily_orders do ON do.id=di.order_id AND do.order_date=?${sf.clause}
       LEFT JOIN daily_categories c ON c.id=p.category_id LEFT JOIN daily_units u ON u.id=p.unit_id
-      WHERE do.order_date=?${sf.clause}`;
+      WHERE p.active=1`;
     const args = [ddate, ...sf.args];
     if (sc.catIds) { sql += ` AND p.category_id IN (${sc.catIds.map(() => '?').join(',')})`; args.push(...sc.catIds); }
     sql += ' GROUP BY p.id ORDER BY p.sort_order, p.name';
@@ -1503,7 +1506,7 @@ ${head('تاریخ وائز آرڈر ہسٹری', 'تاریخ: ' + date)}${body 
         cur = r.category_name;
         body += `<div class="hshop">🗂 ${esc(cur || 'متفرق')}</div><table><tr><th style="width:40px">#</th><th>آئٹم</th><th>کل مقدار</th><th>دکانیں</th></tr>`;
       }
-      body += `<tr><td></td><td>${esc(r.product_name)}</td><td><b>${esc(r.total_qty)} ${esc(r.unit_name || '')}</b></td><td>${esc(r.shop_count)}</td></tr>`;
+      body += `<tr><td></td><td>${esc(r.product_name)}</td><td><b>${esc(r.total_qty)}</b></td><td>${esc(r.shop_count)}</td></tr>`;
     });
     if (cur !== null) body += '</table>';
     return res.send(`<!DOCTYPE html><html lang="ur" dir="rtl"><head><meta charset="utf-8"><title>روزانہ کل پیداوار — ${esc(ddate)}</title>${css}</head><body>
@@ -1520,18 +1523,28 @@ ${head('روزانہ آرڈر — کل پیداوار', 'پیداوار کی ت�
     const shop = db.prepare('SELECT name FROM daily_shops WHERE id=?').get(sid);
     if (!shop) return res.status(404).send('shop_not_found');
     const o = db.prepare('SELECT id, note FROM daily_orders WHERE shop_id=? AND order_date=?').get(sid, ddate);
-    const dItems = db.prepare(`SELECT p.name AS product_name, u.name AS unit_name, di.quantity, c.name AS category_name
-      FROM daily_order_items di JOIN daily_products p ON p.id=di.product_id
+    // tamam active items (category wise) + is dukan ki quantity
+    const allProds = db.prepare(`SELECT p.id, p.name AS product_name, u.name AS unit_name, c.name AS category_name
+      FROM daily_products p
       LEFT JOIN daily_units u ON u.id=p.unit_id LEFT JOIN daily_categories c ON c.id=p.category_id
-      WHERE di.order_id=?${sc.catIds ? ` AND p.category_id IN (${sc.catIds.map(() => '?').join(',')})` : ''}
-      ORDER BY p.sort_order, p.name`);
-    const its = o ? dItems.all(o.id, ...(sc.catIds || [])) : [];
-    const rows = its.map((it, i) => `<tr><td>${i + 1}</td><td>${esc(it.product_name)} <span style="color:#888">(${esc(it.category_name || '')})</span></td><td><b>${esc(it.quantity)} ${esc(it.unit_name || '')}</b></td><td style="width:70px">☐</td></tr>`).join('')
-      || '<tr><td colspan=4>کوئی آئٹم نہیں</td></tr>';
+      WHERE p.active=1${sc.catIds ? ` AND p.category_id IN (${sc.catIds.map(() => '?').join(',')})` : ''}
+      ORDER BY p.sort_order, p.name`).all(...(sc.catIds || []));
+    const qtyMap = {};
+    if (o) db.prepare('SELECT product_id, quantity FROM daily_order_items WHERE order_id=?').all(o.id).forEach(r => { qtyMap[r.product_id] = r.quantity; });
+    let cur = null, rows = '';
+    allProds.forEach((it, i) => {
+      if (it.category_name !== cur) {
+        cur = it.category_name;
+        rows += `<tr class="catrow"><td colspan="3"><b>🗂 ${esc(cur || 'متفرق')}</b></td></tr>`;
+      }
+      const q = qtyMap[it.id];
+      rows += `<tr><td>${i + 1}</td><td>${esc(it.product_name)}</td><td><b>${q != null ? esc(q) : '—'}</b></td></tr>`;
+    });
+    rows = rows || '<tr><td colspan=3>کوئی آئٹم نہیں</td></tr>';
     const slip = `<div class="slip">${head('روزانہ آرڈر سلپ', 'پیداوار: ' + ddate)}
       <h2 class="shopname">${esc(shop.name)}</h2>
       <div class="smeta">پیداوار کی تاریخ: ${esc(ddate)}</div>
-      <table><tr><th>#</th><th>آئٹم</th><th>مقدار</th><th>پیک ✓</th></tr>${rows}</table>
+      <table><tr><th>#</th><th>آئٹم</th><th>مقدار</th></tr>${rows}</table>
       ${o && o.note ? `<div class="note">نوٹ: ${esc(o.note)}</div>` : ''}
       <div class="sig"><div>فیکٹری (دستخط)</div><div>وصول کنندہ (دستخط)</div></div></div>`;
     return res.send(`<!DOCTYPE html><html lang="ur" dir="rtl"><head><meta charset="utf-8"><title>روزانہ سلپ — ${esc(shop.name)}</title>${css}</head><body>${slip}${printBtn}</body></html>`);
@@ -1542,13 +1555,14 @@ ${head('روزانہ آرڈر — کل پیداوار', 'پیداوار کی ت�
     const sc = dailyScope(req);
     const ddate = date || dailyOrderDate();
     const sf = dailyShopFilter(sc, 'do');
-    // Totals
+    // Totals — tamam active items
     let tsql = `SELECT p.name AS product_name, c.name AS category_name, u.name AS unit_name,
-        SUM(di.quantity) AS total_qty, COUNT(DISTINCT do.shop_id) AS shop_count
-      FROM daily_order_items di JOIN daily_orders do ON do.id=di.order_id
-      JOIN daily_products p ON p.id=di.product_id
+        COALESCE(SUM(di.quantity), 0) AS total_qty, COUNT(DISTINCT do.shop_id) AS shop_count
+      FROM daily_products p
+      LEFT JOIN daily_order_items di ON di.product_id=p.id
+      LEFT JOIN daily_orders do ON do.id=di.order_id AND do.order_date=?${sf.clause}
       LEFT JOIN daily_categories c ON c.id=p.category_id LEFT JOIN daily_units u ON u.id=p.unit_id
-      WHERE do.order_date=?${sf.clause}`;
+      WHERE p.active=1`;
     const targs = [ddate, ...sf.args];
     if (sc.catIds) { tsql += ` AND p.category_id IN (${sc.catIds.map(() => '?').join(',')})`; targs.push(...sc.catIds); }
     tsql += ' GROUP BY p.id ORDER BY p.sort_order, p.name';
@@ -1560,24 +1574,30 @@ ${head('روزانہ آرڈر — کل پیداوار', 'پیداوار کی ت�
         cur = r.category_name;
         totBody += `<div class="hshop">🗂 ${esc(cur || 'متفرق')}</div><table><tr><th style="width:40px">#</th><th>آئٹم</th><th>کل مقدار</th><th>دکانیں</th></tr>`;
       }
-      totBody += `<tr><td></td><td>${esc(r.product_name)}</td><td><b>${esc(r.total_qty)} ${esc(r.unit_name || '')}</b></td><td>${esc(r.shop_count)}</td></tr>`;
+      totBody += `<tr><td></td><td>${esc(r.product_name)}</td><td><b>${esc(r.total_qty)}</b></td><td>${esc(r.shop_count)}</td></tr>`;
     });
     if (cur !== null) totBody += '</table>';
-    // Per-shop slips
+    // Per-shop slips — tamam items, har dukan ki quantity
     const orders = db.prepare(`SELECT do.id, do.shop_id, do.note, s.name AS shop_name FROM daily_orders do
       JOIN daily_shops s ON s.id=do.shop_id WHERE do.order_date=?${sf.clause} ORDER BY s.name`).all(ddate, ...sf.args);
-    const dItems = db.prepare(`SELECT p.name AS product_name, u.name AS unit_name, di.quantity, c.name AS category_name
-      FROM daily_order_items di JOIN daily_products p ON p.id=di.product_id
-      LEFT JOIN daily_units u ON u.id=p.unit_id LEFT JOIN daily_categories c ON c.id=p.category_id
-      WHERE di.order_id=?${sc.catIds ? ` AND p.category_id IN (${sc.catIds.map(() => '?').join(',')})` : ''}
-      ORDER BY p.sort_order, p.name`);
+    const allProds = db.prepare(`SELECT p.id, p.name AS product_name, u.name AS unit_name, c.name AS category_name
+      FROM daily_products p LEFT JOIN daily_units u ON u.id=p.unit_id LEFT JOIN daily_categories c ON c.id=p.category_id
+      WHERE p.active=1${sc.catIds ? ` AND p.category_id IN (${sc.catIds.map(() => '?').join(',')})` : ''}
+      ORDER BY p.sort_order, p.name`).all(...(sc.catIds || []));
+    const qByOrder = db.prepare('SELECT product_id, quantity FROM daily_order_items WHERE order_id=?');
     const slips = orders.map(o => {
-      const its = dItems.all(o.id, ...(sc.catIds || []));
-      const rows = its.map((it, i) => `<tr><td>${i + 1}</td><td>${esc(it.product_name)} <span style="color:#888">(${esc(it.category_name || '')})</span></td><td><b>${esc(it.quantity)} ${esc(it.unit_name || '')}</b></td><td style="width:70px">☐</td></tr>`).join('')
-        || '<tr><td colspan=4>کوئی آئٹم نہیں</td></tr>';
+      const qtyMap = {};
+      qByOrder.all(o.id).forEach(r => { qtyMap[r.product_id] = r.quantity; });
+      let cur = null, rows = '';
+      allProds.forEach((it, i) => {
+        if (it.category_name !== cur) { cur = it.category_name; rows += `<tr class="catrow"><td colspan="3"><b>🗂 ${esc(cur || 'متفرق')}</b></td></tr>`; }
+        const q = qtyMap[it.id];
+        rows += `<tr><td>${i + 1}</td><td>${esc(it.product_name)}</td><td><b>${q != null ? esc(q) : '—'}</b></td></tr>`;
+      });
+      rows = rows || '<tr><td colspan=3>کوئی آئٹم نہیں</td></tr>';
       return `<div class="slip" style="page-break-before:always">${head('روزانہ آرڈر سلپ', 'پیداوار: ' + ddate)}
         <h2 class="shopname">${esc(o.shop_name)}</h2>
-        <table><tr><th>#</th><th>آئٹم</th><th>مقدار</th><th>پیک ✓</th></tr>${rows}</table>
+        <table><tr><th>#</th><th>آئٹم</th><th>مقدار</th></tr>${rows}</table>
         ${o.note ? `<div class="note">نوٹ: ${esc(o.note)}</div>` : ''}
         <div class="sig"><div>فیکٹری (دستخط)</div><div>وصول کنندہ (دستخط)</div></div></div>`;
     }).join('');
@@ -1596,13 +1616,13 @@ ${head('روزانہ آرڈر — مکمل پرنٹ', 'پیداوار کی تا�
       JOIN shops s ON s.id=o.shop_id LEFT JOIN routes r ON r.id=o.route_id ${f} ORDER BY s.name`).all(...args);
     const slips = orders.map((o, idx) => {
       const its = itemsByOrder.all(o.id);
-      const rows = its.map((it, i) => `<tr><td>${i + 1}</td><td>${esc(it.product_name)}</td><td><b>${esc(it.quantity)} ${esc(it.unit_name || '')}</b></td><td style="width:70px">☐</td></tr>`).join('')
+      const rows = its.map((it, i) => `<tr><td>${i + 1}</td><td>${esc(it.product_name)}</td><td><b>${esc(it.quantity)} ${esc(it.unit_name || '')}</b></td></tr>`).join('')
         || '<tr><td colspan=4>کوئی آئٹم نہیں</td></tr>';
       return `<div class="slip${idx < orders.length - 1 ? ' pagebreak' : ''}">
         ${head('ڈیلیوری سلپ', 'تاریخ: ' + dateLabel + ' | روٹ: ' + routeName)}
         <h2 class="shopname">${esc(o.shop_name)}</h2>
         <div class="smeta">تاریخ: ${esc(o.delivery_date)} | روٹ: ${esc(o.route_name || '—')}</div>
-        <table><tr><th>#</th><th>آئٹم</th><th>مقدار</th><th>پیک ✓</th></tr>${rows}</table>
+        <table><tr><th>#</th><th>آئٹم</th><th>مقدار</th></tr>${rows}</table>
         ${o.note ? `<div class="note">نوٹ: ${esc(o.note)}</div>` : ''}
         <div class="sig"><div>فیکٹری (دستخط)</div><div>وصول کنندہ (دستخط)</div></div>
       </div>`;
