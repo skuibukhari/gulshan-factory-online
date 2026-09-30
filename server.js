@@ -1452,7 +1452,21 @@ app.get('/print', requireLogin, (req, res) => {
  .sig div{border-top:1px solid #333;padding-top:4px;width:40%;text-align:center}
  .note{background:#fdf3e7;border:1px dashed #e8721c;padding:4px 8px;margin:6px 0;font-size:11px}
  @media print{ .printbtn{display:none} .pagebreak{break-after:page} }
-</style>`;
+
+ .dcols{column-count:4;column-gap:6px;width:100%;direction:rtl}
+ .shopcols{column-count:2;column-gap:14px;width:100%;direction:rtl}
+ .cat-block{break-inside:avoid;margin:0 0 8px;border:1.5px solid #111;overflow:hidden}
+ .cat-head{font-size:16px;padding:8px 4px}
+ .cat-head{background:#111;color:#fff;text-align:center;font-size:16px;font-weight:bold;padding:8px 4px;font-family:'Jameel Noori Nastaleeq',serif}
+ .cat-block table{font-size:14px}
+ .cat-block table{width:100%;border-collapse:collapse;font-size:14px}
+ .cat-block th{background:#ddd;border:1px solid #111;padding:3px;font-size:11px;font-family:Arial,sans-serif;font-weight:bold}
+ .cat-block td{padding:6px 8px;font-size:14px}
+ .cat-block td{border:1px solid #888;padding:6px 8px}
+ .cat-block tr:nth-child(even) td{background:#fafafa}
+ .cat-block td.num{width:28px;text-align:center;color:#333;font-size:11px;font-weight:bold;background:#f0f0f0}
+ .cat-block td.name{text-align:right}
+ .cat-block td.total{width:44px;text-align:center;font-weight:bold;font-size:12px;background:#fff8f0}</style>`;
   const head = (title, extra) => `<div class="head"><img src="/logo.png" alt="logo"><div><h1>گلشن فیکٹری <span>Gulshan Factory</span></h1><div class="meta">${esc(title)}${extra ? ' — ' + esc(extra) : ''}</div></div></div>`;
   const itemsByOrder = db.prepare(`SELECT p.name AS product_name, u.name AS unit_name, oi.quantity
     FROM order_items oi JOIN products p ON p.id=oi.product_id LEFT JOIN units u ON u.id=p.unit_id WHERE oi.order_id=? ORDER BY p.name`);
@@ -1591,7 +1605,7 @@ ${head('تاریخ وائز آرڈر ہسٹری', 'تاریخ: ' + date)}${body 
     sql += ' GROUP BY p.id ORDER BY p.sort_order, p.name';
     const rows = db.prepare(sql).all(...args);
     const blocks = demandBlocks(rows, ddate);
-    return res.send(`<!DOCTYPE html><html lang="ur" dir="rtl"><head><meta charset="utf-8"><title>روزانہ ڈیمانڈ شیٹ — ${esc(ddate)}</title>${ddCss}</head><body>
+    return res.send(`<!DOCTYPE html><html lang="ur" dir="rtl"><head><meta charset="utf-8"><title>روزانہ ڈیمانڈ شیٹ — ${esc(ddate)}</title>${dcss}</head><body>
 ${printHead(ddate, req.user.username)}
 <div class="dcols">${blocks || '<p>کوئی آئٹم نہیں</p>'}</div>${printBtn}</body></html>`);
   }
