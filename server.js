@@ -1504,26 +1504,29 @@ ${head('تاریخ وائز آرڈر ہسٹری', 'تاریخ: ' + date)}${body 
   // ---------- DAILY: total production sheet (category-wise, scoped) ----------
   // ---------- DAILY: DEMAND DASHBOARD (RateVault pattern) ----------
   const ddCss = `<style>
- @page{size:A4;margin:5mm} *{box-sizing:border-box}
+ @page{size:A4;margin:8mm} *{box-sizing:border-box}
  body{font-family:'Noto Nastaliq Urdu','Jameel Noori Nastaleeq',serif;direction:rtl;color:#111;margin:0;font-size:11px}
- .phead{display:flex;align-items:center;gap:10px;border-bottom:2.5px solid #e8721c;padding-bottom:6px;margin-bottom:8px}
- .plogo{width:46px;height:46px;object-fit:contain;border-radius:8px}
- .pcenter{flex:1;text-align:center}
- .ptitle{font-size:20px;font-weight:bold;color:#111;line-height:1.4}
- .psub{font-size:13px;color:#e8721c;font-weight:bold}
- .pmeta{font-size:10px;color:#555;text-align:left;white-space:nowrap;line-height:1.7}
- .dcols{display:flex;flex-wrap:wrap;gap:8px;align-items:flex-start}
- .cat-block{flex:1 1 155px;min-width:145px;border:1.5px solid #111;break-inside:avoid;margin-bottom:8px}
- .cat-head{background:#111;color:#fff;text-align:center;font-size:11px;font-weight:bold;padding:4px 2px}
+ .phead{display:flex;align-items:center;gap:8px;border-bottom:2px solid #e8721c;padding:2px 0 5px;margin:0 0 6px;overflow:hidden}
+ .plogo{width:38px;height:38px;object-fit:contain;flex-shrink:0}
+ .pcenter{flex:1;text-align:center;min-width:0}
+ .ptitle{font-size:17px;font-weight:bold;color:#111;line-height:1.3;margin:0}
+ .psub{font-size:11px;color:#e8721c;font-weight:bold;margin:0}
+ .pmeta{font-size:9px;color:#555;text-align:left;white-space:nowrap;line-height:1.6;flex-shrink:0}
+ .dcols{column-count:3;column-gap:10px}
+ .cat-block{break-inside:avoid;margin:0 0 10px;border:2px solid #111;border-radius:4px;overflow:hidden}
+ .cat-head{background:#111;color:#fff;text-align:center;font-size:12px;font-weight:bold;padding:6px 2px;letter-spacing:.3px}
  .cat-block table{width:100%;border-collapse:collapse;font-size:11px}
- .cat-block th{padding:3px 4px;border-bottom:1px solid #111;font-size:10px;font-family:Arial,sans-serif}
- .cat-block th.total-h{color:#e8721c;text-align:left}
- .cat-block th.num-h{color:#888;text-align:right}
- .cat-block td{border-bottom:1px solid #ddd;padding:3px 4px}
- .cat-block td.num{width:24px;text-align:right;color:#555;font-size:10px}
+ .cat-block th{background:#f8f8f8;border:1px solid #111;padding:4px;font-size:10px;font-family:Arial,sans-serif}
+ .cat-block th.mid{font-size:12px}
+ .cat-block th.total-h{color:#e8721c;text-align:center}
+ .cat-block th.num-h{color:#555;text-align:center}
+ .cat-block td{border:1px solid #999;padding:4px 6px}
+ .cat-block tr:nth-child(even) td{background:#fafafa}
+ .cat-block td.num{width:28px;text-align:center;color:#333;font-size:11px;font-weight:bold;background:#f0f0f0}
  .cat-block td.name{text-align:right}
- .cat-block td.total{width:44px;text-align:center;font-weight:bold;border-left:1.5px solid #111;font-size:13px}
- .shoptitle{text-align:center;font-size:16px;font-weight:bold;margin:0 0 6px;color:#e8721c}
+ .cat-block td.total{width:48px;text-align:center;font-weight:bold;font-size:14px;background:#fff8f0}
+ .shoptitle{text-align:center;font-size:24px;font-weight:bold;margin:0 0 8px;color:#fff;background:#111;padding:8px 4px;letter-spacing:.5px}
+ .shoptitle .em{color:#e8721c}
  .shoppage{page-break-inside:avoid}
  .slip{break-inside:avoid;border:1.5px solid #111;margin:10px 0;padding:8px;page-break-before:always}
  .slip h2.shopname{font-size:20px;color:#e8721c;margin:0 0 4px;text-align:center}
@@ -1564,7 +1567,7 @@ ${head('تاریخ وائز آرڈر ہسٹری', 'تاریخ: ' + date)}${body 
       const trs = cats[cn].map((r, i) =>
         `<tr><td class="num">${i + 1}</td><td class="name">${esc(r.product_name)}</td><td class="total">${r.qty != null ? esc(r.qty) : ''}</td></tr>`).join('');
       return `<div class="cat-block"><div class="cat-head">${esc(cn)} — ${dstr}</div>
-        <table><tr><th class="num-h">#S</th><th>${esc(shopName)}</th><th class="total-h">QTY</th></tr>${trs}</table></div>`;
+        <table><tr><th class="num-h">#S</th><th class="mid">${esc(shopName)}</th><th class="total-h">QTY</th></tr>${trs}</table></div>`;
     }).join('');
   }
   if (type === 'daily_total') {
@@ -1620,9 +1623,8 @@ ${printHead(ddate, req.user.username)}
       const blocks = shopDemandBlocks(shop.name, rows, ddate);
       const note = o && o.note ? `<div class="note">نوٹ: ${esc(o.note)}</div>` : '';
       return `<div class="shoppage"${si > 0 ? ' style="page-break-before:always"' : ''}>${printHead(ddate, req.user.username)}
-        <div class="shoptitle">🏪 ${esc(shop.name)}</div>
-        <div class="dcols">${blocks || '<p>کوئی آئٹم نہیں</p>'}</div>${note}
-        <div class="sig"><div>فیکٹری (دستخط)</div><div>وصول کنندہ (دستخط)</div></div></div>`;
+        <div class="shoptitle"><span class="em">🏪</span> ${esc(shop.name)}</div>
+        <div class="dcols">${blocks || '<p>کوئی آئٹم نہیں</p>'}</div>${note}</div>`;
     }).join('');
     return res.send(`<!DOCTYPE html><html lang="ur" dir="rtl"><head><meta charset="utf-8"><title>روزانہ سلپ — ${esc(ddate)}</title>${ddCss}</head><body>${pages}${printBtn}</body></html>`);
   }
@@ -1659,10 +1661,9 @@ ${printHead(ddate, req.user.username)}
       const rows = allProds.map(pp => ({ product_name: pp.product_name, category_name: pp.category_name, qty: qtyMap[pp.id] }));
       const blocks = shopDemandBlocks(o.shop_name, rows, ddate);
       return `<div class="shoppage" style="page-break-before:always">${printHead(ddate, req.user.username)}
-        <div class="shoptitle">🏪 ${esc(o.shop_name)}</div>
+        <div class="shoptitle"><span class="em">🏪</span> ${esc(o.shop_name)}</div>
         <div class="dcols">${blocks || '<p>کوئی آئٹم نہیں</p>'}</div>
-        ${o.note ? `<div class="note">نوٹ: ${esc(o.note)}</div>` : ''}
-        <div class="sig"><div>فیکٹری (دستخط)</div><div>وصول کنندہ (دستخط)</div></div></div>`;
+        ${o.note ? `<div class="note">نوٹ: ${esc(o.note)}</div>` : ''}</div>`;
     }).join('');
     return res.send(`<!DOCTYPE html><html lang="ur" dir="rtl"><head><meta charset="utf-8"><title>روزانہ مکمل — ${esc(ddate)}</title>${ddCss}</head><body>
 ${printHead(ddate, req.user.username)}
