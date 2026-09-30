@@ -1502,35 +1502,68 @@ ${head('دکان وائز آرڈر ہسٹری', shop.name)}${body || '<p>کوئ�
 ${head('تاریخ وائز آرڈر ہسٹری', 'تاریخ: ' + date)}${body || '<p>کوئی آرڈر نہیں</p>'}${printBtn}</body></html>`);
   }
   // ---------- DAILY: total production sheet (category-wise, scoped) ----------
+  // ---------- DAILY: DEMAND DASHBOARD (RateVault pattern) ----------
+  const ddCss = `<style>
+ @page{size:A4;margin:8mm} *{box-sizing:border-box}
+ body{font-family:'Noto Nastaliq Urdu','Jameel Noori Nastaleeq',serif;direction:rtl;color:#111;margin:0}
+ .dtitle{text-align:center;font-size:22px;font-weight:bold;margin:0 0 10px;padding-bottom:6px;border-bottom:2px solid #111;letter-spacing:1px;font-family:Arial,sans-serif}
+ .dcols{display:flex;flex-wrap:wrap;gap:10px;align-items:flex-start}
+ .cat-block{flex:1 1 200px;min-width:180px;border:1.5px solid #111;break-inside:avoid;margin-bottom:10px}
+ .cat-head{background:#111;color:#fff;text-align:center;font-size:13px;font-weight:bold;padding:6px 4px}
+ .cat-block table{width:100%;border-collapse:collapse;font-size:13px}
+ .cat-block th{padding:4px 6px;border-bottom:1px solid #111;font-size:11px;font-family:Arial,sans-serif}
+ .cat-block th.total-h{color:#e8721c;text-align:left}
+ .cat-block th.num-h{color:#888;text-align:right}
+ .cat-block td{border-bottom:1px solid #ddd;padding:5px 6px}
+ .cat-block td.num{width:28px;text-align:right;color:#555;font-size:11px}
+ .cat-block td.name{text-align:right}
+ .cat-block td.total{width:52px;text-align:center;font-weight:bold;border-left:1.5px solid #111;font-size:15px}
+ .dfoot{text-align:center;color:#999;font-size:10px;margin-top:14px;font-family:Arial,sans-serif}
+ .slip{break-inside:avoid;border:1.5px solid #111;margin:10px 0;padding:8px;page-break-before:always}
+ .slip h2.shopname{font-size:20px;color:#e8721c;margin:0 0 4px;text-align:center}
+ .slip table{width:100%;border-collapse:collapse;font-size:12px;margin:6px 0}
+ .slip th{background:#111;color:#fff;padding:4px;font-size:12px}
+ .slip td{border:1px solid #999;padding:3px 6px}
+ .slip .catrow td{background:#e8721c !important;color:#fff;font-size:13px}
+ .sig{display:flex;justify-content:space-between;margin-top:18px;font-size:12px}
+ .sig div{border-top:1px solid #333;padding-top:4px;width:40%;text-align:center}
+ .note{background:#fdf3e7;border:1px dashed #e8721c;padding:4px 8px;margin:6px 0;font-size:11px}
+ @media print{ .printbtn{display:none} }
+</style>`;
+  const fmtD = d => { const M = ['JAN','FEB','MAR','APR','MAY','JUN','JUL','AUG','SEP','OCT','NOV','DEC']; const p = String(d).split('-'); return p.length === 3 ? `${p[2]} ${M[Number(p[1]) - 1]} ${p[0]}` : d; };
+  // category blocks builder (RateVault pattern) — rows: [{product_name, total_qty}]
+  function demandBlocks(rows, ddate) {
+    const cats = {}, order = [];
+    rows.forEach(r => { const k = r.category_name || 'متفرق'; if (!cats[k]) { cats[k] = []; order.push(k); } cats[k].push(r); });
+    const dstr = fmtD(ddate);
+    return order.map(cn => {
+      const trs = cats[cn].map((r, i) =>
+        `<tr><td class="num">${i + 1}</td><td class="name">${esc(r.product_name)}</td><td class="total">${r.total_qty ? esc(r.total_qty) : ''}</td></tr>`).join('');
+      return `<div class="cat-block"><div class="cat-head">${esc(cn)} — ${dstr}</div>
+        <table><tr><th class="num-h">#S</th><th>ALL PARTIES</th><th class="total-h">TOTAL</th></tr>${trs}</table></div>`;
+    }).join('');
+  }
   if (type === 'daily_total') {
     if (!can(req.user, 'daily', 'view')) return res.status(403).send('forbidden');
     const sc = dailyScope(req);
     const ddate = date || dailyOrderDate();
     const sf = dailyShopFilter(sc, 'do');
-    // tamam active items (order ho ya na ho) — category wise
-    let sql = `SELECT p.name AS product_name, c.name AS category_name, u.name AS unit_name,
-        COALESCE(SUM(di.quantity), 0) AS total_qty, COUNT(DISTINCT do.shop_id) AS shop_count
+    let sql = `SELECT p.name AS product_name, c.name AS category_name,
+        COALESCE(SUM(di.quantity), 0) AS total_qty
       FROM daily_products p
       LEFT JOIN daily_order_items di ON di.product_id=p.id
       LEFT JOIN daily_orders do ON do.id=di.order_id AND do.order_date=?${sf.clause}
-      LEFT JOIN daily_categories c ON c.id=p.category_id LEFT JOIN daily_units u ON u.id=p.unit_id
+      LEFT JOIN daily_categories c ON c.id=p.category_id
       WHERE p.active=1`;
     const args = [ddate, ...sf.args];
     if (sc.catIds) { sql += ` AND p.category_id IN (${sc.catIds.map(() => '?').join(',')})`; args.push(...sc.catIds); }
     sql += ' GROUP BY p.id ORDER BY p.sort_order, p.name';
     const rows = db.prepare(sql).all(...args);
-    let cur = null, body = '';
-    rows.forEach(r => {
-      if (r.category_name !== cur) {
-        if (cur !== null) body += '</table>';
-        cur = r.category_name;
-        body += `<div class="hshop">🗂 ${esc(cur || 'متفرق')}</div><table><tr><th style="width:40px">#</th><th>آئٹم</th><th>کل مقدار</th><th>دکانیں</th></tr>`;
-      }
-      body += `<tr><td></td><td>${esc(r.product_name)}</td><td><b>${esc(r.total_qty)}</b></td><td>${esc(r.shop_count)}</td></tr>`;
-    });
-    if (cur !== null) body += '</table>';
-    return res.send(`<!DOCTYPE html><html lang="ur" dir="rtl"><head><meta charset="utf-8"><title>روزانہ کل پیداوار — ${esc(ddate)}</title>${dcss}</head><body>
-${head('روزانہ آرڈر — کل پیداوار', 'پیداوار کی تاریخ: ' + ddate)}${body || '<p>کوئی آرڈر نہیں</p>'}${printBtn}</body></html>`);
+    const blocks = demandBlocks(rows, ddate);
+    return res.send(`<!DOCTYPE html><html lang="ur" dir="rtl"><head><meta charset="utf-8"><title>DEMAND DASHBOARD — ${esc(ddate)}</title>${ddCss}</head><body>
+<h1 class="dtitle">DEMAND DASHBOARD</h1>
+<div class="dcols">${blocks || '<p>کوئی آئٹم نہیں</p>'}</div>
+<div class="dfoot">Generated by Gulshan Factory © 2026</div>${printBtn}</body></html>`);
   }
   // ---------- DAILY: per-shop slip ----------
   if (type === 'daily_shop') {
@@ -1575,28 +1608,19 @@ ${head('روزانہ آرڈر — کل پیداوار', 'پیداوار کی ت�
     const sc = dailyScope(req);
     const ddate = date || dailyOrderDate();
     const sf = dailyShopFilter(sc, 'do');
-    // Totals — tamam active items
-    let tsql = `SELECT p.name AS product_name, c.name AS category_name, u.name AS unit_name,
-        COALESCE(SUM(di.quantity), 0) AS total_qty, COUNT(DISTINCT do.shop_id) AS shop_count
+    // Totals — tamam active items (DEMAND DASHBOARD pattern)
+    let tsql = `SELECT p.name AS product_name, c.name AS category_name,
+        COALESCE(SUM(di.quantity), 0) AS total_qty
       FROM daily_products p
       LEFT JOIN daily_order_items di ON di.product_id=p.id
       LEFT JOIN daily_orders do ON do.id=di.order_id AND do.order_date=?${sf.clause}
-      LEFT JOIN daily_categories c ON c.id=p.category_id LEFT JOIN daily_units u ON u.id=p.unit_id
+      LEFT JOIN daily_categories c ON c.id=p.category_id
       WHERE p.active=1`;
     const targs = [ddate, ...sf.args];
     if (sc.catIds) { tsql += ` AND p.category_id IN (${sc.catIds.map(() => '?').join(',')})`; targs.push(...sc.catIds); }
     tsql += ' GROUP BY p.id ORDER BY p.sort_order, p.name';
     const trows = db.prepare(tsql).all(...targs);
-    let cur = null, totBody = '';
-    trows.forEach(r => {
-      if (r.category_name !== cur) {
-        if (cur !== null) totBody += '</table>';
-        cur = r.category_name;
-        totBody += `<div class="hshop">🗂 ${esc(cur || 'متفرق')}</div><table><tr><th style="width:40px">#</th><th>آئٹم</th><th>کل مقدار</th><th>دکانیں</th></tr>`;
-      }
-      totBody += `<tr><td></td><td>${esc(r.product_name)}</td><td><b>${esc(r.total_qty)}</b></td><td>${esc(r.shop_count)}</td></tr>`;
-    });
-    if (cur !== null) totBody += '</table>';
+    const totBody = demandBlocks(trows, ddate);
     // Per-shop slips — tamam items, har dukan ki quantity
     const orders = db.prepare(`SELECT do.id, do.shop_id, do.note, s.name AS shop_name FROM daily_orders do
       JOIN daily_shops s ON s.id=do.shop_id WHERE do.order_date=?${sf.clause} ORDER BY s.name`).all(ddate, ...sf.args);
@@ -1621,9 +1645,10 @@ ${head('روزانہ آرڈر — کل پیداوار', 'پیداوار کی ت�
         ${o.note ? `<div class="note">نوٹ: ${esc(o.note)}</div>` : ''}
         <div class="sig"><div>فیکٹری (دستخط)</div><div>وصول کنندہ (دستخط)</div></div></div>`;
     }).join('');
-    return res.send(`<!DOCTYPE html><html lang="ur" dir="rtl"><head><meta charset="utf-8"><title>روزانہ مکمل — ${esc(ddate)}</title>${dcss}</head><body>
-${head('روزانہ آرڈر — مکمل پرنٹ', 'پیداوار کی تاریخ: ' + ddate)}
-<div class="hshop">📋 کل پیداوار</div>${totBody || '<p>کوئی آرڈر نہیں</p>'}${slips}${printBtn}</body></html>`);
+    return res.send(`<!DOCTYPE html><html lang="ur" dir="rtl"><head><meta charset="utf-8"><title>DEMAND DASHBOARD — ${esc(ddate)}</title>${ddCss}</head><body>
+<h1 class="dtitle">DEMAND DASHBOARD</h1>
+<div class="dcols">${totBody || '<p>کوئی آئٹم نہیں</p>'}</div>
+<div class="dfoot">Generated by Gulshan Factory © 2026</div>${slips}${printBtn}</body></html>`);
   }
   const mode = type === 'shops' ? 'shops' : 'totals';
   let f = 'WHERE 1=1'; const args = [];
