@@ -1226,7 +1226,7 @@ async function renderDailyShopForm(di) {
     const prods = c.products.filter(p => !allowedIds || allowedIds.includes(p.id));
     if (!prods.length) return '';
     return `<div class="cathead">${esc(c.name)}</div>` + prods.map(p =>
-      `<div class="prow"><span class="pn">${esc(p.name)}</span><span class="un">${esc(p.unit_name || '')}</span>
+      `<div class="prow"><span class="pn">${esc(p.name)}</span>
        <input type="number" min="0" step="any" data-pid="${p.id}" value="${qty[p.id] || ''}" placeholder="0"${locked ? ' disabled' : ''}></div>`).join('');
   }).join('');
   $('#v-daily').innerHTML = `
@@ -1256,7 +1256,7 @@ async function renderDailyAdminOrder() {
   const catsHtml = catalog.map(c => {
     if (!c.products.length) return '';
     return `<div class="cathead">🗂 ${esc(c.name)}</div>` + c.products.map(p =>
-      `<div class="prow"><span class="pn">${esc(p.name)}</span><span class="un">${esc(p.unit_name || '')}</span>
+      `<div class="prow"><span class="pn">${esc(p.name)}</span>
        <input type="number" min="0" step="any" data-pid="${p.id}" placeholder="0"></div>`).join('');
   }).join('');
   $('#v-daily').innerHTML = `
@@ -1348,6 +1348,7 @@ async function renderDailyBoard(di) {
     </div>`).join('');
   $('#v-daily').innerHTML = `
     <h2 class="st">📝 <span>روزانہ آرڈر</span></h2>
+    ${isAdmin ? `<div style="margin:8px 0"><button class="btn green" onclick="renderDailyAdminOrder()">📝 دکان کا آرڈر دیں</button></div>` : ''}
     ${isCurrent && !di.cutoff_passed ? `<div id="dCd"></div>` : ''}
     ${isCurrent && di.cutoff_passed ? `<div class="lockbar">🔒 کٹ آف (${esc(di.cutoff_time)}) گزر چکا ہے</div>` : ''}
     ${trackerHtml}
@@ -1360,7 +1361,7 @@ async function renderDailyBoard(di) {
       </div>
       <div class="formgrid" style="margin-top:8px">
         <label>دکان وائز پرنٹ<br><select id="dPrintShop">
-          ${tracker.shops.filter(s => s.ordered).map(s => `<option value="${s.id}">🏪 ${esc(s.name)}</option>`).join('')}
+          ${tracker.shops.map(s => `<option value="${s.id}">🏪 ${esc(s.name)}${s.ordered ? ' ✅' : ''}</option>`).join('')}
         </select></label>
         <label><br><button class="btn small dark" onclick="printDailyShop()">🖨 دکان کی سلپ پرنٹ کریں</button></label>
       </div>
@@ -1372,7 +1373,6 @@ async function renderDailyBoard(di) {
         ${tracker.shops.map(s => `<option value="${s.id}"${shopF === String(s.id) ? ' selected' : ''}>${esc(s.name)}${s.ordered ? ' ✅' : ''}</option>`).join('')}
       </select></label>
       ${isAdmin ? `<label><br><button class="btn small" onclick="renderDailyAccess()">⚙ ایکسس سیٹنگ</button></label>` : ''}
-      ${isAdmin ? `<label><br><button class="btn small green" onclick="renderDailyAdminOrder()">📝 دکان کا آرڈر دیں</button></label>` : ''}
     </div>
     <h3 class="st">📋 کل پیداوار</h3>
     ${totHtml || '<p class="note">کوئی آرڈر نہیں</p>'}

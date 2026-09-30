@@ -280,3 +280,8 @@ button[disabled]{opacity:.45}
 .profname{font-size:20px;font-weight:700;margin-bottom:6px}
 .shimg{width:56px;height:56px;border-radius:12px;object-fit:cover;border:1px solid var(--border)}
 [data-theme="dark"] .drow,[data-theme="dark"] .profsec,[data-theme="dark"] .pcard,[data-theme="dark"] .qbtn,[data-theme="dark"] .chart{box-shadow:0 3px 12px rgba(0,0,0,.35)}
+
+/* number input spinners (up/down arrows) hide */
+input[type=number]::-webkit-inner-spin-button,
+input[type=number]::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
+input[type=number] { -moz-appearance: textfield; appearance: textfield; }
