@@ -1433,6 +1433,26 @@ app.get('/print', requireLogin, (req, res) => {
  .note{background:#fdf3e7;border:1px dashed #e8721c;padding:6px 10px;margin:8px 0;font-size:13px}
  @media print{ .printbtn{display:none} .pagebreak{break-after:page} }
 </style>`;
+  // rozana print — compact, sab categories ek A4 page par
+  const dcss = `<style>
+ @page{size:A4;margin:8mm} *{box-sizing:border-box}
+ body{font-family:'Noto Nastaliq Urdu','Jameel Noori Nastaleeq',serif;direction:rtl;color:#111;margin:0}
+ .head{display:flex;align-items:center;gap:8px;border-bottom:2px solid #e8721c;padding-bottom:6px;margin-bottom:8px}
+ .head img{height:44px} .head h1{margin:0;font-size:20px;color:#1a1a1a} .head h1 span{color:#e8721c}
+ .meta{color:#2e7d32;font-size:12px;margin-bottom:6px}
+ table{width:100%;border-collapse:collapse;font-size:12px;margin-bottom:8px}
+ th{background:#1a1a1a;color:#fff;padding:4px;font-size:12px} td{border:1px solid #999;padding:3px 6px}
+ tr:nth-child(even) td{background:#fdf3e7}
+ .catrow td{background:#e8721c !important;color:#fff;font-size:13px;padding:4px 6px}
+ .slip{break-inside:avoid}
+ .slip h2.shopname{font-size:20px;color:#e8721c;margin:0 0 4px}
+ .slip .smeta{color:#555;font-size:12px;margin-bottom:6px}
+ .hshop{font-size:15px;color:#b3540e;margin:8px 0 3px;border-bottom:2px solid #e8721c;padding-bottom:2px;break-after:avoid}
+ .sig{display:flex;justify-content:space-between;margin-top:18px;font-size:12px}
+ .sig div{border-top:1px solid #333;padding-top:4px;width:40%;text-align:center}
+ .note{background:#fdf3e7;border:1px dashed #e8721c;padding:4px 8px;margin:6px 0;font-size:11px}
+ @media print{ .printbtn{display:none} .pagebreak{break-after:page} }
+</style>`;
   const head = (title, extra) => `<div class="head"><img src="/logo.png" alt="logo"><div><h1>گلشن فیکٹری <span>Gulshan Factory</span></h1><div class="meta">${esc(title)}${extra ? ' — ' + esc(extra) : ''}</div></div></div>`;
   const itemsByOrder = db.prepare(`SELECT p.name AS product_name, u.name AS unit_name, oi.quantity
     FROM order_items oi JOIN products p ON p.id=oi.product_id LEFT JOIN units u ON u.id=p.unit_id WHERE oi.order_id=? ORDER BY p.name`);
@@ -1509,7 +1529,7 @@ ${head('تاریخ وائز آرڈر ہسٹری', 'تاریخ: ' + date)}${body 
       body += `<tr><td></td><td>${esc(r.product_name)}</td><td><b>${esc(r.total_qty)}</b></td><td>${esc(r.shop_count)}</td></tr>`;
     });
     if (cur !== null) body += '</table>';
-    return res.send(`<!DOCTYPE html><html lang="ur" dir="rtl"><head><meta charset="utf-8"><title>روزانہ کل پیداوار — ${esc(ddate)}</title>${css}</head><body>
+    return res.send(`<!DOCTYPE html><html lang="ur" dir="rtl"><head><meta charset="utf-8"><title>روزانہ کل پیداوار — ${esc(ddate)}</title>${dcss}</head><body>
 ${head('روزانہ آرڈر — کل پیداوار', 'پیداوار کی تاریخ: ' + ddate)}${body || '<p>کوئی آرڈر نہیں</p>'}${printBtn}</body></html>`);
   }
   // ---------- DAILY: per-shop slip ----------
@@ -1547,7 +1567,7 @@ ${head('روزانہ آرڈر — کل پیداوار', 'پیداوار کی ت�
       <table><tr><th>#</th><th>آئٹم</th><th>مقدار</th></tr>${rows}</table>
       ${o && o.note ? `<div class="note">نوٹ: ${esc(o.note)}</div>` : ''}
       <div class="sig"><div>فیکٹری (دستخط)</div><div>وصول کنندہ (دستخط)</div></div></div>`;
-    return res.send(`<!DOCTYPE html><html lang="ur" dir="rtl"><head><meta charset="utf-8"><title>روزانہ سلپ — ${esc(shop.name)}</title>${css}</head><body>${slip}${printBtn}</body></html>`);
+    return res.send(`<!DOCTYPE html><html lang="ur" dir="rtl"><head><meta charset="utf-8"><title>روزانہ سلپ — ${esc(shop.name)}</title>${dcss}</head><body>${slip}${printBtn}</body></html>`);
   }
   // ---------- DAILY: sab kuch ek saath (کل پیداوار + تمام دکانوں کی سلپس) ----------
   if (type === 'daily_all') {
@@ -1601,7 +1621,7 @@ ${head('روزانہ آرڈر — کل پیداوار', 'پیداوار کی ت�
         ${o.note ? `<div class="note">نوٹ: ${esc(o.note)}</div>` : ''}
         <div class="sig"><div>فیکٹری (دستخط)</div><div>وصول کنندہ (دستخط)</div></div></div>`;
     }).join('');
-    return res.send(`<!DOCTYPE html><html lang="ur" dir="rtl"><head><meta charset="utf-8"><title>روزانہ مکمل — ${esc(ddate)}</title>${css}</head><body>
+    return res.send(`<!DOCTYPE html><html lang="ur" dir="rtl"><head><meta charset="utf-8"><title>روزانہ مکمل — ${esc(ddate)}</title>${dcss}</head><body>
 ${head('روزانہ آرڈر — مکمل پرنٹ', 'پیداوار کی تاریخ: ' + ddate)}
 <div class="hshop">📋 کل پیداوار</div>${totBody || '<p>کوئی آرڈر نہیں</p>'}${slips}${printBtn}</body></html>`);
   }
