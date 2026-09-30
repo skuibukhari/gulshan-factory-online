@@ -1248,6 +1248,40 @@ async function submitDailyOrder() {
     renderDaily();
   } catch (e) { $('#dErr').textContent = 'خرابی: ' + e.message; }
 }
+// ---------- admin: kisi dukan ka order do ----------
+async function renderDailyAdminOrder() {
+  const di = await api('GET', '/api/daily/date');
+  DAILY_DATE = di.order_date;
+  const [shops, catalog] = await Promise.all([api('GET', '/api/daily-shops'), api('GET', '/api/daily/catalog')]);
+  const catsHtml = catalog.map(c => {
+    if (!c.products.length) return '';
+    return `<div class="cathead">🗂 ${esc(c.name)}</div>` + c.products.map(p =>
+      `<div class="prow"><span class="pn">${esc(p.name)}</span><span class="un">${esc(p.unit_name || '')}</span>
+       <input type="number" min="0" step="any" data-pid="${p.id}" placeholder="0"></div>`).join('');
+  }).join('');
+  $('#v-daily').innerHTML = `
+    <h2 class="st">📝 <span>دکان کا آرڈر دیں</span></h2>
+    <button class="btn small" onclick="DAILY_VIEW_DATE=null;renderDaily()">← واپس</button>
+    <div class="supbanner">📦 پیداوار: <b>${esc(di.order_date)}</b></div>
+    <div class="formgrid"><label>دکان منتخب کریں<br><select id="dao-shop">
+      ${shops.filter(s => s.active).map(s => `<option value="${s.id}">${esc(s.name)}</option>`).join('')}
+    </select></label></div>
+    ${catsHtml || '<p class="note">⚠️ کوئی آئٹم نہیں — پہلے 📦 روزانہ ڈیٹا سے آئٹمز شامل کریں</p>'}
+    <div class="err" id="dErr"></div>
+    ${catsHtml ? '<button class="btn green" onclick="submitDailyAdminOrder()">✅ آرڈر بھیجیں</button>' : ''}`;
+}
+async function submitDailyAdminOrder() {
+  const shop_id = Number($('#dao-shop').value);
+  if (!shop_id) { alert('دکان منتخب کریں'); return; }
+  const items = {};
+  document.querySelectorAll('#v-daily input[data-pid]').forEach(i => { const q = parseFloat(i.value) || 0; if (q > 0) items[i.dataset.pid] = q; });
+  if (!Object.keys(items).length) { alert('کوئی مقدار درج نہیں کی'); return; }
+  try {
+    await api('POST', '/api/daily/orders', { order_date: DAILY_DATE, shop_id, items });
+    alert('آرڈر بھیج دیا گیا ✅');
+    DAILY_VIEW_DATE = null; renderDaily();
+  } catch (e) { $('#dErr').textContent = 'خرابی: ' + e.message; }
+}
 async function delDailyOrder(id) {
   if (!confirm('آرڈر حذف کریں؟')) return;
   await api('DELETE', '/api/daily/orders/' + id);
@@ -1312,6 +1346,7 @@ async function renderDailyBoard(di) {
       <label><br><a class="btn small dark" target="_blank" href="/print?type=daily_total&date=${esc(date)}">🖨 کل پیداوار پرنٹ</a></label>
       <label><br><a class="btn small dark" target="_blank" href="/print?type=daily_all&date=${esc(date)}">🖨🖨 سب کچھ پرنٹ (کل + تمام دکانیں)</a></label>
       ${isAdmin ? `<label><br><button class="btn small" onclick="renderDailyAccess()">⚙ ایکسس سیٹنگ</button></label>` : ''}
+      ${isAdmin ? `<label><br><button class="btn small green" onclick="renderDailyAdminOrder()">📝 دکان کا آرڈر دیں</button></label>` : ''}
     </div>
     <h3 class="st">📋 کل پیداوار</h3>
     ${totHtml || '<p class="note">کوئی آرڈر نہیں</p>'}
