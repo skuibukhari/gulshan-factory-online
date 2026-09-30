@@ -1435,7 +1435,7 @@ app.get('/print', requireLogin, (req, res) => {
 </style>`;
   // rozana print — compact, sab categories ek A4 page par
   const dcss = `<style>
- @page{size:A4;margin:7mm 5mm} *{box-sizing:border-box}
+ @page{size:A4 landscape;margin:7mm 6mm} *{box-sizing:border-box}
  body{font-family:'Noto Nastaliq Urdu','Jameel Noori Nastaleeq',serif;direction:rtl;color:#111;margin:0}
  .head{display:flex;align-items:center;gap:8px;border-bottom:2px solid #e8721c;padding-bottom:6px;margin-bottom:8px}
  .head img{height:44px} .head h1{margin:0;font-size:20px;color:#1a1a1a} .head h1 span{color:#e8721c}
@@ -1505,22 +1505,22 @@ ${head('تاریخ وائز آرڈر ہسٹری', 'تاریخ: ' + date)}${body 
   // ---------- DAILY: DEMAND DASHBOARD (RateVault pattern) ----------
   const ddCss = `<style>
  @page{size:A4;margin:8mm} *{box-sizing:border-box}
- body{font-family:'Noto Nastaliq Urdu','Jameel Noori Nastaleeq',serif;direction:rtl;color:#111;margin:0;font-size:11px}
+ body{font-family:'Noto Nastaliq Urdu','Jameel Noori Nastaleeq',serif;direction:rtl;color:#111;margin:0;font-size:14px}
  .phead{display:flex;align-items:center;gap:8px;border:2px solid #111;border-radius:6px;padding:6px 8px;margin:0 0 6px;background:#fff}
  .plogo{width:42px;height:42px;object-fit:contain;flex-shrink:0}
  .pcenter{flex:1;text-align:center;min-width:0}
- .ptitle{font-size:20px;font-weight:bold;color:#111;line-height:1.4;margin:0;padding:2px 0 0}
- .psub{font-size:13px;color:#e8721c;font-weight:bold;margin:2px 0 0}
+ .ptitle{font-size:26px;font-weight:bold;color:#111;line-height:1.5;margin:0;padding:2px 0 0}
+ .psub{font-size:15px;color:#e8721c;font-weight:bold;margin:2px 0 0}
  .pmeta{font-size:9px;color:#444;text-align:left;white-space:nowrap;line-height:1.7;flex-shrink:0;background:#f5f5f5;padding:6px 10px;border-radius:4px}
  .dcols{column-count:4;column-gap:6px;width:100%;direction:rtl}
  .cat-block{break-inside:avoid;margin:0 0 10px;border:2px solid #111;border-radius:4px;overflow:hidden}
- .cat-head{background:#111;color:#fff;text-align:center;font-size:11px;font-weight:bold;padding:4px 2px}
- .cat-block table{width:100%;border-collapse:collapse;font-size:10px}
- .cat-block th{background:#f8f8f8;border:1px solid #111;padding:2px;font-size:9px;font-family:Arial,sans-serif}
+ .cat-head{background:#111;color:#fff;text-align:center;font-size:14px;font-weight:bold;padding:6px 2px}
+ .cat-block table{width:100%;border-collapse:collapse;font-size:13px}
+ .cat-block th{background:#f8f8f8;border:1px solid #111;padding:4px;font-size:11px;font-family:Arial,sans-serif}
  .cat-block th.mid{font-size:12px}
  .cat-block th.total-h{color:#e8721c;text-align:center}
  .cat-block th.num-h{color:#555;text-align:center}
- .cat-block td{border:1px solid #999;padding:2px 3px}
+ .cat-block td{border:1px solid #999;padding:4px 6px}
  .cat-block tr:nth-child(even) td{background:#fafafa}
  .cat-block td.num{width:28px;text-align:center;color:#333;font-size:11px;font-weight:bold;background:#f0f0f0}
  .cat-block td.name{text-align:right}
