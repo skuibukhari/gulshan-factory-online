@@ -120,6 +120,7 @@ try { db.exec(`ALTER TABLE users ADD COLUMN avatar TEXT DEFAULT ''`); } catch (e
 try { db.exec(`ALTER TABLE shops ADD COLUMN image TEXT DEFAULT ''`); } catch (e) {}
 try { db.exec(`ALTER TABLE routes ADD COLUMN open_time TEXT DEFAULT '10:00'`); } catch (e) {}
 try { db.exec(`ALTER TABLE users ADD COLUMN account_type TEXT DEFAULT ''`); } catch (e) {}
+try { db.exec(`ALTER TABLE users ADD COLUMN daily_shop_id INTEGER`); } catch (e) {}
 
 // ---------- Daily Orders (روزانہ آرڈر) — separate system, does not touch existing order flow ----------
 db.exec(`CREATE TABLE IF NOT EXISTS daily_orders (
@@ -156,7 +157,45 @@ CREATE TABLE IF NOT EXISTS daily_shop_items (
   shop_id INTEGER NOT NULL REFERENCES shops(id) ON DELETE CASCADE,
   product_id INTEGER NOT NULL REFERENCES products(id) ON DELETE CASCADE,
   UNIQUE(shop_id, product_id)
+);
+CREATE TABLE IF NOT EXISTS daily_categories (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  name TEXT NOT NULL UNIQUE,
+  active INTEGER DEFAULT 1
+);
+CREATE TABLE IF NOT EXISTS daily_units (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  name TEXT NOT NULL UNIQUE
+);
+CREATE TABLE IF NOT EXISTS daily_products (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  name TEXT NOT NULL,
+  category_id INTEGER REFERENCES daily_categories(id),
+  unit_id INTEGER REFERENCES daily_units(id),
+  active INTEGER DEFAULT 1
+);
+CREATE TABLE IF NOT EXISTS daily_shops (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  name TEXT NOT NULL,
+  phone TEXT DEFAULT '',
+  address TEXT DEFAULT '',
+  image TEXT DEFAULT '',
+  active INTEGER DEFAULT 1
 );`);
+// --- Daily system: fully separate catalog (mukamal alag data) — one-time copy ---
+// Same IDs so existing daily_orders/access rows stay valid; after this, independent.
+if (!db.prepare(`SELECT value FROM daily_settings WHERE key='catalog_split'`).get()) {
+  db.prepare(`INSERT OR IGNORE INTO daily_categories (id, name) SELECT id, name FROM categories`).run();
+  db.prepare(`INSERT OR IGNORE INTO daily_units (id, name) SELECT id, name FROM units`).run();
+  db.prepare(`INSERT OR IGNORE INTO daily_products (id, name, category_id, unit_id)
+    SELECT id, name, category_id, unit_id FROM products`).run();
+  db.prepare(`INSERT OR IGNORE INTO daily_shops (id, name, phone, address, image, active)
+    SELECT id, name, phone, address, image, active FROM shops`).run();
+  db.prepare(`INSERT INTO daily_settings (key, value) VALUES ('catalog_split', '1')`).run();
+  // Existing shop users → link to their (copied) daily shop so daily access keeps working
+  db.prepare(`UPDATE users SET daily_shop_id = shop_id WHERE role='shop' AND shop_id IS NOT NULL
+    AND daily_shop_id IS NULL AND EXISTS (SELECT 1 FROM daily_shops WHERE id = users.shop_id)`).run();
+}
 db.prepare(`INSERT OR IGNORE INTO daily_settings (key, value) VALUES ('cutoff_time', '20:00')`).run();
 
 const SECTIONS = ['dashboard','orders','order_history','shops','products','categories','units','vehicles','routes','schedule','reports','users','daily'];
@@ -296,7 +335,7 @@ app.use(session({
 
 function requireLogin(req, res, next) {
   if (!req.session.userId) return res.status(401).json({ error: 'login_required' });
-  const u = db.prepare('SELECT id, username, role, shop_id, active FROM users WHERE id=?').get(req.session.userId);
+  const u = db.prepare('SELECT id, username, role, shop_id, daily_shop_id, active FROM users WHERE id=?').get(req.session.userId);
   if (!u || !u.active) { req.session.destroy(() => {}); return res.status(401).json({ error: 'login_required' }); }
   req.user = u;
   next();
@@ -629,9 +668,12 @@ app.delete('/api/ads', requireLogin, (req, res) => {
 app.post('/api/logout', (req, res) => req.session.destroy(() => res.json({ ok: true })));
 app.get('/api/me', requireLogin, (req, res) => {
   const shop = req.user.shop_id ? db.prepare('SELECT id, name, image FROM shops WHERE id=?').get(req.user.shop_id) : null;
-  const me = db.prepare('SELECT avatar FROM users WHERE id=?').get(req.user.id) || {};
+  const dshop = req.user.daily_shop_id ? db.prepare('SELECT id, name FROM daily_shops WHERE id=?').get(req.user.daily_shop_id) : null;
+  const me = db.prepare('SELECT avatar, account_type FROM users WHERE id=?').get(req.user.id) || {};
   res.json({ id: req.user.id, username: req.user.username, role: req.user.role, shop_id: req.user.shop_id,
+    daily_shop_id: req.user.daily_shop_id || null, account_type: me.account_type || '',
     shop_name: shop ? shop.name : null, shop_image: shop && shop.image ? '/images/' + shop.image : null,
+    daily_shop_name: dshop ? dshop.name : null,
     avatar: me.avatar ? '/images/' + me.avatar : null,
     permissions: req.user.role === 'super_admin' ? Object.fromEntries(SECTIONS.map(s => [s, 'full'])) : getPermissions(req.user.id) });
 });
@@ -793,7 +835,9 @@ function dailyCutoffPassed() {
 function dailyScope(req) {
   const u = req.user;
   if (u.role === 'super_admin') return { shopId: null, catIds: null, shopIds: null };
-  const shopId = scopedShopId(req);
+  // Daily shop users are scoped to their DAILY shop (separate from supply shops).
+  // A supply-only shop (no daily_shop_id) sees nothing in daily — clean separation.
+  const shopId = (u.role === 'shop') ? (u.daily_shop_id || -1) : null;
   const catRows = db.prepare('SELECT category_id FROM daily_cat_access WHERE user_id=?').all(u.id);
   const shopRows = db.prepare('SELECT shop_id FROM daily_shop_access WHERE user_id=?').all(u.id);
   return {
@@ -820,9 +864,9 @@ app.get('/api/daily/my-items', requireLogin, requireSection('daily', 'view'), (r
 });
 
 app.get('/api/daily/catalog', requireLogin, requireSection('daily', 'view'), (req, res) => {
-  const cats = db.prepare('SELECT id, name FROM categories ORDER BY name').all();
+  const cats = db.prepare('SELECT id, name FROM daily_categories WHERE active=1 ORDER BY name').all();
   const prods = db.prepare(`SELECT p.id, p.name, p.category_id, u.name AS unit_name
-    FROM products p LEFT JOIN units u ON u.id=p.unit_id ORDER BY p.name`).all();
+    FROM daily_products p LEFT JOIN daily_units u ON u.id=p.unit_id WHERE p.active=1 ORDER BY p.name`).all();
   res.json(cats.map(c => ({ ...c, products: prods.filter(p => p.category_id === c.id) })));
 });
 
@@ -832,18 +876,18 @@ app.get('/api/daily/orders', requireLogin, requireSection('daily', 'view'), (req
   const sf = dailyShopFilter(sc, 'do');
   const orders = db.prepare(`SELECT do.id, do.shop_id, do.order_date, do.note, s.name AS shop_name,
       u.username AS created_by FROM daily_orders do
-    JOIN shops s ON s.id=do.shop_id LEFT JOIN users u ON u.id=do.created_by
+    JOIN daily_shops s ON s.id=do.shop_id LEFT JOIN users u ON u.id=do.created_by
     WHERE do.order_date=?${sf.clause} ORDER BY s.name`).all(date, ...sf.args);
   const itemQ = sc.catIds
     ? db.prepare(`SELECT di.order_id, di.product_id, di.quantity, p.name AS product_name, p.category_id,
         c.name AS category_name, un.name AS unit_name FROM daily_order_items di
-      JOIN products p ON p.id=di.product_id LEFT JOIN categories c ON c.id=p.category_id
-      LEFT JOIN units un ON un.id=p.unit_id
+      JOIN daily_products p ON p.id=di.product_id LEFT JOIN daily_categories c ON c.id=p.category_id
+      LEFT JOIN daily_units un ON un.id=p.unit_id
       WHERE di.order_id=? AND p.category_id IN (${sc.catIds.map(() => '?').join(',')}) ORDER BY c.name, p.name`)
     : db.prepare(`SELECT di.order_id, di.product_id, di.quantity, p.name AS product_name, p.category_id,
         c.name AS category_name, un.name AS unit_name FROM daily_order_items di
-      JOIN products p ON p.id=di.product_id LEFT JOIN categories c ON c.id=p.category_id
-      LEFT JOIN units un ON un.id=p.unit_id WHERE di.order_id=? ORDER BY c.name, p.name`);
+      JOIN daily_products p ON p.id=di.product_id LEFT JOIN daily_categories c ON c.id=p.category_id
+      LEFT JOIN daily_units un ON un.id=p.unit_id WHERE di.order_id=? ORDER BY c.name, p.name`);
   res.json(orders.map(o => ({ ...o, items: sc.catIds ? itemQ.all(o.id, ...sc.catIds) : itemQ.all(o.id) })));
 });
 
@@ -853,7 +897,7 @@ app.post('/api/daily/orders', requireLogin, requireSection('daily', 'full'), (re
   const order_date = b.order_date || dailyOrderDate();
   const shop_id = sc.shopId || Number(b.shop_id) || 0;
   if (!shop_id) return res.status(400).json({ error: 'shop_required' });
-  if (!db.prepare('SELECT id FROM shops WHERE id=?').get(shop_id)) return res.status(400).json({ error: 'bad_shop' });
+  if (!db.prepare('SELECT id FROM daily_shops WHERE id=?').get(shop_id)) return res.status(400).json({ error: 'bad_shop' });
   if (sc.shopId && order_date === dailyOrderDate() && dailyCutoffPassed())
     return res.status(400).json({ error: 'cutoff_passed' });
   const items = b.items || {};
@@ -868,7 +912,7 @@ app.post('/api/daily/orders', requireLogin, requireSection('daily', 'full'), (re
     db.prepare('DELETE FROM daily_order_items WHERE order_id=?').run(order.id);
   }
   const ins = db.prepare('INSERT INTO daily_order_items (order_id, product_id, quantity) VALUES (?,?,?)');
-  const prodExists = db.prepare('SELECT 1 FROM products WHERE id=?');
+  const prodExists = db.prepare('SELECT 1 FROM daily_products WHERE id=? AND active=1');
   for (const [pid, q] of Object.entries(items)) {
     const qty = Number(q) || 0;
     if (qty > 0 && Number(pid) > 0 && prodExists.get(Number(pid))) ins.run(order.id, Number(pid), qty);
@@ -894,8 +938,8 @@ app.get('/api/daily/totals', requireLogin, requireSection('daily', 'view'), (req
   let sql = `SELECT p.id AS product_id, p.name AS product_name, p.category_id, c.name AS category_name,
       un.name AS unit_name, SUM(di.quantity) AS total_qty, COUNT(DISTINCT do.shop_id) AS shop_count
     FROM daily_order_items di JOIN daily_orders do ON do.id=di.order_id
-    JOIN products p ON p.id=di.product_id
-    LEFT JOIN categories c ON c.id=p.category_id LEFT JOIN units un ON un.id=p.unit_id
+    JOIN daily_products p ON p.id=di.product_id
+    LEFT JOIN daily_categories c ON c.id=p.category_id LEFT JOIN daily_units un ON un.id=p.unit_id
     WHERE do.order_date=?${sf.clause}`;
   const args = [date, ...sf.args];
   if (sc.catIds) { sql += ` AND p.category_id IN (${sc.catIds.map(() => '?').join(',')})`; args.push(...sc.catIds); }
@@ -928,9 +972,9 @@ app.get('/api/daily/tracker', requireLogin, requireSection('daily', 'view'), (re
   const sc = dailyScope(req);
   const date = req.query.date || dailyOrderDate();
   let shops;
-  if (sc.shopId) shops = db.prepare('SELECT id, name FROM shops WHERE id=?').all(sc.shopId);
-  else if (sc.shopIds) shops = db.prepare(`SELECT id, name FROM shops WHERE id IN (${sc.shopIds.map(() => '?').join(',')}) ORDER BY name`).all(...sc.shopIds);
-  else shops = db.prepare('SELECT id, name FROM shops WHERE active=1 ORDER BY name').all();
+  if (sc.shopId && sc.shopId > 0) shops = db.prepare('SELECT id, name FROM daily_shops WHERE id=?').all(sc.shopId);
+  else if (sc.shopIds) shops = db.prepare(`SELECT id, name FROM daily_shops WHERE id IN (${sc.shopIds.map(() => '?').join(',')}) ORDER BY name`).all(...sc.shopIds);
+  else shops = db.prepare('SELECT id, name FROM daily_shops WHERE active=1 ORDER BY name').all();
   const ord = db.prepare('SELECT created_at FROM daily_orders WHERE shop_id=? AND order_date=?');
   const nItems = db.prepare(`SELECT COUNT(*) c FROM daily_order_items
     WHERE order_id=(SELECT id FROM daily_orders WHERE shop_id=? AND order_date=?)`);
@@ -954,12 +998,12 @@ app.get('/api/daily/shop-items/:shopId', requireLogin, isAdmin, (req, res) => {
 });
 app.put('/api/daily/shop-items/:shopId', requireLogin, isAdmin, (req, res) => {
   const sid = Number(req.params.shopId);
-  if (!db.prepare('SELECT id FROM shops WHERE id=?').get(sid)) return res.status(400).json({ error: 'bad_shop' });
+  if (!db.prepare('SELECT id FROM daily_shops WHERE id=?').get(sid)) return res.status(400).json({ error: 'bad_shop' });
   const prods = (req.body || {}).products || [];
   db.transaction(() => {
     db.prepare('DELETE FROM daily_shop_items WHERE shop_id=?').run(sid);
     const ins = db.prepare('INSERT OR IGNORE INTO daily_shop_items (shop_id, product_id) VALUES (?,?)');
-    const ok = db.prepare('SELECT 1 FROM products WHERE id=?');
+    const ok = db.prepare('SELECT 1 FROM daily_products WHERE id=?');
     for (const p of prods) { const pid = Number(p); if (pid > 0 && ok.get(pid)) ins.run(sid, pid); }
   })();
   res.json({ ok: true });
@@ -1020,6 +1064,31 @@ crud('routes', 'routes', 'routes', ['name', 'vehicle_id', 'supply_date', 'cutoff
 crud('categories', 'categories', 'categories', ['name', 'sort']);
 crud('units', 'units', 'units', ['name']);
 crud('shops', 'shops', 'shops', ['name', 'phone', 'address', 'active']);
+// ---------- Daily catalog management (fully separate from supply catalog) ----------
+crud('daily-categories', 'daily_categories', 'daily', ['name', 'active']);
+crud('daily-units', 'daily_units', 'daily', ['name']);
+crud('daily-shops', 'daily_shops', 'daily', ['name', 'phone', 'address', 'active']);
+app.get('/api/daily-products', requireLogin, requireSection('daily', 'view'), (req, res) => {
+  res.json(db.prepare(`SELECT p.*, c.name AS category_name, u.name AS unit_name
+    FROM daily_products p LEFT JOIN daily_categories c ON c.id=p.category_id LEFT JOIN daily_units u ON u.id=p.unit_id
+    ORDER BY c.id, p.name`).all());
+});
+app.post('/api/daily-products', requireLogin, requireSection('daily', 'full'), (req, res) => {
+  const b = req.body || {};
+  const r = db.prepare('INSERT INTO daily_products (name, category_id, unit_id, active) VALUES (?,?,?,?)')
+    .run(b.name || '', b.category_id || null, b.unit_id || null, b.active ?? 1);
+  res.json({ ok: true, id: r.lastInsertRowid });
+});
+app.put('/api/daily-products/:id', requireLogin, requireSection('daily', 'full'), (req, res) => {
+  const b = req.body || {};
+  db.prepare('UPDATE daily_products SET name=?, category_id=?, unit_id=?, active=? WHERE id=?')
+    .run(b.name || '', b.category_id || null, b.unit_id || null, b.active ?? 1, req.params.id);
+  res.json({ ok: true });
+});
+app.delete('/api/daily-products/:id', requireLogin, requireSection('daily', 'full'), (req, res) => {
+  db.prepare('DELETE FROM daily_products WHERE id=?').run(req.params.id);
+  res.json({ ok: true });
+});
 app.get('/api/products', requireLogin, requireSection('products', 'view'), (req, res) => {
   res.json(db.prepare(`SELECT p.*, c.name AS category_name, u.name AS unit_name
     FROM products p LEFT JOIN categories c ON c.id=p.category_id LEFT JOIN units u ON u.id=p.unit_id
@@ -1044,19 +1113,20 @@ app.delete('/api/products/:id', requireLogin, requireSection('products', 'full')
 
 // ---------- Users & permissions (super admin) ----------
 app.get('/api/users', requireLogin, isAdmin, (req, res) => {
-  const users = db.prepare(`SELECT u.id, u.username, u.role, u.shop_id, u.active, u.created_at, u.phone, u.account_type, s.name AS shop_name
-    FROM users u LEFT JOIN shops s ON s.id=u.shop_id ORDER BY u.id`).all();
+  const users = db.prepare(`SELECT u.id, u.username, u.role, u.shop_id, u.daily_shop_id, u.active, u.created_at, u.phone, u.account_type,
+      COALESCE(s.name, ds.name) AS shop_name
+    FROM users u LEFT JOIN shops s ON s.id=u.shop_id LEFT JOIN daily_shops ds ON ds.id=u.daily_shop_id ORDER BY u.id`).all();
   res.json(users.map(u => ({ ...u, permissions: u.role === 'super_admin' ? Object.fromEntries(SECTIONS.map(s => [s, 'full'])) : getPermissions(u.id) })));
 });
 // Public app version — clients detect updates against this.
 app.get('/api/version', (req, res) => res.json({ version: require('./package.json').version }));
 app.post('/api/users', requireLogin, isAdmin, (req, res) => {
-  const { username, password, role, shop_id, phone, account_type } = req.body || {};
+  const { username, password, role, shop_id, daily_shop_id, phone, account_type } = req.body || {};
   if (!username || !password || !['super_admin', 'factory', 'shop'].includes(role)) return res.status(400).json({ error: 'bad_input' });
   const atype = String(account_type || '').trim().slice(0, 20);
   try {
-    const r = db.prepare('INSERT INTO users (username, password_hash, role, shop_id, phone, account_type) VALUES (?,?,?,?,?,?)')
-      .run(String(username).trim(), bcrypt.hashSync(String(password), 10), role, shop_id || null, String(phone || ''), atype);
+    const r = db.prepare('INSERT INTO users (username, password_hash, role, shop_id, daily_shop_id, phone, account_type) VALUES (?,?,?,?,?,?,?)')
+      .run(String(username).trim(), bcrypt.hashSync(String(password), 10), role, shop_id || null, daily_shop_id || null, String(phone || ''), atype);
     if (role !== 'super_admin') seedPermissions(r.lastInsertRowid, role);
     // department / supplier / viewer: daily sirf view (kuch add/edit nahi)
     if (['department', 'supplier', 'viewer'].includes(atype))
@@ -1065,10 +1135,10 @@ app.post('/api/users', requireLogin, isAdmin, (req, res) => {
   } catch (e) { res.status(400).json({ error: 'username_taken' }); }
 });
 app.put('/api/users/:id', requireLogin, isAdmin, (req, res) => {
-  const { role, shop_id, active, password, phone, account_type } = req.body || {};
+  const { role, shop_id, daily_shop_id, active, password, phone, account_type } = req.body || {};
   const u = db.prepare('SELECT * FROM users WHERE id=?').get(req.params.id);
   if (!u) return res.status(404).json({ error: 'not_found' });
-  if (role) db.prepare('UPDATE users SET role=?, shop_id=? WHERE id=?').run(role, shop_id || null, u.id);
+  if (role) db.prepare('UPDATE users SET role=?, shop_id=?, daily_shop_id=? WHERE id=?').run(role, shop_id || null, daily_shop_id || null, u.id);
   if (active !== undefined) db.prepare('UPDATE users SET active=? WHERE id=?').run(active ? 1 : 0, u.id);
   if (password) db.prepare('UPDATE users SET password_hash=? WHERE id=?').run(bcrypt.hashSync(String(password), 10), u.id);
   if (phone !== undefined) db.prepare('UPDATE users SET phone=? WHERE id=?').run(String(phone), u.id);
@@ -1347,8 +1417,8 @@ ${head('تاریخ وائز آرڈر ہسٹری', 'تاریخ: ' + date)}${body 
     let sql = `SELECT p.name AS product_name, c.name AS category_name, u.name AS unit_name,
         SUM(di.quantity) AS total_qty, COUNT(DISTINCT do.shop_id) AS shop_count
       FROM daily_order_items di JOIN daily_orders do ON do.id=di.order_id
-      JOIN products p ON p.id=di.product_id
-      LEFT JOIN categories c ON c.id=p.category_id LEFT JOIN units u ON u.id=p.unit_id
+      JOIN daily_products p ON p.id=di.product_id
+      LEFT JOIN daily_categories c ON c.id=p.category_id LEFT JOIN daily_units u ON u.id=p.unit_id
       WHERE do.order_date=?${sf.clause}`;
     const args = [ddate, ...sf.args];
     if (sc.catIds) { sql += ` AND p.category_id IN (${sc.catIds.map(() => '?').join(',')})`; args.push(...sc.catIds); }
@@ -1375,12 +1445,12 @@ ${head('روزانہ آرڈر — کل پیداوار', 'پیداوار کی ت�
     const sid = sc.shopId || Number(shop_id) || 0;
     if (!sid) return res.status(400).send('shop_required');
     if (sc.shopIds && !sc.shopIds.includes(sid)) return res.status(403).send('forbidden');
-    const shop = db.prepare('SELECT name FROM shops WHERE id=?').get(sid);
+    const shop = db.prepare('SELECT name FROM daily_shops WHERE id=?').get(sid);
     if (!shop) return res.status(404).send('shop_not_found');
     const o = db.prepare('SELECT id, note FROM daily_orders WHERE shop_id=? AND order_date=?').get(sid, ddate);
     const dItems = db.prepare(`SELECT p.name AS product_name, u.name AS unit_name, di.quantity, c.name AS category_name
-      FROM daily_order_items di JOIN products p ON p.id=di.product_id
-      LEFT JOIN units u ON u.id=p.unit_id LEFT JOIN categories c ON c.id=p.category_id
+      FROM daily_order_items di JOIN daily_products p ON p.id=di.product_id
+      LEFT JOIN daily_units u ON u.id=p.unit_id LEFT JOIN daily_categories c ON c.id=p.category_id
       WHERE di.order_id=?${sc.catIds ? ` AND p.category_id IN (${sc.catIds.map(() => '?').join(',')})` : ''}
       ORDER BY c.name, p.name`);
     const its = o ? dItems.all(o.id, ...(sc.catIds || [])) : [];

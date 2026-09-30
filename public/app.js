@@ -1068,7 +1068,8 @@ function showSplash(ad) {
   });
 }
 const ACCT_TYPES = {
-  shop: { label: '🏪 دکان', role: 'shop' },
+  shop: { label: '🏪 دکان (سپلائی)', role: 'shop' },
+  daily_shop: { label: '📝 روزانہ دکان', role: 'shop' },
   department: { label: '🏭 ڈیپارٹمنٹ', role: 'factory' },
   supplier: { label: '🚚 سپلائر', role: 'factory' },
   viewer: { label: '👁 ویور', role: 'factory' },
@@ -1091,18 +1092,35 @@ async function renderSettingsUsers() {
       <label>یوزر نام<br><input id="nu-name"></label>
       <label>پاس ورڈ<br><input id="nu-pass" type="password"></label>
       <label>موبائل نمبر<br><input id="nu-phone" dir="ltr" placeholder="03xx-xxxxxxx"></label>
-      <label>اکاؤنٹ کی قسم<br><select id="nu-type" onchange="document.getElementById('nu-shoprow').style.display=this.value==='shop'?'block':'none'">
+      <label>اکاؤنٹ کی قسم<br><select id="nu-type" onchange="nuTypeChanged()">
         ${Object.entries(ACCT_TYPES).map(([k, v]) => `<option value="${k}">${v.label}</option>`).join('')}</select></label>
-      <label id="nu-shoprow">دکان<br><select id="nu-shop">${CACHE.shops.map(s => `<option value="${s.id}">${esc(s.name)}</option>`).join('')}</select></label>
+      <label id="nu-shoprow">دکان (سپلائی)<br><select id="nu-shop">${CACHE.shops.map(s => `<option value="${s.id}">${esc(s.name)}</option>`).join('')}</select></label>
+      <label id="nu-dshoprow" style="display:none">روزانہ دکان<br><select id="nu-dshop"></select></label>
       <label><br><button class="btn small green" onclick="userAdd()">بنائیں</button></label>
     </div>
     <p class="note">ڈیپارٹمنٹ / سپلائر / ویور خودکار طور پر صرف دیکھ سکیں گے — کیٹیگری/دکان کی سیٹنگ روزانہ آرڈر → ⚙ ایکسس سیٹنگ سے کریں</p>`;
+  loadDailyShopsForUserForm();
+}
+async function loadDailyShopsForUserForm() {
+  try {
+    const ds = await api('GET', '/api/daily-shops');
+    const sel = $('#nu-dshop');
+    if (sel) sel.innerHTML = ds.map(s => `<option value="${s.id}">${esc(s.name)}</option>`).join('');
+  } catch (e) {}
+}
+function nuTypeChanged() {
+  const t = $('#nu-type').value;
+  $('#nu-shoprow').style.display = t === 'shop' ? 'block' : 'none';
+  $('#nu-dshoprow').style.display = t === 'daily_shop' ? 'block' : 'none';
 }
 async function userAdd() {
   const atype = $('#nu-type').value;
   const role = (ACCT_TYPES[atype] || ACCT_TYPES.shop).role;
   await api('POST', '/api/users', { username: $('#nu-name').value.trim(), password: $('#nu-pass').value,
-    role, account_type: atype, shop_id: atype === 'shop' ? Number($('#nu-shop').value) : null, phone: $('#nu-phone').value.trim() });
+    role, account_type: atype,
+    shop_id: atype === 'shop' ? Number($('#nu-shop').value) : null,
+    daily_shop_id: atype === 'daily_shop' ? Number($('#nu-dshop').value) : null,
+    phone: $('#nu-phone').value.trim() });
   renderSettingsUsers();
 }
 async function userDel(id) { if (!confirm('یوزر حذف کریں؟')) return; await api('DELETE', '/api/users/' + id); renderSettingsUsers(); }
@@ -1155,7 +1173,12 @@ function fmtTime(ts) {
 async function renderDaily() {
   const di = await api('GET', '/api/daily/date');
   DAILY_DATE = di.order_date; DAILY_CUTOFF = di.cutoff_time;
-  if (ME.role === 'shop') return renderDailyShopForm(di);
+  if (ME.role === 'shop' && ME.daily_shop_id) return renderDailyShopForm(di);
+  if (ME.role === 'shop') {
+    $('#v-daily').innerHTML = `<h2 class="st">📝 <span>روزانہ آرڈر</span></h2>
+      <p class="note">آپ کا اکاؤنٹ روزانہ آرڈر سسٹم میں رجسٹرڈ نہیں ہے — صرف روزانہ دکان اکاؤنٹ یہاں آرڈر دے سکتا ہے۔</p>`;
+    return;
+  }
   return renderDailyBoard(di);
 }
 // countdown target = order_date se ek din pehle, cutoff time par
@@ -1268,7 +1291,7 @@ async function delDailyOrderBoard(id) {
 // ---------- admin: access settings ----------
 async function renderDailyAccess() {
   const users = (await api('GET', '/api/users')).filter(u => u.role !== 'super_admin');
-  const [cats, shops] = await Promise.all([api('GET', '/api/categories'), api('GET', '/api/shops')]);
+  const [cats, shops] = await Promise.all([api('GET', '/api/daily-categories'), api('GET', '/api/daily-shops')]);
   window._daCats = cats; window._daShops = shops;
   const groups = {};
   users.forEach(u => { const k = u.account_type || u.role; (groups[k] = groups[k] || []).push(u); });
@@ -1279,6 +1302,7 @@ async function renderDailyAccess() {
   $('#v-daily').innerHTML = `
     <h2 class="st">⚙ <span>روزانہ آرڈر — یوزر ایکسس</span></h2>
     <button class="btn small" onclick="DAILY_VIEW_DATE=null;renderDaily()">← واپس</button>
+    <button class="btn small dark" onclick="renderDailyData()">📦 روزانہ ڈیٹا (کیٹیگری/آئٹم/دکان)</button>
     <div class="formgrid"><label>یوزر<br><select id="daUser" onchange="renderDailyAccessForm()">
       <option value="">— منتخب کریں —</option>
       ${optGroups}
@@ -1342,6 +1366,122 @@ async function saveDailyCutoff() {
   const r = await api('PUT', '/api/daily/settings', { cutoff_time: t });
   DAILY_CUTOFF = r.cutoff_time;
   alert('کٹ آف ٹائم محفوظ ہو گیا ✅');
+}
+
+// ---------- Daily data management (separate catalog: categories, units, products, shops) ----------
+function renderDailyData() {
+  $('#v-daily').innerHTML = `
+    <h2 class="st">📦 <span>روزانہ ڈیٹا مینجمنٹ</span></h2>
+    <button class="btn small" onclick="DAILY_VIEW_DATE=null;renderDaily()">← واپس</button>
+    <p class="note">یہ ڈیٹا صرف روزانہ آرڈر کا ہے — سپلائی سسٹم سے بالکل الگ۔ یہاں تبدیلی سپلائی کو متاثر نہیں کرے گی۔</p>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:12px">
+      <button class="btn" onclick="renderDailyCats()">🗂 روزانہ کیٹیگریز</button>
+      <button class="btn" onclick="renderDailyUnits()">⚖ روزانہ یونٹس</button>
+      <button class="btn" onclick="renderDailyProducts()">🍞 روزانہ آئٹمز</button>
+      <button class="btn" onclick="renderDailyShops()">🏪 روزانہ دکانیں</button>
+    </div>`;
+}
+async function renderDailyCats() {
+  const list = await api('GET', '/api/daily-categories');
+  $('#v-daily').innerHTML = `
+    <h2 class="st">🗂 <span>روزانہ کیٹیگریز</span></h2>
+    <button class="btn small" onclick="renderDailyData()">← واپس</button>
+    <div class="formgrid"><label>نئی کیٹیگری<br><input id="dc-name" placeholder="مثلاً Dry Cake"></label>
+    <label><br><button class="btn small green" onclick="dailyCatAdd()">➕ شامل کریں</button></label></div>
+    <table><tr><th>نام</th><th>حالت</th><th></th></tr>
+    ${list.map(c => `<tr><td>${esc(c.name)}</td>
+      <td>${c.active ? '<span class="badge">فعال</span>' : '<span class="badge off">بند</span>'}
+        <button class="btn small ghost" onclick="dailyCatToggle(${c.id},${c.active ? 0 : 1})">${c.active ? 'بند کریں' : 'فعال کریں'}</button></td>
+      <td><button class="btn small danger" onclick="dailyCatDel(${c.id})">🗑</button></td></tr>`).join('') || '<tr><td colspan=3>خالی</td></tr>'}</table>`;
+}
+async function dailyCatAdd() {
+  const name = $('#dc-name').value.trim(); if (!name) return;
+  await api('POST', '/api/daily-categories', { name });
+  renderDailyCats();
+}
+async function dailyCatDel(id) { if (!confirm('حذف کریں؟')) return; await api('DELETE', '/api/daily-categories/' + id); renderDailyCats(); }
+async function dailyCatToggle(id, active) { await api('PUT', '/api/daily-categories/' + id, { name: (await api('GET', '/api/daily-categories')).find(c => c.id === id).name, active }); renderDailyCats(); }
+async function renderDailyUnits() {
+  const list = await api('GET', '/api/daily-units');
+  $('#v-daily').innerHTML = `
+    <h2 class="st">⚖ <span>روزانہ یونٹس</span></h2>
+    <button class="btn small" onclick="renderDailyData()">← واپس</button>
+    <div class="formgrid"><label>نیا یونٹ<br><input id="du-name" placeholder="مثلاً پیکٹ"></label>
+    <label><br><button class="btn small green" onclick="dailyUnitAdd()">➕ شامل کریں</button></label></div>
+    <table><tr><th>نام</th><th></th></tr>
+    ${list.map(u => `<tr><td>${esc(u.name)}</td><td><button class="btn small danger" onclick="dailyUnitDel(${u.id})">🗑</button></td></tr>`).join('') || '<tr><td colspan=2>خالی</td></tr>'}</table>`;
+}
+async function dailyUnitAdd() {
+  const name = $('#du-name').value.trim(); if (!name) return;
+  await api('POST', '/api/daily-units', { name });
+  renderDailyUnits();
+}
+async function dailyUnitDel(id) { if (!confirm('حذف کریں؟')) return; await api('DELETE', '/api/daily-units/' + id); renderDailyUnits(); }
+async function renderDailyProducts() {
+  const [prods, cats, units] = await Promise.all([
+    api('GET', '/api/daily-products'), api('GET', '/api/daily-categories'), api('GET', '/api/daily-units'),
+  ]);
+  const rows = prods.map(p => `<tr><td>${esc(p.category_name || '—')}</td><td>${esc(p.name)}</td><td>${esc(p.unit_name || '—')}</td>
+    <td>${p.active ? '<span class="badge">فعال</span>' : '<span class="badge off">بند</span>'}</td>
+    <td><button class="btn small ghost" onclick="dailyProdEdit(${p.id})">✏</button>
+    <button class="btn small danger" onclick="dailyProdDel(${p.id})">🗑</button></td></tr>`).join('');
+  $('#v-daily').innerHTML = `
+    <h2 class="st">🍞 <span>روزانہ آئٹمز</span></h2>
+    <button class="btn small" onclick="renderDailyData()">← واپس</button>
+    <div class="formgrid">
+      <label>کیٹیگری<br><select id="dp-cat">${cats.filter(c => c.active).map(c => `<option value="${c.id}">${esc(c.name)}</option>`).join('')}</select></label>
+      <label>آئٹم کا نام<br><input id="dp-name" placeholder="مثلاً Milky Bread"></label>
+      <label>یونٹ<br><select id="dp-unit">${units.map(u => `<option value="${u.id}">${esc(u.name)}</option>`).join('')}</select></label>
+      <label><br><button class="btn small green" onclick="dailyProdAdd()">➕ شامل کریں</button></label>
+    </div>
+    <table><tr><th>کیٹیگری</th><th>نام</th><th>یونٹ</th><th>حالت</th><th></th></tr>${rows || '<tr><td colspan=5>خالی</td></tr>'}</table>`;
+}
+async function dailyProdAdd() {
+  const name = $('#dp-name').value.trim(); if (!name) return;
+  await api('POST', '/api/daily-products', { name, category_id: Number($('#dp-cat').value) || null, unit_id: Number($('#dp-unit').value) || null });
+  renderDailyProducts();
+}
+async function dailyProdDel(id) { if (!confirm('حذف کریں؟')) return; await api('DELETE', '/api/daily-products/' + id); renderDailyProducts(); }
+async function dailyProdEdit(id) {
+  const prods = await api('GET', '/api/daily-products');
+  const p = prods.find(x => x.id === id); if (!p) return;
+  const name = prompt('آئٹم کا نام:', p.name); if (name === null) return;
+  const active = confirm('آئٹم فعال رکھیں؟ (OK=فعال، Cancel=بند)');
+  await api('PUT', '/api/daily-products/' + id, { name, category_id: p.category_id, unit_id: p.unit_id, active: active ? 1 : 0 });
+  renderDailyProducts();
+}
+async function renderDailyShops() {
+  const list = await api('GET', '/api/daily-shops');
+  $('#v-daily').innerHTML = `
+    <h2 class="st">🏪 <span>روزانہ دکانیں</span></h2>
+    <button class="btn small" onclick="renderDailyData()">← واپس</button>
+    <div class="formgrid">
+      <label>دکان کا نام<br><input id="ds-name" placeholder="مثلاً Mega Gulshan"></label>
+      <label>فون<br><input id="ds-phone" dir="ltr"></label>
+      <label>پتہ<br><input id="ds-address"></label>
+      <label><br><button class="btn small green" onclick="dailyShopAdd()">➕ شامل کریں</button></label>
+    </div>
+    <table><tr><th>نام</th><th>فون</th><th>پتہ</th><th>حالت</th><th></th></tr>
+    ${list.map(s => `<tr><td>${esc(s.name)}</td><td dir="ltr">${esc(s.phone || '—')}</td><td>${esc(s.address || '—')}</td>
+      <td>${s.active ? '<span class="badge">فعال</span>' : '<span class="badge off">بند</span>'}</td>
+      <td><button class="btn small ghost" onclick="dailyShopEdit(${s.id})">✏</button>
+      <button class="btn small danger" onclick="dailyShopDel(${s.id})">🗑</button></td></tr>`).join('') || '<tr><td colspan=5>خالی</td></tr>'}</table>`;
+}
+async function dailyShopAdd() {
+  const name = $('#ds-name').value.trim(); if (!name) return;
+  await api('POST', '/api/daily-shops', { name, phone: $('#ds-phone').value.trim(), address: $('#ds-address').value.trim() });
+  renderDailyShops();
+}
+async function dailyShopDel(id) { if (!confirm('حذف کریں؟')) return; await api('DELETE', '/api/daily-shops/' + id); renderDailyShops(); }
+async function dailyShopEdit(id) {
+  const list = await api('GET', '/api/daily-shops');
+  const s = list.find(x => x.id === id); if (!s) return;
+  const name = prompt('دکان کا نام:', s.name); if (name === null) return;
+  const phone = prompt('فون:', s.phone || ''); if (phone === null) return;
+  const address = prompt('پتہ:', s.address || ''); if (address === null) return;
+  const active = confirm('دکان فعال رکھیں؟ (OK=فعال، Cancel=بند)');
+  await api('PUT', '/api/daily-shops/' + id, { name, phone, address, active: active ? 1 : 0 });
+  renderDailyShops();
 }
 
 document.addEventListener('DOMContentLoaded', init);
