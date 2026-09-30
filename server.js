@@ -1225,7 +1225,7 @@ app.get('/api/dashboard', requireLogin, requireSection('dashboard'), (req, res) 
     recent_orders: db.prepare(`SELECT o.id, o.created_at, o.delivery_date, s.name AS shop_name,
       s.image AS shop_image, u.username AS created_by, u.avatar AS user_avatar,
       (SELECT COUNT(*) FROM order_items WHERE order_id=o.id) AS items
-      FROM orders o JOIN shops s ON s.id=o.shop_id LEFT JOIN users u ON u.id=o.created_by WHERE 1=1 ${sfj} ORDER BY o.id DESC LIMIT 10`).all(),
+      FROM orders o JOIN shops s ON s.id=o.shop_id LEFT JOIN users u ON u.id=o.created_by WHERE o.delivery_date >= ? ${sfj} ORDER BY o.id DESC LIMIT 10`).all(ktoday),
     upcoming,
   });
 });
