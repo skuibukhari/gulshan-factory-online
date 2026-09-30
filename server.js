@@ -119,6 +119,7 @@ try { db.exec(`ALTER TABLE users ADD COLUMN phone TEXT DEFAULT ''`); } catch (e)
 try { db.exec(`ALTER TABLE users ADD COLUMN avatar TEXT DEFAULT ''`); } catch (e) {}
 try { db.exec(`ALTER TABLE shops ADD COLUMN image TEXT DEFAULT ''`); } catch (e) {}
 try { db.exec(`ALTER TABLE routes ADD COLUMN open_time TEXT DEFAULT '10:00'`); } catch (e) {}
+try { db.exec(`ALTER TABLE users ADD COLUMN account_type TEXT DEFAULT ''`); } catch (e) {}
 
 // ---------- Daily Orders (روزانہ آرڈر) — separate system, does not touch existing order flow ----------
 db.exec(`CREATE TABLE IF NOT EXISTS daily_orders (
@@ -150,6 +151,11 @@ CREATE TABLE IF NOT EXISTS daily_shop_access (
   user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
   shop_id INTEGER NOT NULL REFERENCES shops(id) ON DELETE CASCADE,
   UNIQUE(user_id, shop_id)
+);
+CREATE TABLE IF NOT EXISTS daily_shop_items (
+  shop_id INTEGER NOT NULL REFERENCES shops(id) ON DELETE CASCADE,
+  product_id INTEGER NOT NULL REFERENCES products(id) ON DELETE CASCADE,
+  UNIQUE(shop_id, product_id)
 );`);
 db.prepare(`INSERT OR IGNORE INTO daily_settings (key, value) VALUES ('cutoff_time', '20:00')`).run();
 
@@ -805,6 +811,13 @@ function dailyShopFilter(sc, alias) {
 app.get('/api/daily/date', requireLogin, requireSection('daily', 'view'), (req, res) => {
   res.json({ order_date: dailyOrderDate(), cutoff_time: dailyCutoffTime(), cutoff_passed: dailyCutoffPassed() });
 });
+// Shop's allowed products (null = all visible)
+app.get('/api/daily/my-items', requireLogin, requireSection('daily', 'view'), (req, res) => {
+  const sc = dailyScope(req);
+  if (!sc.shopId) return res.json(null);
+  const rows = db.prepare('SELECT product_id FROM daily_shop_items WHERE shop_id=?').all(sc.shopId);
+  res.json(rows.length ? rows.map(r => r.product_id) : null);
+});
 
 app.get('/api/daily/catalog', requireLogin, requireSection('daily', 'view'), (req, res) => {
   const cats = db.prepare('SELECT id, name FROM categories ORDER BY name').all();
@@ -917,6 +930,23 @@ app.put('/api/daily/settings', requireLogin, isAdmin, (req, res) => {
     ON CONFLICT(key) DO UPDATE SET value=excluded.value`).run(ct);
   res.json({ ok: true, cutoff_time: ct });
 });
+// Per-shop product visibility (empty = all products visible)
+app.get('/api/daily/shop-items/:shopId', requireLogin, isAdmin, (req, res) => {
+  const rows = db.prepare('SELECT product_id FROM daily_shop_items WHERE shop_id=?').all(req.params.shopId);
+  res.json(rows.map(r => r.product_id));
+});
+app.put('/api/daily/shop-items/:shopId', requireLogin, isAdmin, (req, res) => {
+  const sid = Number(req.params.shopId);
+  if (!db.prepare('SELECT id FROM shops WHERE id=?').get(sid)) return res.status(400).json({ error: 'bad_shop' });
+  const prods = (req.body || {}).products || [];
+  db.transaction(() => {
+    db.prepare('DELETE FROM daily_shop_items WHERE shop_id=?').run(sid);
+    const ins = db.prepare('INSERT OR IGNORE INTO daily_shop_items (shop_id, product_id) VALUES (?,?)');
+    const ok = db.prepare('SELECT 1 FROM products WHERE id=?');
+    for (const p of prods) { const pid = Number(p); if (pid > 0 && ok.get(pid)) ins.run(sid, pid); }
+  })();
+  res.json({ ok: true });
+});
 
 // ---------- Generic CRUD helper ----------
 function cleanVals(table_cols, body) {
@@ -997,30 +1027,35 @@ app.delete('/api/products/:id', requireLogin, requireSection('products', 'full')
 
 // ---------- Users & permissions (super admin) ----------
 app.get('/api/users', requireLogin, isAdmin, (req, res) => {
-  const users = db.prepare(`SELECT u.id, u.username, u.role, u.shop_id, u.active, u.created_at, u.phone, s.name AS shop_name
+  const users = db.prepare(`SELECT u.id, u.username, u.role, u.shop_id, u.active, u.created_at, u.phone, u.account_type, s.name AS shop_name
     FROM users u LEFT JOIN shops s ON s.id=u.shop_id ORDER BY u.id`).all();
   res.json(users.map(u => ({ ...u, permissions: u.role === 'super_admin' ? Object.fromEntries(SECTIONS.map(s => [s, 'full'])) : getPermissions(u.id) })));
 });
 // Public app version — clients detect updates against this.
 app.get('/api/version', (req, res) => res.json({ version: require('./package.json').version }));
 app.post('/api/users', requireLogin, isAdmin, (req, res) => {
-  const { username, password, role, shop_id, phone } = req.body || {};
+  const { username, password, role, shop_id, phone, account_type } = req.body || {};
   if (!username || !password || !['super_admin', 'factory', 'shop'].includes(role)) return res.status(400).json({ error: 'bad_input' });
+  const atype = String(account_type || '').trim().slice(0, 20);
   try {
-    const r = db.prepare('INSERT INTO users (username, password_hash, role, shop_id, phone) VALUES (?,?,?,?,?)')
-      .run(String(username).trim(), bcrypt.hashSync(String(password), 10), role, shop_id || null, String(phone || ''));
+    const r = db.prepare('INSERT INTO users (username, password_hash, role, shop_id, phone, account_type) VALUES (?,?,?,?,?,?)')
+      .run(String(username).trim(), bcrypt.hashSync(String(password), 10), role, shop_id || null, String(phone || ''), atype);
     if (role !== 'super_admin') seedPermissions(r.lastInsertRowid, role);
+    // department / supplier / viewer: daily sirf view (kuch add/edit nahi)
+    if (['department', 'supplier', 'viewer'].includes(atype))
+      db.prepare(`INSERT OR REPLACE INTO permissions (user_id, section, level) VALUES (?, 'daily', 'view')`).run(r.lastInsertRowid);
     res.json({ ok: true, id: r.lastInsertRowid });
   } catch (e) { res.status(400).json({ error: 'username_taken' }); }
 });
 app.put('/api/users/:id', requireLogin, isAdmin, (req, res) => {
-  const { role, shop_id, active, password, phone } = req.body || {};
+  const { role, shop_id, active, password, phone, account_type } = req.body || {};
   const u = db.prepare('SELECT * FROM users WHERE id=?').get(req.params.id);
   if (!u) return res.status(404).json({ error: 'not_found' });
   if (role) db.prepare('UPDATE users SET role=?, shop_id=? WHERE id=?').run(role, shop_id || null, u.id);
   if (active !== undefined) db.prepare('UPDATE users SET active=? WHERE id=?').run(active ? 1 : 0, u.id);
   if (password) db.prepare('UPDATE users SET password_hash=? WHERE id=?').run(bcrypt.hashSync(String(password), 10), u.id);
   if (phone !== undefined) db.prepare('UPDATE users SET phone=? WHERE id=?').run(String(phone), u.id);
+  if (account_type !== undefined) db.prepare('UPDATE users SET account_type=? WHERE id=?').run(String(account_type).trim().slice(0, 20), u.id);
   res.json({ ok: true });
 });
 app.delete('/api/users/:id', requireLogin, isAdmin, (req, res) => {

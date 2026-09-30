@@ -1067,30 +1067,42 @@ function showSplash(ad) {
     setTimeout(window.hideSplash, (ad.duration || 4) * 1000);
   });
 }
+const ACCT_TYPES = {
+  shop: { label: '🏪 دکان', role: 'shop' },
+  department: { label: '🏭 ڈیپارٹمنٹ', role: 'factory' },
+  supplier: { label: '🚚 سپلائر', role: 'factory' },
+  viewer: { label: '👁 ویور', role: 'factory' },
+  factory_admin: { label: '👑 فیکٹری ایڈمن', role: 'factory' },
+  super_admin: { label: '🔑 سپر ایڈمن', role: 'super_admin' },
+};
+const acctLabel = u => (u.account_type && ACCT_TYPES[u.account_type] ? ACCT_TYPES[u.account_type].label
+  : { super_admin: 'سپر ایڈمن', factory: 'فیکٹری', shop: 'دکان' }[u.role]);
 async function renderSettingsUsers() {
   const users = await api('GET', '/api/users');
   await refreshCache();
-  const rows = users.map(u => `<tr><td>${esc(u.username)}</td><td>${{ super_admin: 'سپر ایڈمن', factory: 'فیکٹری', shop: 'دکان' }[u.role]}</td>
+  const rows = users.map(u => `<tr><td>${esc(u.username)}</td><td>${acctLabel(u)}</td>
     <td>${esc(u.shop_name || '—')}</td><td dir="ltr">${esc(u.phone || '—')}</td><td>${u.active ? '<span class="badge">فعال</span>' : '<span class="badge off">بند</span>'}</td>
     <td><button class="btn small ghost" onclick="userEdit(${u.id})">✏</button>
     ${u.id !== ME.id ? `<button class="btn small danger" onclick="userDel(${u.id})">🗑</button>` : ''}</td></tr>`).join('');
-  $('#setUsers').innerHTML = `<h3>👥 یوزرز / دکان اکاؤنٹس</h3>
-    <table><tr><th>یوزر نام</th><th>رول</th><th>دکان</th><th>موبائل</th><th>حالت</th><th></th></tr>${rows}</table>
+  $('#setUsers').innerHTML = `<h3>👥 یوزرز / اکاؤنٹس</h3>
+    <table><tr><th>یوزر نام</th><th>اکاؤنٹ کی قسم</th><th>دکان</th><th>موبائل</th><th>حالت</th><th></th></tr>${rows}</table>
     <h3>➕ نیا اکاؤنٹ</h3>
     <div class="formgrid">
       <label>یوزر نام<br><input id="nu-name"></label>
       <label>پاس ورڈ<br><input id="nu-pass" type="password"></label>
       <label>موبائل نمبر<br><input id="nu-phone" dir="ltr" placeholder="03xx-xxxxxxx"></label>
-      <label>رول<br><select id="nu-role" onchange="document.getElementById('nu-shoprow').style.display=this.value==='shop'?'block':'none'">
-        <option value="shop">دکان</option><option value="factory">فیکٹری یوزر</option><option value="super_admin">سپر ایڈمن</option></select></label>
+      <label>اکاؤنٹ کی قسم<br><select id="nu-type" onchange="document.getElementById('nu-shoprow').style.display=this.value==='shop'?'block':'none'">
+        ${Object.entries(ACCT_TYPES).map(([k, v]) => `<option value="${k}">${v.label}</option>`).join('')}</select></label>
       <label id="nu-shoprow">دکان<br><select id="nu-shop">${CACHE.shops.map(s => `<option value="${s.id}">${esc(s.name)}</option>`).join('')}</select></label>
       <label><br><button class="btn small green" onclick="userAdd()">بنائیں</button></label>
-    </div>`;
+    </div>
+    <p class="note">ڈیپارٹمنٹ / سپلائر / ویور خودکار طور پر صرف دیکھ سکیں گے — کیٹیگری/دکان کی سیٹنگ روزانہ آرڈر → ⚙ ایکسس سیٹنگ سے کریں</p>`;
 }
 async function userAdd() {
-  const role = $('#nu-role').value;
+  const atype = $('#nu-type').value;
+  const role = (ACCT_TYPES[atype] || ACCT_TYPES.shop).role;
   await api('POST', '/api/users', { username: $('#nu-name').value.trim(), password: $('#nu-pass').value,
-    role, shop_id: role === 'shop' ? Number($('#nu-shop').value) : null, phone: $('#nu-phone').value.trim() });
+    role, account_type: atype, shop_id: atype === 'shop' ? Number($('#nu-shop').value) : null, phone: $('#nu-phone').value.trim() });
   renderSettingsUsers();
 }
 async function userDel(id) { if (!confirm('یوزر حذف کریں؟')) return; await api('DELETE', '/api/users/' + id); renderSettingsUsers(); }
@@ -1152,14 +1164,16 @@ function dailyCutDate(orderDate) {
 // ---------- shop: apna rozana order ----------
 async function renderDailyShopForm(di) {
   const catalog = await api('GET', '/api/daily/catalog');
+  const allowedIds = await api('GET', '/api/daily/my-items').catch(() => null);
   const myOrders = await api('GET', '/api/daily/orders?date=' + di.order_date);
   const mine = myOrders[0] || null;
   const qty = {};
   (mine && mine.items || []).forEach(i => qty[i.product_id] = i.quantity);
   const locked = di.cutoff_passed;
   const catsHtml = catalog.map(c => {
-    if (!c.products.length) return '';
-    return `<div class="cathead">${esc(c.name)}</div>` + c.products.map(p =>
+    const prods = c.products.filter(p => !allowedIds || allowedIds.includes(p.id));
+    if (!prods.length) return '';
+    return `<div class="cathead">${esc(c.name)}</div>` + prods.map(p =>
       `<div class="prow"><span class="pn">${esc(p.name)}</span><span class="un">${esc(p.unit_name || '')}</span>
        <input type="number" min="0" step="any" data-pid="${p.id}" value="${qty[p.id] || ''}" placeholder="0"${locked ? ' disabled' : ''}></div>`).join('');
   }).join('');
@@ -1238,18 +1252,53 @@ async function renderDailyAccess() {
   const users = (await api('GET', '/api/users')).filter(u => u.role !== 'super_admin');
   const [cats, shops] = await Promise.all([api('GET', '/api/categories'), api('GET', '/api/shops')]);
   window._daCats = cats; window._daShops = shops;
+  const groups = {};
+  users.forEach(u => { const k = u.account_type || u.role; (groups[k] = groups[k] || []).push(u); });
+  const optGroups = Object.entries(groups).map(([k, us]) => {
+    const lbl = (ACCT_TYPES[k] ? ACCT_TYPES[k].label : k);
+    return `<optgroup label="${esc(lbl)}">${us.map(u => `<option value="${u.id}">${esc(u.username)}</option>`).join('')}</optgroup>`;
+  }).join('');
   $('#v-daily').innerHTML = `
     <h2 class="st">⚙ <span>روزانہ آرڈر — یوزر ایکسس</span></h2>
     <button class="btn small" onclick="DAILY_VIEW_DATE=null;renderDaily()">← واپس</button>
     <div class="formgrid"><label>یوزر<br><select id="daUser" onchange="renderDailyAccessForm()">
       <option value="">— منتخب کریں —</option>
-      ${users.map(u => `<option value="${u.id}">${esc(u.username)} (${esc(u.role)})</option>`).join('')}
+      ${optGroups}
     </select></label></div>
     <div id="daForm"></div>
     <h3 class="st">⏰ روزانہ کٹ آف ٹائم</h3>
     <div class="formgrid"><label>کٹ آف<br><input type="time" id="daCutoff" value="${esc(DAILY_CUTOFF)}"></label>
     <label><br><button class="btn small" onclick="saveDailyCutoff()">💾 محفوظ کریں</button></label></div>
+    <h3 class="st">🏪 دکان کے آئٹمز <small class="note">(کونسی دکان کو کونسے آئٹم نظر آئیں — خالی = تمام)</small></h3>
+    <div class="formgrid"><label>دکان<br><select id="daShop" onchange="renderDailyShopItems()">
+      <option value="">— منتخب کریں —</option>
+      ${window._daShops.map(s => `<option value="${s.id}">${esc(s.name)}</option>`).join('')}
+    </select></label></div>
+    <div id="daShopForm"></div>
     <p class="note">نوٹ: روزانہ آرڈر کی رسائی (بند / صرف دیکھیں / مکمل) یوزر مینجمنٹ → رسائی سے سیٹ کریں۔</p>`;
+}
+async function renderDailyShopItems() {
+  const sid = $('#daShop').value; if (!sid) { $('#daShopForm').innerHTML = ''; return; }
+  const [allowed, catalog] = await Promise.all([
+    api('GET', `/api/daily/shop-items/${sid}`),
+    api('GET', '/api/daily/catalog'),
+  ]);
+  const has = new Set(allowed);
+  const useAll = allowed.length === 0;
+  $('#daShopForm').innerHTML = catalog.map(c => {
+    if (!c.products.length) return '';
+    return `<div class="cathead">${esc(c.name)}</div>` + c.products.map(p =>
+      `<label class="chk"><input type="checkbox" data-pid="${p.id}"${useAll || has.has(p.id) ? ' checked' : ''}> ${esc(p.name)} <small class="note">${esc(p.unit_name || '')}</small></label>`).join('');
+  }).join('') + `<button class="btn green" onclick="saveDailyShopItems()">💾 آئٹمز محفوظ کریں</button>
+  <p class="note">سب اَن ٹک کر کے محفوظ کریں = تمام آئٹم نظر آئیں گے</p>`;
+}
+async function saveDailyShopItems() {
+  const sid = $('#daShop').value; if (!sid) return;
+  const boxes = [...document.querySelectorAll('#daShopForm input[data-pid]')];
+  const allChecked = boxes.length > 0 && boxes.every(b => b.checked);
+  const products = allChecked ? [] : boxes.filter(b => b.checked).map(b => Number(b.dataset.pid));
+  await api('PUT', `/api/daily/shop-items/${sid}`, { products });
+  alert('دکان کے آئٹم محفوظ ہو گئے ✅');
 }
 async function renderDailyAccessForm() {
   const uid = $('#daUser').value; if (!uid) { $('#daForm').innerHTML = ''; return; }
