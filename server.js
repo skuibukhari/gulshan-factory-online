@@ -1435,8 +1435,8 @@ app.get('/print', requireLogin, (req, res) => {
 </style>`;
   // rozana print — compact, sab categories ek A4 page par
   const dcss = `<style>
- @page{size:A4 landscape;margin:5mm 4mm} *{box-sizing:border-box}
- body{font-family:'Jameel Noori Nastaleeq','Noto Nastaliq Urdu',serif;direction:rtl;color:#111;margin:0;font-size:12px}
+ @page{size:A4 landscape;margin:4mm 4mm} *{box-sizing:border-box}
+ body{font-family:'Jameel Noori Nastaleeq','Noto Nastaliq Urdu',serif;direction:rtl;color:#111;margin:0;font-size:13px}
  .head{display:flex;align-items:center;gap:8px;border-bottom:2px solid #e8721c;padding-bottom:6px;margin-bottom:8px}
  .head img{height:44px} .head h1{margin:0;font-size:20px;color:#1a1a1a} .head h1 span{color:#e8721c}
  .meta{color:#2e7d32;font-size:12px;margin-bottom:6px}
@@ -1512,12 +1512,15 @@ ${head('تاریخ وائز آرڈر ہسٹری', 'تاریخ: ' + date)}${body 
  .ptitle{font-size:22px;font-weight:bold;color:#111;line-height:1.3;margin:0;padding:0;font-family:'Jameel Noori Nastaleeq',serif}
  .psub{font-size:12px;color:#e8721c;font-weight:bold;margin:0}
  .pmeta{font-size:9px;color:#444;text-align:left;white-space:nowrap;line-height:1.7;flex-shrink:0;background:#f5f5f5;padding:6px 10px;border-radius:4px}
- .dcols{column-count:4;column-gap:8px;width:100%;direction:rtl}
+ .dcols{column-count:4;column-gap:6px;width:100%;direction:rtl}
  .shopcols{column-count:2;column-gap:14px;width:100%;direction:rtl}
- .cat-block{break-inside:avoid;margin:0 0 6px;border:2px solid #111;border-radius:3px;overflow:hidden}
+ .shopcols .cat-block td{padding:6px 8px;font-size:14px}
+ .shopcols .cat-head{font-size:16px;padding:8px 4px}
+ .shopcols .cat-block table{font-size:14px}
+ .cat-block{break-inside:avoid;margin:0 0 8px;border:1.5px solid #111;overflow:hidden}
  .cat-head{background:#111;color:#fff;text-align:center;font-size:16px;font-weight:bold;padding:8px 4px;font-family:'Jameel Noori Nastaleeq',serif}
  .cat-block table{width:100%;border-collapse:collapse;font-size:14px}
- .cat-block th{background:#eee;border:1px solid #111;padding:2px;font-size:10px;font-family:Arial,sans-serif}
+ .cat-block th{background:#ddd;border:1px solid #111;padding:3px;font-size:11px;font-family:Arial,sans-serif;font-weight:bold}
  .cat-block th.mid{font-size:12px}
  .cat-block th.total-h{color:#e8721c;text-align:center}
  .cat-block th.num-h{color:#555;text-align:center}
