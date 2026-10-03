@@ -1894,6 +1894,11 @@ app.get('/api/dashboard', requireLogin, requireSection('dashboard'), (req, res) 
   // Recent orders: scoped to the NEXT upcoming supply date (auto-refreshes when supply moves)
   const nextSupply = upcoming.length ? upcoming[0].supply_date : null;
   const recentDateFilter = nextSupply ? `o.delivery_date = '${nextSupply}'` : `o.delivery_date >= '${ktoday}'`;
+  // Dashboard counts: today = created today (Karachi), upcoming = next supply date only
+  const todayOrdersQ = db.prepare(`SELECT COUNT(*) c FROM orders WHERE date(created_at, '+5 hours') = date('now', '+5 hours') ${sf}`).get().c;
+  const upcomingOrdersQ = nextSupply
+    ? db.prepare(`SELECT COUNT(*) c FROM orders WHERE delivery_date = ? ${sf}`).get(nextSupply).c
+    : db.prepare(`SELECT COUNT(*) c FROM orders WHERE delivery_date >= ? ${sf}`).get(ktoday).c;
   const dailyRows = db.prepare(`SELECT date(created_at, '+5 hours') d, COUNT(*) c FROM orders
     WHERE date(created_at, '+5 hours') >= date('now', '+5 hours', '-6 days') ${sf} GROUP BY d`).all();
   const daily = [];
@@ -1906,8 +1911,8 @@ app.get('/api/dashboard', requireLogin, requireSection('dashboard'), (req, res) 
     scope: own ? 'shop' : 'admin',
     shop_name: shopName,
     daily,
-    today_orders: db.prepare(`SELECT COUNT(*) c FROM orders WHERE delivery_date=? ${sf}`).get(today).c,
-    total_orders: db.prepare(`SELECT COUNT(*) c FROM orders WHERE delivery_date >= ? ${sf}`).get(ktoday).c,
+    today_orders: todayOrdersQ,
+    total_orders: upcomingOrdersQ,
     daily_today: db.prepare(`SELECT COUNT(*) c FROM daily_orders WHERE order_date=?`).get(dailyOrderDate()).c,
     daily_total: db.prepare(`SELECT COUNT(*) c FROM daily_orders`).get().c,
     shops: own ? undefined : db.prepare('SELECT COUNT(*) c FROM shops WHERE active=1').get().c,
