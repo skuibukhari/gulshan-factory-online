@@ -13,6 +13,106 @@ fs.mkdirSync(DATA_DIR, { recursive: true });
 const db = new Database(path.join(DATA_DIR, 'gulshan.db'));
 db.pragma('journal_mode = WAL');
 db.pragma('foreign_keys = ON');
+// WhatsApp alerts settings
+db.exec(`CREATE TABLE IF NOT EXISTS wa_settings (key TEXT PRIMARY KEY, value TEXT)`);
+function waGet(k) { try { const r = db.prepare('SELECT value FROM wa_settings WHERE key=?').get(k); return r ? r.value : ''; } catch(e) { return ''; } }
+function waSet(k, v) { db.prepare('INSERT INTO wa_settings (key, value) VALUES (?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value').run(k, v); }
+// Send WhatsApp message via Meta Graph API (fire-and-forget)
+async function sendWhatsApp(to, message) {
+  const pid = waGet('phone_number_id'), token = waGet('access_token');
+  if (!pid || !token || !to || !message) return;
+  try {
+    const r = await fetch(`https://graph.facebook.com/v25.0/${pid}/messages`, {
+      method: 'POST',
+      headers: { 'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ messaging_product: 'whatsapp', to: String(to).replace(/[^0-9]/g, ''), type: 'text', text: { body: String(message).slice(0, 4000) } })
+    });
+    if (!r.ok) console.log('[wa] send failed:', r.status, (await r.text()).slice(0, 200));
+  } catch(e) { console.log('[wa] error:', e.message); }
+}
+function waAlert(msg) {
+  const adminNum = waGet('admin_number');
+  if (adminNum) sendWhatsApp(adminNum, '🏭 Gulshan Factory\n' + msg);
+}
+// MIGRATION: pre-configure WhatsApp (phone ID + admin number); token set via /api/wa-settings
+try {
+  if (!waGet('phone_number_id')) waSet('phone_number_id', '1351675744699144');
+  if (!waGet('admin_number')) waSet('admin_number', '923350666338');
+} catch(e) {}
+// MIGRATION: daily_cat_access.category_id wrongly referenced categories(id); it holds daily_categories ids.
+// Wrong FK made PUT /api/daily/access/:uid fail (whole transaction rolled back) -> access never saved.
+try {
+  const fk = db.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='daily_cat_access'").get();
+  if (fk && fk.sql && fk.sql.includes('REFERENCES categories(id)')) {
+    db.exec(`CREATE TABLE daily_cat_access_new (
+      user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      category_id INTEGER NOT NULL REFERENCES daily_categories(id) ON DELETE CASCADE,
+      UNIQUE(user_id, category_id)
+    );`);
+    db.exec(`INSERT INTO daily_cat_access_new (user_id, category_id)
+             SELECT user_id, category_id FROM daily_cat_access
+             WHERE category_id IN (SELECT id FROM daily_categories);`);
+    db.exec(`DROP TABLE daily_cat_access;`);
+    db.exec(`ALTER TABLE daily_cat_access_new RENAME TO daily_cat_access;`);
+    console.log('[migration] daily_cat_access FK fixed to daily_categories');
+  }
+} catch(e) { console.log('[migration] daily_cat_access:', e.message); }
+// MIGRATION: daily_shop_access.shop_id wrongly referenced shops(id) (fixed in 802c2e6 for new DBs only).
+// Old FK makes PUT /api/daily/access/:uid fail when a daily shop id is absent from supply shops.
+try {
+  const fk = db.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='daily_shop_access'").get();
+  if (fk && fk.sql && fk.sql.includes('REFERENCES shops(id)')) {
+    db.exec(`CREATE TABLE daily_shop_access_new (
+      user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      shop_id INTEGER NOT NULL REFERENCES daily_shops(id) ON DELETE CASCADE,
+      UNIQUE(user_id, shop_id)
+    );`);
+    db.exec(`INSERT INTO daily_shop_access_new (user_id, shop_id)
+             SELECT user_id, shop_id FROM daily_shop_access
+             WHERE shop_id IN (SELECT id FROM daily_shops);`);
+    db.exec(`DROP TABLE daily_shop_access;`);
+    db.exec(`ALTER TABLE daily_shop_access_new RENAME TO daily_shop_access;`);
+    console.log('[migration] daily_shop_access FK fixed to daily_shops');
+  }
+} catch(e) { console.log('[migration] daily_shop_access:', e.message); }
+// MIGRATION: daily_shop_items wrongly referenced shops(id)/products(id) (fixed in 802c2e6 for new DBs only).
+try {
+  const fk = db.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='daily_shop_items'").get();
+  if (fk && fk.sql && (fk.sql.includes('REFERENCES shops(id)') || fk.sql.includes('REFERENCES products(id)'))) {
+    db.exec(`CREATE TABLE daily_shop_items_new (
+      shop_id INTEGER NOT NULL REFERENCES daily_shops(id) ON DELETE CASCADE,
+      product_id INTEGER NOT NULL REFERENCES daily_products(id) ON DELETE CASCADE,
+      UNIQUE(shop_id, product_id)
+    );`);
+    db.exec(`INSERT INTO daily_shop_items_new (shop_id, product_id)
+             SELECT shop_id, product_id FROM daily_shop_items
+             WHERE shop_id IN (SELECT id FROM daily_shops)
+               AND product_id IN (SELECT id FROM daily_products);`);
+    db.exec(`DROP TABLE daily_shop_items;`);
+    db.exec(`ALTER TABLE daily_shop_items_new RENAME TO daily_shop_items;`);
+    console.log('[migration] daily_shop_items FKs fixed to daily_*');
+  }
+} catch(e) { console.log('[migration] daily_shop_items:', e.message); }
+// MIGRATION: daily_orders.shop_id wrongly referenced shops(id); fix by recreating table
+try {
+  const fk = db.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='daily_orders'").get();
+  if (fk && fk.sql && fk.sql.includes('REFERENCES shops(id)')) {
+    db.exec(`CREATE TABLE daily_orders_new (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      shop_id INTEGER NOT NULL REFERENCES daily_shops(id) ON DELETE CASCADE,
+      order_date TEXT NOT NULL,
+      note TEXT DEFAULT '',
+      created_by INTEGER REFERENCES users(id),
+      created_at INTEGER NOT NULL,
+      UNIQUE(shop_id, order_date)
+    );`);
+    db.exec(`INSERT INTO daily_orders_new (id, shop_id, order_date, note, created_by, created_at)
+             SELECT id, shop_id, order_date, note, created_by, created_at FROM daily_orders;`);
+    db.exec(`DROP TABLE daily_orders;`);
+    db.exec(`ALTER TABLE daily_orders_new RENAME TO daily_orders;`);
+    console.log('[migration] daily_orders FK fixed to daily_shops');
+  }
+} catch(e) { console.log('[migration] daily_orders fix skipped:', e.message); }
 
 // ---------- Schema ----------
 db.exec(`
@@ -126,7 +226,7 @@ try { db.exec(`ALTER TABLE daily_products ADD COLUMN sort_order INTEGER DEFAULT 
 // ---------- Daily Orders (روزانہ آرڈر) — separate system, does not touch existing order flow ----------
 db.exec(`CREATE TABLE IF NOT EXISTS daily_orders (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
-  shop_id INTEGER NOT NULL REFERENCES shops(id) ON DELETE CASCADE,
+  shop_id INTEGER NOT NULL REFERENCES daily_shops(id) ON DELETE CASCADE,
   order_date TEXT NOT NULL,
   note TEXT DEFAULT '',
   created_by INTEGER REFERENCES users(id),
@@ -146,17 +246,17 @@ CREATE TABLE IF NOT EXISTS daily_settings (
 );
 CREATE TABLE IF NOT EXISTS daily_cat_access (
   user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-  category_id INTEGER NOT NULL REFERENCES categories(id) ON DELETE CASCADE,
+  category_id INTEGER NOT NULL REFERENCES daily_categories(id) ON DELETE CASCADE,
   UNIQUE(user_id, category_id)
 );
 CREATE TABLE IF NOT EXISTS daily_shop_access (
   user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-  shop_id INTEGER NOT NULL REFERENCES shops(id) ON DELETE CASCADE,
+  shop_id INTEGER NOT NULL REFERENCES daily_shops(id) ON DELETE CASCADE,
   UNIQUE(user_id, shop_id)
 );
 CREATE TABLE IF NOT EXISTS daily_shop_items (
-  shop_id INTEGER NOT NULL REFERENCES shops(id) ON DELETE CASCADE,
-  product_id INTEGER NOT NULL REFERENCES products(id) ON DELETE CASCADE,
+  shop_id INTEGER NOT NULL REFERENCES daily_shops(id) ON DELETE CASCADE,
+  product_id INTEGER NOT NULL REFERENCES daily_products(id) ON DELETE CASCADE,
   UNIQUE(shop_id, product_id)
 );
 CREATE TABLE IF NOT EXISTS daily_categories (
@@ -201,6 +301,48 @@ if (!db.prepare(`SELECT value FROM daily_settings WHERE key='catalog_split'`).ge
 // sort_order=0 wali purani rows ko tartib do (table banne ke baad)
 db.prepare(`UPDATE daily_products SET sort_order = id * 10 WHERE sort_order = 0 OR sort_order IS NULL`).run();
 db.prepare(`INSERT OR IGNORE INTO daily_settings (key, value) VALUES ('cutoff_time', '20:00')`).run();
+// Supplier dashboard tables (2026-10-01)
+try {
+  db.exec(`CREATE TABLE IF NOT EXISTS supplier_shops (user_id INTEGER NOT NULL, shop_id INTEGER NOT NULL, PRIMARY KEY (user_id, shop_id))`);
+  db.exec(`INSERT OR IGNORE INTO daily_settings (key, value) VALUES ('supplier_history_days', '2')`);
+  db.exec(`INSERT OR IGNORE INTO daily_settings (key, value) VALUES ('shop_history_days', '30')`);
+  db.exec(`INSERT OR IGNORE INTO daily_settings (key, value) VALUES ('daily_history_days', '30')`);
+  db.exec(`INSERT OR IGNORE INTO daily_settings (key, value) VALUES ('vehicle_order_days', '7')`);
+  db.exec(`INSERT OR IGNORE INTO daily_settings (key, value) VALUES ('app_theme', 'orange')`);
+  db.exec(`CREATE TABLE IF NOT EXISTS supplier_schedule (user_id INTEGER NOT NULL, supply_date TEXT NOT NULL, cutoff_time TEXT DEFAULT '20:00', PRIMARY KEY (user_id, supply_date))`);
+} catch(e) { console.log('supplier tables:', e.message); }
+// Migration: account_type ke hisab se permissions fix karo (2026-10-01)
+try {
+  const ups = db.prepare(`INSERT OR REPLACE INTO permissions (user_id, section, level) VALUES (?, ?, ?)`).run;
+  // daily_shop wale: supply none, daily full
+  db.prepare(`SELECT id FROM users WHERE account_type='daily_shop'`).all().forEach(u => {
+    for (const sec of ['dashboard','orders','order_history','reports','shops','products','categories','units','vehicles','routes'])
+      db.prepare(`INSERT OR REPLACE INTO permissions (user_id, section, level) VALUES (?, ?, 'none')`).run(u.id, sec);
+    db.prepare(`INSERT OR REPLACE INTO permissions (user_id, section, level) VALUES (?, 'daily', 'full')`).run(u.id);
+  });
+  // shop (supply) wale: daily none
+  db.prepare(`SELECT id FROM users WHERE account_type='shop'`).all().forEach(u => {
+    db.prepare(`INSERT OR REPLACE INTO permissions (user_id, section, level) VALUES (?, 'daily', 'none')`).run(u.id);
+  });
+} catch(e) { console.log('perm migration:', e.message); }
+// Print settings defaults
+const printDefaults = {
+  'print_cols': '2',
+  'print_title_size': '24', 'print_title_bold': '1', 'print_title_italic': '0',
+  'print_sub_size': '13', 'print_sub_bold': '1',
+  'print_cat_size': '17', 'print_cat_bold': '1',
+  'print_table_size': '15',
+  'print_name_size': '15', 'print_name_bold': '1',
+  'print_num_size': '16', 'print_num_bold': '1',
+  'print_margin': '6', 'print_gap': '10',
+  'print_show_logo': '1', 'print_show_date': '1', 'print_show_user': '1',
+  'print_font': 'Jameel Noori Nastaleeq',
+  'print_cat_order': '',
+  'print_shop_order': ''
+};
+for (const [k, v] of Object.entries(printDefaults)) {
+  db.prepare(`INSERT OR IGNORE INTO daily_settings (key, value) VALUES (?, ?)`).run(k, v);
+}
 
 const SECTIONS = ['dashboard','orders','order_history','shops','products','categories','units','vehicles','routes','schedule','reports','users','daily'];
 
@@ -283,6 +425,8 @@ function notifyLogin(username, ok, excludeUserId) {
   const subs = db.prepare(`SELECT ps.* FROM push_subscriptions ps JOIN users u ON u.id=ps.user_id
     WHERE u.active=1 AND u.role='super_admin' AND u.id != ?`).all(excludeUserId || 0);
   pushTo(subs, payload);
+  // WhatsApp alert
+  waAlert(ok ? `🔑 لاگ اِن: ${username} نے لاگ اِن کیا` : `⚠️ ناکام لاگ اِن: ${username}`);
 }
 
 // Push to one specific user (all their subscribed devices).
@@ -367,6 +511,24 @@ function scopedShopId(req) {
 }
 
 // ---------- Public: setup & auth ----------
+// ---------- WhatsApp alerts config (super_admin only) ----------
+app.get('/api/wa-settings', requireLogin, isAdmin, (req, res) => {
+  res.json({ phone_number_id: waGet('phone_number_id'), admin_number: waGet('admin_number'), has_token: !!waGet('access_token') });
+});
+app.post('/api/wa-settings', requireLogin, isAdmin, (req, res) => {
+  const b = req.body || {};
+  if (b.phone_number_id !== undefined) waSet('phone_number_id', String(b.phone_number_id).trim());
+  if (b.access_token) waSet('access_token', String(b.access_token).trim());
+  if (b.admin_number !== undefined) waSet('admin_number', String(b.admin_number).trim());
+  res.json({ ok: true });
+});
+app.post('/api/wa-test', requireLogin, isAdmin, async (req, res) => {
+  const to = waGet('admin_number');
+  if (!to) return res.status(400).json({ error: 'no_admin_number' });
+  await sendWhatsApp(to, '✅ Gulshan Factory WhatsApp alerts test!');
+  res.json({ ok: true });
+});
+
 app.get('/api/status', (req, res) => {
   const n = db.prepare('SELECT COUNT(*) c FROM users').get().c;
   res.json({ setupRequired: n === 0, loggedIn: !!req.session.userId });
@@ -429,6 +591,7 @@ app.post('/api/reset-password', (req, res) => {
     return res.status(400).json({ error: 'bad_code' });
   db.prepare('UPDATE otps SET used=1 WHERE id=?').run(otp.id);
   db.prepare('UPDATE users SET password_hash=? WHERE id=?').run(bcrypt.hashSync(String(password), 10), u.id);
+  waAlert(`🔐 پاسورڈ ری سیٹ: ${String(username).trim()} نے پاسورڈ تبدیل کیا`);
   res.json({ ok: true });
 });
 // ---------- WebAuthn biometric login (fingerprint / face) ----------
@@ -859,6 +1022,24 @@ function dailyShopFilter(sc, alias) {
 app.get('/api/daily/date', requireLogin, requireSection('daily', 'view'), (req, res) => {
   res.json({ order_date: dailyOrderDate(), cutoff_time: dailyCutoffTime(), cutoff_passed: dailyCutoffPassed() });
 });
+// Print settings (admin)
+app.get('/api/daily/print-settings', requireLogin, (req, res) => {
+  if (req.user.role !== 'super_admin') return res.status(403).json({ error: 'forbidden' });
+  const rows = db.prepare(`SELECT key, value FROM daily_settings WHERE key LIKE 'print_%'`).all();
+  const out = {};
+  rows.forEach(r => out[r.key] = r.value);
+  res.json(out);
+});
+app.post('/api/daily/print-settings', requireLogin, (req, res) => {
+  if (req.user.role !== 'super_admin') return res.status(403).json({ error: 'forbidden' });
+  const allowed = ['print_cols','print_title_size','print_title_bold','print_title_italic','print_sub_size','print_sub_bold','print_cat_size','print_cat_bold','print_table_size','print_name_size','print_name_bold','print_num_size','print_num_bold','print_margin','print_gap','print_show_logo','print_show_date','print_show_user','print_font','print_cat_order','print_shop_order'];
+  for (const k of allowed) {
+    if (req.body[k] !== undefined) {
+      db.prepare(`INSERT OR REPLACE INTO daily_settings (key, value) VALUES (?, ?)`).run(k, String(req.body[k]));
+    }
+  }
+  res.json({ ok: true });
+});
 // Shop's allowed products (null = all visible)
 app.get('/api/daily/my-items', requireLogin, requireSection('daily', 'view'), (req, res) => {
   const sc = dailyScope(req);
@@ -868,9 +1049,19 @@ app.get('/api/daily/my-items', requireLogin, requireSection('daily', 'view'), (r
 });
 
 app.get('/api/daily/catalog', requireLogin, requireSection('daily', 'view'), (req, res) => {
-  const cats = db.prepare('SELECT id, name FROM daily_categories WHERE active=1 ORDER BY name').all();
-  const prods = db.prepare(`SELECT p.id, p.name, p.category_id, u.name AS unit_name
-    FROM daily_products p LEFT JOIN daily_units u ON u.id=p.unit_id WHERE p.active=1 ORDER BY p.sort_order, p.name`).all();
+  const sc = dailyScope(req);
+  let catSql = 'SELECT id, name FROM daily_categories WHERE active=1';
+  let prodSql = `SELECT p.id, p.name, p.category_id, u.name AS unit_name
+    FROM daily_products p LEFT JOIN daily_units u ON u.id=p.unit_id WHERE p.active=1`;
+  let args = [];
+  if (sc.catIds) {
+    const ph = sc.catIds.map(() => '?').join(',');
+    catSql += ` AND id IN (${ph})`;
+    prodSql += ` AND p.category_id IN (${ph})`;
+    args = sc.catIds;
+  }
+  const cats = db.prepare(catSql + ' ORDER BY name').all(...args);
+  const prods = db.prepare(prodSql + ' ORDER BY p.sort_order, p.name').all(...args);
   res.json(cats.map(c => ({ ...c, products: prods.filter(p => p.category_id === c.id) })));
 });
 
@@ -896,14 +1087,16 @@ app.get('/api/daily/orders', requireLogin, requireSection('daily', 'view'), (req
 });
 
 app.post('/api/daily/orders', requireLogin, requireSection('daily', 'full'), (req, res) => {
-  const sc = dailyScope(req);
+try {
   const b = req.body || {};
-  const order_date = b.order_date || dailyOrderDate();
-  const shop_id = sc.shopId || Number(b.shop_id) || 0;
+  let order_date = b.order_date;
+  if (!order_date) {
+    try { order_date = dailyOrderDate(); } catch(e) { order_date = new Date().toISOString().slice(0,10); }
+  }
+  const shop_id = Number(b.shop_id) || 0;
   if (!shop_id) return res.status(400).json({ error: 'shop_required' });
-  if (!db.prepare('SELECT id FROM daily_shops WHERE id=?').get(shop_id)) return res.status(400).json({ error: 'bad_shop' });
-  if (sc.shopId && order_date === dailyOrderDate() && dailyCutoffPassed())
-    return res.status(400).json({ error: 'cutoff_passed' });
+  const shopExists = db.prepare('SELECT id FROM daily_shops WHERE id=?').get(shop_id);
+  if (!shopExists) return res.status(400).json({ error: 'bad_shop' });
   const items = b.items || {};
   const now = Date.now();
   let order = db.prepare('SELECT id FROM daily_orders WHERE shop_id=? AND order_date=?').get(shop_id, order_date);
@@ -916,12 +1109,18 @@ app.post('/api/daily/orders', requireLogin, requireSection('daily', 'full'), (re
     db.prepare('DELETE FROM daily_order_items WHERE order_id=?').run(order.id);
   }
   const ins = db.prepare('INSERT INTO daily_order_items (order_id, product_id, quantity) VALUES (?,?,?)');
-  const prodExists = db.prepare('SELECT 1 FROM daily_products WHERE id=? AND active=1');
   for (const [pid, q] of Object.entries(items)) {
     const qty = Number(q) || 0;
-    if (qty > 0 && Number(pid) > 0 && prodExists.get(Number(pid))) ins.run(order.id, Number(pid), qty);
+    const nid = Number(pid) || 0;
+    if (qty > 0 && nid > 0) {
+      try { ins.run(order.id, nid, qty); } catch(e) {}
+    }
   }
+  const shopName = (db.prepare('SELECT name FROM daily_shops WHERE id=?').get(shop_id) || {}).name || shop_id;
+  const itemCount = Object.keys(items).length;
+  waAlert(`📝 ڈیلی آرڈر: ${shopName} - ${itemCount} آئٹم (${order_date})`);
   res.json({ ok: true, id: order.id });
+} catch(e) { console.error('ORDER ERR:', e.message); res.status(500).json({ error: 'server_error', detail: e.message }); }
 });
 
 app.delete('/api/daily/orders/:id', requireLogin, requireSection('daily', 'full'), (req, res) => {
@@ -935,17 +1134,208 @@ app.delete('/api/daily/orders/:id', requireLogin, requireSection('daily', 'full'
   res.json({ ok: true });
 });
 
+// ---------- Supplier dashboard (supply system) ----------
+// Assign shops to supplier
+app.get('/api/supplier/shops/:userId', requireLogin, (req, res) => {
+  if (req.user.role !== 'super_admin') return res.status(403).json({ error: 'forbidden' });
+  const rows = db.prepare('SELECT shop_id FROM supplier_shops WHERE user_id=?').all(req.params.userId);
+  res.json(rows.map(r => r.shop_id));
+});
+app.post('/api/supplier/shops/:userId', requireLogin, (req, res) => {
+  if (req.user.role !== 'super_admin') return res.status(403).json({ error: 'forbidden' });
+  const shopIds = (req.body.shop_ids || []).map(Number).filter(Boolean);
+  db.transaction(() => {
+    db.prepare('DELETE FROM supplier_shops WHERE user_id=?').run(req.params.userId);
+    const ins = db.prepare('INSERT INTO supplier_shops (user_id, shop_id) VALUES (?, ?)');
+    shopIds.forEach(id => ins.run(req.params.userId, id));
+  })();
+  res.json({ ok: true });
+});
+// Supplier dashboard data
+// Admin: kisi vehicle ka schedule manage karo
+app.get('/api/supplier/schedule/:userId', requireLogin, (req, res) => {
+  if (req.user.role !== 'super_admin') return res.status(403).json({ error: 'forbidden' });
+  const rows = db.prepare('SELECT supply_date, cutoff_time FROM supplier_schedule WHERE user_id=? ORDER BY supply_date').all(req.params.userId);
+  res.json(rows);
+});
+app.post('/api/supplier/schedule/:userId', requireLogin, (req, res) => {
+  if (req.user.role !== 'super_admin') return res.status(403).json({ error: 'forbidden' });
+  const { supply_date, cutoff_time } = req.body || {};
+  if (!supply_date) return res.status(400).json({ error: 'bad_input' });
+  db.prepare('INSERT OR REPLACE INTO supplier_schedule (user_id, supply_date, cutoff_time) VALUES (?, ?, ?)')
+    .run(req.params.userId, supply_date, cutoff_time || '20:00');
+  res.json({ ok: true });
+});
+app.delete('/api/supplier/schedule/:userId/:date', requireLogin, (req, res) => {
+  if (req.user.role !== 'super_admin') return res.status(403).json({ error: 'forbidden' });
+  db.prepare('DELETE FROM supplier_schedule WHERE user_id=? AND supply_date=?').run(req.params.userId, req.params.date);
+  res.json({ ok: true });
+});
+// Supplier: apna supply schedule dekho (sirf view)
+app.get('/api/supplier/schedule', requireLogin, (req, res) => {
+  // Main supply calendar se lao (admin ne jo set kiya)
+  const today = new Date().toISOString().slice(0, 10);
+  const rows = db.prepare(`SELECT r.supply_date, r.cutoff_time, r.cutoff_date, r.name AS route_name
+    FROM routes r WHERE r.active=1 AND r.supply_date >= ? ORDER BY r.supply_date LIMIT 10`).all(today);
+  res.json(rows.map(r => ({ supply_date: r.supply_date, cutoff_time: r.cutoff_time, cutoff_date: r.cutoff_date, label: r.route_name })));
+});
+app.post('/api/supplier/schedule', requireLogin, (req, res) => {
+  const { supply_date, cutoff_time } = req.body || {};
+  if (!supply_date) return res.status(400).json({ error: 'bad_input' });
+  db.prepare('INSERT OR REPLACE INTO supplier_schedule (user_id, supply_date, cutoff_time) VALUES (?, ?, ?)')
+    .run(req.user.id, supply_date, cutoff_time || '20:00');
+  res.json({ ok: true });
+});
+app.delete('/api/supplier/schedule/:date', requireLogin, (req, res) => {
+  db.prepare('DELETE FROM supplier_schedule WHERE user_id=? AND supply_date=?').run(req.user.id, req.params.date);
+  res.json({ ok: true });
+});
+// Supplier: manual order (shop ki taraf se) - cutoff ke baad nahi!
+app.post('/api/supplier/order', requireLogin, async (req, res) => {
+  const { shop_id, items, delivery_date, note } = req.body || {};
+  if (!shop_id || !items) return res.status(400).json({ error: 'bad_input' });
+  // Date validation: sirf future dates (kal se)
+  const tomorrow = new Date(Date.now() + 864e5).toISOString().slice(0, 10);
+  if (!delivery_date || delivery_date < tomorrow) {
+    return res.status(400).json({ error: 'bad_date', message: 'صرف آنے والی تاریخوں کے لیے آرڈر دیں!' });
+  }
+  // Max days check (admin setting)
+  const maxDays = parseInt((db.prepare(`SELECT value FROM daily_settings WHERE key='vehicle_order_days'`).get() || {}).value || '7');
+  const maxDate = new Date(Date.now() + maxDays * 864e5).toISOString().slice(0, 10);
+  if (delivery_date > maxDate) {
+    return res.status(400).json({ error: 'bad_date', message: `صرف ${maxDays} دن تک کے لیے آرڈر دیں!` });
+  }
+  // Cutoff check: vehicle ke schedule ka cutoff
+  if (req.user.account_type === 'vehicle') {
+    const sched = db.prepare(`SELECT cutoff_time FROM supplier_schedule WHERE user_id=? AND supply_date>=date('now') ORDER BY supply_date LIMIT 1`).get(req.user.id);
+    if (sched) {
+      const now = new Date();
+      const cutoff = new Date();
+      const [h, m] = (sched.cutoff_time || '20:00').split(':').map(Number);
+      cutoff.setHours(h, m, 0, 0);
+      if (now > cutoff) {
+        return res.status(400).json({ error: 'cutoff_passed', message: 'کٹ آف ٹائم گزر گیا! صرف دکان یا ایڈمن آرڈر دے سکتا ہے۔' });
+      }
+    }
+  }
+  // Check: ye shop supplier ki hai?
+  if (req.user.role !== 'super_admin') {
+    const allowed = db.prepare('SELECT 1 FROM supplier_shops WHERE user_id=? AND shop_id=?').get(req.user.id, shop_id);
+    if (!allowed) return res.status(403).json({ error: 'forbidden' });
+  }
+  try {
+    const r = db.prepare('INSERT INTO orders (shop_id, delivery_date, note, status, created_by) VALUES (?,?,?,?,?)')
+      .run(shop_id, delivery_date || new Date().toISOString().slice(0,10), note || '', 'new', req.user.id);
+    const ins = db.prepare('INSERT INTO order_items (order_id, product_id, quantity) VALUES (?,?,?)');
+    for (const [pid, qty] of Object.entries(items)) {
+      if (Number(qty) > 0) ins.run(r.lastInsertRowid, Number(pid), Number(qty));
+    }
+    res.json({ ok: true, id: r.lastInsertRowid });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+// Admin: history days set karo (all types)
+app.post('/api/history-days', requireLogin, (req, res) => {
+  if (req.user.role !== 'super_admin') return res.status(403).json({ error: 'forbidden' });
+  const { key, days } = req.body || {};
+  if (!['supplier_history_days', 'shop_history_days', 'daily_history_days', 'vehicle_order_days'].includes(key)) return res.status(400).json({ error: 'bad_key' });
+  const d = Math.max(1, Math.min(365, parseInt(days) || 30));
+  db.prepare(`INSERT OR REPLACE INTO daily_settings (key, value) VALUES (?, ?)`).run(key, String(d));
+  res.json({ ok: true, days: d });
+});
+app.get('/api/app-theme', (req, res) => {
+  const t = (db.prepare(`SELECT value FROM daily_settings WHERE key='app_theme'`).get() || {}).value || 'orange';
+  res.json({ theme: t });
+});
+app.post('/api/app-theme', requireLogin, (req, res) => {
+  if (req.user.role !== 'super_admin') return res.status(403).json({ error: 'forbidden' });
+  const themes = ['orange', 'green', 'blue', 'purple', 'pink'];
+  const t = String(req.body.theme || 'orange');
+  if (!themes.includes(t)) return res.status(400).json({ error: 'bad_theme' });
+  db.prepare(`INSERT OR REPLACE INTO daily_settings (key, value) VALUES ('app_theme', ?)`).run(t);
+  res.json({ ok: true });
+});
+app.get('/api/history-days', requireLogin, (req, res) => {
+  if (req.user.role !== 'super_admin') return res.status(403).json({ error: 'forbidden' });
+  const g = k => (db.prepare(`SELECT value FROM daily_settings WHERE key=?`).get(k) || {}).value;
+  res.json({
+    supplier_history_days: g('supplier_history_days') || '2',
+    shop_history_days: g('shop_history_days') || '30',
+    daily_history_days: g('daily_history_days') || '30',
+    vehicle_order_days: g('vehicle_order_days') || '7'
+  });
+});
+// Admin: history days set karo
+app.post('/api/supplier/history-days', requireLogin, (req, res) => {
+  if (req.user.role !== 'super_admin') return res.status(403).json({ error: 'forbidden' });
+  const days = Math.max(1, Math.min(30, parseInt(req.body.days) || 2));
+  db.prepare(`INSERT OR REPLACE INTO daily_settings (key, value) VALUES ('supplier_history_days', ?)`).run(String(days));
+  res.json({ ok: true, days });
+});
+// Supplier: order status update (sirf apni shops ke)
+app.post('/api/supplier/order/:id/status', requireLogin, (req, res) => {
+  const status = String(req.body.status || '');
+  if (!['new', 'collected', 'delivered'].includes(status)) return res.status(400).json({ error: 'bad_status' });
+  // Check: ye order supplier ki shop ka hai?
+  const order = db.prepare('SELECT shop_id FROM orders WHERE id=?').get(req.params.id);
+  if (!order) return res.status(404).json({ error: 'not_found' });
+  if (req.user.role !== 'super_admin') {
+    const allowed = db.prepare('SELECT 1 FROM supplier_shops WHERE user_id=? AND shop_id=?').get(req.user.id, order.shop_id);
+    if (!allowed) return res.status(403).json({ error: 'forbidden' });
+  }
+  db.prepare('UPDATE orders SET status=? WHERE id=?').run(status, req.params.id);
+  res.json({ ok: true });
+});
+app.get('/api/supplier/dashboard', requireLogin, (req, res) => {
+  const days = parseInt((db.prepare(`SELECT value FROM daily_settings WHERE key='supplier_history_days'`).get() || {}).value || '2');
+  const cutoff = new Date(Date.now() - days * 864e5).toISOString().slice(0, 10);
+  let shopIds;
+  if (req.user.role === 'super_admin') {
+    shopIds = null; // all
+  } else {
+    shopIds = db.prepare('SELECT shop_id FROM supplier_shops WHERE user_id=?').all(req.user.id).map(r => r.shop_id);
+  }
+  const sf = shopIds ? `AND o.shop_id IN (${shopIds.map(() => '?').join(',')})` : '';
+  const args = shopIds || [];
+  // ALL assigned shops (order ho ya na ho)
+  let allShops = [];
+  if (shopIds) {
+    allShops = db.prepare(`SELECT id, name FROM shops WHERE id IN (${shopIds.map(() => '?').join(',')}) AND active=1 ORDER BY name`).all(...shopIds);
+  } else {
+    allShops = db.prepare(`SELECT id, name FROM shops WHERE active=1 ORDER BY name`).all();
+  }
+  // Shop-wise orders (sirf aaj aur future - past nahi)
+  const today = new Date().toISOString().slice(0, 10);
+  const shopOrders = db.prepare(`SELECT s.name AS shop_name, s.id AS shop_id, o.id, o.delivery_date, o.created_at, o.status,
+      (SELECT SUM(oi.quantity) FROM order_items oi WHERE oi.order_id=o.id) AS total_qty
+    FROM orders o JOIN shops s ON s.id=o.shop_id
+    WHERE o.delivery_date >= ? AND o.delivery_date >= ? ${sf} ORDER BY o.delivery_date DESC, o.id DESC LIMIT 50`).all(cutoff, today, ...args);
+  // Kaunsi shop ka order aaya, kaunsi ka nahi
+  const orderedShopIds = new Set(shopOrders.map(o => o.shop_id));
+  const shopsStatus = allShops.map(sh => {
+    const ord = shopOrders.find(o => o.shop_id === sh.id);
+    return { shop_id: sh.id, shop_name: sh.name, has_order: !!ord, order: ord || null };
+  });
+  // Item-wise totals
+  const itemTotals = db.prepare(`SELECT p.name AS product_name, c.name AS category_name, SUM(oi.quantity) AS total_qty,
+      COUNT(DISTINCT o.shop_id) AS shop_count
+    FROM order_items oi JOIN orders o ON o.id=oi.order_id
+    JOIN products p ON p.id=oi.product_id LEFT JOIN categories c ON c.id=p.category_id
+    WHERE o.delivery_date >= ? AND o.delivery_date >= ? ${sf} GROUP BY p.id ORDER BY total_qty DESC`).all(cutoff, today, ...args);
+  res.json({ shopOrders, shopsStatus, itemTotals, history_days: days, cutoff_date: cutoff });
+});
 app.get('/api/daily/totals', requireLogin, requireSection('daily', 'view'), (req, res) => {
   const sc = dailyScope(req);
   const date = req.query.date || dailyOrderDate();
   const sf = dailyShopFilter(sc, 'do');
   let sql = `SELECT p.id AS product_id, p.name AS product_name, p.category_id, c.name AS category_name,
-      un.name AS unit_name, SUM(di.quantity) AS total_qty, COUNT(DISTINCT do.shop_id) AS shop_count
-    FROM daily_order_items di JOIN daily_orders do ON do.id=di.order_id
-    JOIN daily_products p ON p.id=di.product_id
+      un.name AS unit_name, COALESCE(SUM(CASE WHEN do.order_date=? THEN di.quantity ELSE 0 END),0) AS total_qty,
+      COUNT(DISTINCT CASE WHEN do.order_date=? THEN do.shop_id END) AS shop_count
+    FROM daily_products p
+    LEFT JOIN daily_order_items di ON di.product_id=p.id
+    LEFT JOIN daily_orders do ON do.id=di.order_id${sf.clause}
     LEFT JOIN daily_categories c ON c.id=p.category_id LEFT JOIN daily_units un ON un.id=p.unit_id
-    WHERE do.order_date=?${sf.clause}`;
-  const args = [date, ...sf.args];
+    WHERE p.active=1`;
+  const args = [date, date, ...sf.args];
   if (sc.catIds) { sql += ` AND p.category_id IN (${sc.catIds.map(() => '?').join(',')})`; args.push(...sc.catIds); }
   sql += ' GROUP BY p.id ORDER BY p.sort_order, p.name';
   res.json(db.prepare(sql).all(...args));
@@ -1079,15 +1469,48 @@ app.get('/api/daily-products', requireLogin, requireSection('daily', 'view'), (r
 });
 app.post('/api/daily-products', requireLogin, requireSection('daily', 'full'), (req, res) => {
   const b = req.body || {};
+  const nm = (b.name || '').trim();
+  if (!nm) return res.status(400).json({ error: 'name_required' });
+  // Duplicate check: same name in same category
+  const dup = db.prepare('SELECT id FROM daily_products WHERE TRIM(name)=? AND category_id IS ?')
+    .get(nm, b.category_id || null);
+  if (dup) return res.status(400).json({ error: 'duplicate', message: 'Ye item pehle se hai!' });
   const r = db.prepare('INSERT INTO daily_products (name, category_id, unit_id, active) VALUES (?,?,?,?)')
-    .run(b.name || '', b.category_id || null, b.unit_id || null, b.active ?? 1);
+    .run(nm, b.category_id || null, b.unit_id || null, b.active ?? 1);
   res.json({ ok: true, id: r.lastInsertRowid });
 });
 app.put('/api/daily-products/:id', requireLogin, requireSection('daily', 'full'), (req, res) => {
   const b = req.body || {};
+  const nm = (b.name || '').trim();
+  if (!nm) return res.status(400).json({ error: 'name_required' });
+  const dup = db.prepare('SELECT id FROM daily_products WHERE TRIM(name)=? AND category_id IS ? AND id != ?')
+    .get(nm, b.category_id || null, req.params.id);
+  if (dup) return res.status(400).json({ error: 'duplicate', message: 'Ye item pehle se hai!' });
   db.prepare('UPDATE daily_products SET name=?, category_id=?, unit_id=?, active=? WHERE id=?')
-    .run(b.name || '', b.category_id || null, b.unit_id || null, b.active ?? 1, req.params.id);
+    .run(nm, b.category_id || null, b.unit_id || null, b.active ?? 1, req.params.id);
   res.json({ ok: true });
+});
+// Duplicates dhoondo
+app.get('/api/daily-products/duplicates', requireLogin, requireSection('daily', 'full'), (req, res) => {
+  const dups = db.prepare(`SELECT TRIM(name) as nm, category_id, COUNT(*) as cnt, GROUP_CONCAT(id) as ids
+    FROM daily_products GROUP BY TRIM(name), category_id HAVING COUNT(*) > 1`).all();
+  res.json(dups);
+});
+// Duplicates auto-clean: pehla rakho, baqi ko deactivate karo
+app.post('/api/daily-products/clean-duplicates', requireLogin, requireSection('daily', 'full'), (req, res) => {
+  const dups = db.prepare(`SELECT TRIM(name) as nm, category_id, GROUP_CONCAT(id) as ids
+    FROM daily_products GROUP BY TRIM(name), category_id HAVING COUNT(*) > 1`).all();
+  let cleaned = 0;
+  dups.forEach(d => {
+    const ids = d.ids.split(',').map(Number).sort((a,b) => a-b);
+    // Pehla rakho, baqi ko deactivate
+    const toDeactivate = ids.slice(1);
+    toDeactivate.forEach(id => {
+      db.prepare('UPDATE daily_products SET active=0 WHERE id=?').run(id);
+      cleaned++;
+    });
+  });
+  res.json({ ok: true, cleaned });
 });
 app.delete('/api/daily-products/:id', requireLogin, requireSection('daily', 'full'), (req, res) => {
   db.prepare('DELETE FROM daily_products WHERE id=?').run(req.params.id);
@@ -1161,6 +1584,21 @@ app.post('/api/daily/products/:id/move', requireLogin, requireSection('daily', '
   })();
   res.json({ ok: true, moved: true });
 });
+app.post('/api/products/:id/move', requireLogin, requireSection('products', 'full'), (req, res) => {
+  const id = Number(req.params.id), dir = (req.body || {}).dir;
+  if (!id || !['up', 'down'].includes(dir)) return res.status(400).json({ error: 'bad_input' });
+  const cur = db.prepare('SELECT id, sort_order FROM products WHERE id=?').get(id);
+  if (!cur) return res.status(404).json({ error: 'not_found' });
+  const neighbor = dir === 'up'
+    ? db.prepare('SELECT id, sort_order FROM products WHERE sort_order < ? ORDER BY sort_order DESC, id DESC LIMIT 1').get(cur.sort_order)
+    : db.prepare('SELECT id, sort_order FROM products WHERE sort_order > ? ORDER BY sort_order ASC, id ASC LIMIT 1').get(cur.sort_order);
+  if (!neighbor) return res.json({ ok: true, moved: false });
+  db.transaction(() => {
+    db.prepare('UPDATE products SET sort_order=? WHERE id=?').run(neighbor.sort_order, cur.id);
+    db.prepare('UPDATE products SET sort_order=? WHERE id=?').run(cur.sort_order, neighbor.id);
+  })();
+  res.json({ ok: true, moved: true });
+});
 app.get('/api/products', requireLogin, requireSection('products', 'view'), (req, res) => {
   res.json(db.prepare(`SELECT p.*, c.name AS category_name, u.name AS unit_name
     FROM products p LEFT JOIN categories c ON c.id=p.category_id LEFT JOIN units u ON u.id=p.unit_id
@@ -1168,15 +1606,36 @@ app.get('/api/products', requireLogin, requireSection('products', 'view'), (req,
 });
 app.post('/api/products', requireLogin, requireSection('products', 'full'), (req, res) => {
   const b = req.body || {};
+  const nm = (b.name || '').trim();
+  if (!nm) return res.status(400).json({ error: 'name_required' });
+  const dup = db.prepare('SELECT id FROM products WHERE TRIM(name)=? AND category_id IS ?').get(nm, b.category_id || null);
+  if (dup) return res.status(400).json({ error: 'duplicate', message: 'Ye item pehle se hai!' });
   const r = db.prepare('INSERT INTO products (name, category_id, unit_id, active) VALUES (?,?,?,?)')
-    .run(b.name || '', b.category_id || null, b.unit_id || null, b.active ?? 1);
+    .run(nm, b.category_id || null, b.unit_id || null, b.active ?? 1);
   res.json({ ok: true, id: r.lastInsertRowid });
 });
 app.put('/api/products/:id', requireLogin, requireSection('products', 'full'), (req, res) => {
   const b = req.body || {};
+  const nm = (b.name || '').trim();
+  if (!nm) return res.status(400).json({ error: 'name_required' });
+  const dup = db.prepare('SELECT id FROM products WHERE TRIM(name)=? AND category_id IS ? AND id != ?').get(nm, b.category_id || null, req.params.id);
+  if (dup) return res.status(400).json({ error: 'duplicate', message: 'Ye item pehle se hai!' });
   db.prepare('UPDATE products SET name=?, category_id=?, unit_id=?, active=? WHERE id=?')
-    .run(b.name || '', b.category_id || null, b.unit_id || null, b.active ?? 1, req.params.id);
+    .run(nm, b.category_id || null, b.unit_id || null, b.active ?? 1, req.params.id);
   res.json({ ok: true });
+});
+app.post('/api/products/clean-duplicates', requireLogin, requireSection('products', 'full'), (req, res) => {
+  const dups = db.prepare(`SELECT TRIM(name) as nm, category_id, GROUP_CONCAT(id) as ids
+    FROM products GROUP BY TRIM(name), category_id HAVING COUNT(*) > 1`).all();
+  let cleaned = 0;
+  dups.forEach(d => {
+    const ids = d.ids.split(',').map(Number).sort((a,b) => a-b);
+    ids.slice(1).forEach(id => {
+      db.prepare('UPDATE products SET active=0 WHERE id=?').run(id);
+      cleaned++;
+    });
+  });
+  res.json({ ok: true, cleaned });
 });
 app.delete('/api/products/:id', requireLogin, requireSection('products', 'full'), (req, res) => {
   db.prepare('DELETE FROM products WHERE id=?').run(req.params.id);
@@ -1200,9 +1659,20 @@ app.post('/api/users', requireLogin, isAdmin, (req, res) => {
     const r = db.prepare('INSERT INTO users (username, password_hash, role, shop_id, daily_shop_id, phone, account_type) VALUES (?,?,?,?,?,?,?)')
       .run(String(username).trim(), bcrypt.hashSync(String(password), 10), role, shop_id || null, daily_shop_id || null, String(phone || ''), atype);
     if (role !== 'super_admin') seedPermissions(r.lastInsertRowid, role);
-    // department / supplier / viewer: daily sirf view (kuch add/edit nahi)
-    if (['department', 'supplier', 'viewer'].includes(atype))
+    // department / supplier / viewer / vehicle: daily sirf view (kuch add/edit nahi)
+    if (['department', 'supplier', 'viewer', 'vehicle'].includes(atype))
       db.prepare(`INSERT OR REPLACE INTO permissions (user_id, section, level) VALUES (?, 'daily', 'view')`).run(r.lastInsertRowid);
+    // daily_shop: sirf daily, supply bilkul nahi
+    if (atype === 'daily_shop') {
+      const upd = db.prepare(`INSERT OR REPLACE INTO permissions (user_id, section, level) VALUES (?, ?, 'none')`);
+      for (const sec of ['dashboard', 'orders', 'order_history', 'reports', 'shops', 'products', 'categories', 'units', 'vehicles', 'routes']) upd.run(r.lastInsertRowid, sec);
+      db.prepare(`INSERT OR REPLACE INTO permissions (user_id, section, level) VALUES (?, 'daily', 'full')`).run(r.lastInsertRowid);
+    }
+    // shop (supply): daily bilkul nahi
+    if (atype === 'shop') {
+      db.prepare(`INSERT OR REPLACE INTO permissions (user_id, section, level) VALUES (?, 'daily', 'none')`).run(r.lastInsertRowid);
+    }
+    waAlert(`👤 نیا اکاؤنٹ: ${String(username).trim()} (${role}) بنایا گیا`);
     res.json({ ok: true, id: r.lastInsertRowid });
   } catch (e) { res.status(400).json({ error: 'username_taken' }); }
 });
@@ -1328,8 +1798,15 @@ app.delete('/api/orders/:id', requireLogin, requireSection('orders', 'full'), (r
 app.get('/api/order-history', requireLogin, requireSection('order_history', 'view'), (req, res) => {
   const own = scopedShopId(req);
   const shopFilter = own ? 'AND o.shop_id=' + own : (req.query.shop_id ? 'AND o.shop_id=' + Number(req.query.shop_id) : '');
+  // Shop users: sirf itne din purana data
+  let dateFilter = '';
+  if (own) {
+    const days = parseInt((db.prepare(`SELECT value FROM daily_settings WHERE key='shop_history_days'`).get() || {}).value || '30');
+    const cutoff = new Date(Date.now() - days * 864e5).toISOString().slice(0, 10);
+    dateFilter = ` AND o.delivery_date >= '${cutoff}'`;
+  }
   const orders = db.prepare(`SELECT o.*, s.name AS shop_name FROM orders o JOIN shops s ON s.id=o.shop_id
-    WHERE 1=1 ${shopFilter} ORDER BY o.delivery_date DESC, o.id DESC`).all();
+    WHERE 1=1 ${shopFilter}${dateFilter} ORDER BY o.delivery_date DESC, o.id DESC`).all();
   const items = db.prepare(`SELECT oi.*, p.name AS product_name, u.name AS unit_name FROM order_items oi
     JOIN products p ON p.id=oi.product_id LEFT JOIN units u ON u.id=p.unit_id WHERE oi.order_id=?`);
   const groups = {};
@@ -1361,7 +1838,7 @@ app.get('/api/dashboard', requireLogin, requireSection('dashboard'), (req, res) 
   const upcoming = db.prepare(`SELECT r.*, v.name AS vehicle_name,
       (SELECT COUNT(*) FROM orders o WHERE o.route_id=r.id) AS order_count FROM routes r
       LEFT JOIN vehicles v ON v.id=r.vehicle_id
-      WHERE r.active=1 AND r.supply_date >= ? ORDER BY r.supply_date LIMIT 5`).all(ktoday);
+      WHERE r.active=1 AND r.supply_date > ? ORDER BY r.supply_date LIMIT 5`).all(ktoday);
   const dailyRows = db.prepare(`SELECT date(created_at, '+5 hours') d, COUNT(*) c FROM orders
     WHERE date(created_at, '+5 hours') >= date('now', '+5 hours', '-6 days') ${sf} GROUP BY d`).all();
   const daily = [];
@@ -1375,7 +1852,9 @@ app.get('/api/dashboard', requireLogin, requireSection('dashboard'), (req, res) 
     shop_name: shopName,
     daily,
     today_orders: db.prepare(`SELECT COUNT(*) c FROM orders WHERE delivery_date=? ${sf}`).get(today).c,
-    total_orders: db.prepare(`SELECT COUNT(*) c FROM orders WHERE 1=1 ${sf}`).get().c,
+    total_orders: db.prepare(`SELECT COUNT(*) c FROM orders WHERE delivery_date >= ? ${sf}`).get(ktoday).c,
+    daily_today: db.prepare(`SELECT COUNT(*) c FROM daily_orders WHERE order_date=?`).get(dailyOrderDate()).c,
+    daily_total: db.prepare(`SELECT COUNT(*) c FROM daily_orders`).get().c,
     shops: own ? undefined : db.prepare('SELECT COUNT(*) c FROM shops WHERE active=1').get().c,
     vehicles: own ? undefined : db.prepare('SELECT COUNT(*) c FROM vehicles WHERE active=1').get().c,
     routes: own ? undefined : db.prepare('SELECT COUNT(*) c FROM routes WHERE active=1').get().c,
@@ -1433,40 +1912,44 @@ app.get('/print', requireLogin, (req, res) => {
  .note{background:#fdf3e7;border:1px dashed #e8721c;padding:6px 10px;margin:8px 0;font-size:13px}
  @media print{ .printbtn{display:none} .pagebreak{break-after:page} }
 </style>`;
-  // rozana print — compact, sab categories ek A4 page par
-  const dcss = `<style>
- @page{size:A4 landscape;margin:4mm 4mm} *{box-sizing:border-box}
- body{font-family:'Jameel Noori Nastaleeq','Noto Nastaliq Urdu',serif;direction:rtl;color:#111;margin:0;font-size:13px}
- .head{display:flex;align-items:center;gap:8px;border-bottom:2px solid #e8721c;padding-bottom:6px;margin-bottom:8px}
- .head img{height:44px} .head h1{margin:0;font-size:20px;color:#1a1a1a} .head h1 span{color:#e8721c}
- .meta{color:#2e7d32;font-size:12px;margin-bottom:6px}
- table{width:100%;border-collapse:collapse;font-size:12px;margin-bottom:8px}
- th{background:#1a1a1a;color:#fff;padding:4px;font-size:12px} td{border:1px solid #999;padding:3px 6px}
- tr:nth-child(even) td{background:#fdf3e7}
- .catrow td{background:#e8721c !important;color:#fff;font-size:13px;padding:4px 6px}
- .slip{break-inside:avoid}
- .slip h2.shopname{font-size:20px;color:#e8721c;margin:0 0 4px}
- .slip .smeta{color:#555;font-size:12px;margin-bottom:6px}
- .hshop{font-size:15px;color:#b3540e;margin:8px 0 3px;border-bottom:2px solid #e8721c;padding-bottom:2px;break-after:avoid}
- .sig{display:flex;justify-content:space-between;margin-top:18px;font-size:12px}
- .sig div{border-top:1px solid #333;padding-top:4px;width:40%;text-align:center}
- .note{background:#fdf3e7;border:1px dashed #e8721c;padding:4px 8px;margin:6px 0;font-size:11px}
- @media print{ .printbtn{display:none} .pagebreak{break-after:page} }
-
- .dcols{column-count:4;column-gap:6px;width:100%;direction:rtl}
- .shopcols{column-count:2;column-gap:14px;width:100%;direction:rtl}
- .cat-block{break-inside:avoid;margin:0 0 8px;border:1.5px solid #111;overflow:hidden}
- .cat-head{font-size:16px;padding:8px 4px}
- .cat-head{background:#111;color:#fff;text-align:center;font-size:16px;font-weight:bold;padding:8px 4px;font-family:'Jameel Noori Nastaleeq',serif}
- .cat-block table{font-size:14px}
- .cat-block table{width:100%;border-collapse:collapse;font-size:14px}
- .cat-block th{background:#ddd;border:1px solid #111;padding:3px;font-size:11px;font-family:Arial,sans-serif;font-weight:bold}
- .cat-block td{padding:6px 8px;font-size:14px}
- .cat-block td{border:1px solid #888;padding:6px 8px}
- .cat-block tr:nth-child(even) td{background:#fafafa}
- .cat-block td.num{width:28px;text-align:center;color:#333;font-size:11px;font-weight:bold;background:#f0f0f0}
- .cat-block td.name{text-align:right}
- .cat-block td.total{width:44px;text-align:center;font-weight:bold;font-size:12px;background:#fff8f0}</style>`;
+  // rozana print — DB settings se dynamic CSS
+  function getPrintCss() {
+    const g = k => (db.prepare(`SELECT value FROM daily_settings WHERE key=?`).get(k) || {}).value;
+    const cols = g('print_cols') || '2';
+    const titleSize = g('print_title_size') || '18';
+    const titleBold = (g('print_title_bold') || '1') === '1' ? 'bold' : 'normal';
+    const titleItalic = (g('print_title_italic') || '0') === '1' ? 'italic' : 'normal';
+    const subSize = g('print_sub_size') || '10';
+    const subBold = (g('print_sub_bold') || '1') === '1' ? 'bold' : 'normal';
+    const catSize = g('print_cat_size') || '12';
+    const catBold = (g('print_cat_bold') || '1') === '1' ? 'bold' : 'normal';
+    const nameSize = g('print_name_size') || '10';
+    const nameBold = (g('print_name_bold') || '1') === '1' ? 'bold' : 'normal';
+    const numSize = g('print_num_size') || '11';
+    const numBold = (g('print_num_bold') || '1') === '1' ? 'bold' : 'normal';
+    const margin = g('print_margin') || '5';
+    const fontFam = g('print_font') || 'Jameel Noori Nastaleeq';
+    const gap = g('print_gap') || '6';
+    return `<style> @page{size:A4 landscape;margin:5mm}
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:'${fontFam}','Jameel Noori Nastaleeq',serif;direction:rtl;padding:5mm;color:#111}
+.phead{border-bottom:2px solid #e8721c;padding:0;margin:0;overflow:hidden}
+.plogo{width:36px;height:36px;float:right;margin-left:10px}
+.ptitle{font-size:${titleSize}px;font-weight:${titleBold};font-style:${titleItalic}}
+.psub{font-size:${subSize}px;color:#e8721c;font-weight:${subBold}}
+.pmeta{font-size:8px;color:#444;float:left;text-align:left}
+.dcols{column-count:${cols};column-gap:${gap}px}
+.cat-block{break-inside:avoid;margin-bottom:8px;border:1.5px solid #111;border-radius:4px;overflow:hidden;display:inline-block;width:100%}
+.cat-head{background:#111;color:#fff;font-size:${catSize}px;font-weight:${catBold};text-align:center;padding:5px}
+.cat-head .total{color:#ffb74d}
+table{width:100%;border-collapse:collapse}
+th{background:#e0e0e0;font-size:10px;padding:4px;border:1px solid #111}
+td{padding:4px 6px;border:1px solid #666;font-size:${nameSize}px;font-weight:${nameBold}}
+td.num{text-align:center;font-size:${numSize}px;font-weight:${numBold}}
+.printbtn{position:fixed;top:10px;left:10px;z-index:99}
+@media print{.printbtn{display:none}}</style>`;
+  }
+  const dcss = getPrintCss();
   const head = (title, extra) => `<div class="head"><img src="/logo.png" alt="logo"><div><h1>گلشن فیکٹری <span>Gulshan Factory</span></h1><div class="meta">${esc(title)}${extra ? ' — ' + esc(extra) : ''}</div></div></div>`;
   const itemsByOrder = db.prepare(`SELECT p.name AS product_name, u.name AS unit_name, oi.quantity
     FROM order_items oi JOIN products p ON p.id=oi.product_id LEFT JOIN units u ON u.id=p.unit_id WHERE oi.order_id=? ORDER BY p.name`);
@@ -1517,21 +2000,36 @@ ${head('تاریخ وائز آرڈر ہسٹری', 'تاریخ: ' + date)}${body 
   }
   // ---------- DAILY: total production sheet (category-wise, scoped) ----------
   // ---------- DAILY: DEMAND DASHBOARD (RateVault pattern) ----------
-  const ddCss = `<style>
- @page{size:A4;margin:4mm 4mm} *{box-sizing:border-box}
- body{font-family:'Jameel Noori Nastaleeq','Noto Nastaliq Urdu',serif;direction:rtl;color:#111;margin:0;font-size:15px}
- .phead{display:flex;align-items:center;gap:8px;border:2px solid #111;border-radius:6px;padding:6px 8px;margin:0 0 6px;background:#fff}
- .plogo{width:42px;height:42px;object-fit:contain;flex-shrink:0}
- .pcenter{flex:1;text-align:center;min-width:0}
- .ptitle{font-size:22px;font-weight:bold;color:#111;line-height:1.3;margin:0;padding:0;font-family:'Jameel Noori Nastaleeq',serif}
- .psub{font-size:12px;color:#e8721c;font-weight:bold;margin:0}
- .pmeta{font-size:9px;color:#444;text-align:left;white-space:nowrap;line-height:1.7;flex-shrink:0;background:#f5f5f5;padding:6px 10px;border-radius:4px}
- .dcols{column-count:4;column-gap:6px;width:100%;direction:rtl}
+  const ddCss = (() => {
+    const g = k => (db.prepare(`SELECT value FROM daily_settings WHERE key=?`).get(k) || {}).value;
+    const cols = g('print_cols') || '2';
+    const gap = g('print_gap') || '6';
+    const titleSize = g('print_title_size') || '18';
+    const titleBold = (g('print_title_bold') || '1') === '1' ? 'bold' : 'normal';
+    const titleItalic = (g('print_title_italic') || '0') === '1' ? 'italic' : 'normal';
+    const subSize = g('print_sub_size') || '10';
+    const subBold = (g('print_sub_bold') || '1') === '1' ? 'bold' : 'normal';
+    const catSize = g('print_cat_size') || '12';
+    const catBold = (g('print_cat_bold') || '1') === '1' ? 'bold' : 'normal';
+    const nameSize = g('print_name_size') || '10';
+    const nameBold = (g('print_name_bold') || '1') === '1' ? 'bold' : 'normal';
+    const numSize = g('print_num_size') || '11';
+    const numBold = (g('print_num_bold') || '1') === '1' ? 'bold' : 'normal';
+    const fontFam = g('print_font') || 'Jameel Noori Nastaleeq';
+    return `<style>
+ @page{size:A4 landscape;margin:5mm} *{box-sizing:border-box;margin:0;padding:0}
+ body{font-family:'${fontFam}','Jameel Noori Nastaleeq',serif;direction:rtl;color:#111;padding:5mm;font-size:15px}
+ .phead{border-bottom:2px solid #e8721c;padding:0;margin:0;overflow:hidden}
+ .plogo{width:36px;height:36px;float:right;margin-left:10px}
+ .ptitle{font-size:${titleSize}px;font-weight:${titleBold};font-style:${titleItalic}}
+ .psub{font-size:${subSize}px;color:#e8721c;font-weight:${subBold}}
+ .pmeta{font-size:8px;color:#444;float:left;text-align:left}
+ .dcols{column-count:${cols};column-gap:${gap}px;width:100%}
  .shopcols{column-count:2;column-gap:14px;width:100%;direction:rtl}
  .shopcols .cat-block td{padding:6px 8px;font-size:14px}
  .shopcols .cat-head{font-size:16px;padding:8px 4px}
  .shopcols .cat-block table{font-size:14px}
- .cat-block{break-inside:avoid;margin:0 0 8px;border:1.5px solid #111;overflow:hidden}
+ .cat-block{break-inside:avoid;margin:0 0 8px;padding:0;border:1.5px solid #111;overflow:hidden}
  .cat-head{background:#111;color:#fff;text-align:center;font-size:16px;font-weight:bold;padding:8px 4px;font-family:'Jameel Noori Nastaleeq',serif}
  .cat-block table{width:100%;border-collapse:collapse;font-size:14px}
  .cat-block th{background:#ddd;border:1px solid #111;padding:3px;font-size:11px;font-family:Arial,sans-serif;font-weight:bold}
@@ -1555,25 +2053,132 @@ ${head('تاریخ وائز آرڈر ہسٹری', 'تاریخ: ' + date)}${body 
  .sig{display:flex;justify-content:space-between;margin-top:14px;font-size:11px}
  .sig div{border-top:1px solid #333;padding-top:4px;width:40%;text-align:center}
  .note{background:#fdf3e7;border:1px dashed #e8721c;padding:4px 8px;margin:6px 0;font-size:11px}
+ .cat-block{break-inside:avoid;margin:0 0 8px;padding:0;border:1.5px solid #111;overflow:hidden;display:inline-block;width:100%}
+ .cat-head{background:#111;color:#fff;text-align:center;font-size:${catSize}px;font-weight:${catBold};padding:3px;line-height:1.2}
+ .cat-block table{width:100%;border-collapse:collapse}
+ .cat-block th{background:#ddd;border:1px solid #111;padding:2px;font-size:10px;font-weight:bold;line-height:1.2}
+ .cat-block td{border:1px solid #888;padding:1px 3px;font-size:${nameSize}px;font-weight:${nameBold};line-height:1.2}
+ .cat-block td.num{width:24px;text-align:center;font-size:${numSize}px;font-weight:${numBold};background:#f0f0f0;line-height:1.2}
+ .cat-block td.name{text-align:right}
+ .cat-block td.total{width:50px;text-align:center;font-weight:bold;background:#fff8f0}
  @media print{ .printbtn{display:none} }
+</style>`; })();
+
+  // ========== NAYA PRINT SYSTEM (Complete Reset) ==========
+  // Simple, clean, guaranteed 1-page A4 landscape
+  function newPrintCss() {
+    return `<style>
+@page{size:A4 portrait;margin:5mm}
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:'Jameel Noori Nastaleeq',serif;direction:rtl;color:#1a1a1a;padding:2mm;background:#fff}
+.np-top{background:linear-gradient(135deg,#e8721c,#f0953a);color:#fff;border-radius:8px;padding:7px 14px;margin-bottom:6px;display:flex;align-items:center;justify-content:space-between}
+.np-top .t1{font-size:19px;font-weight:900}
+.np-top .t2{font-size:13px;opacity:.95}
+.np-top .meta{font-size:11px;text-align:left;line-height:1.6;background:rgba(255,255,255,.2);padding:6px 12px;border-radius:8px}
+.np-grid{display:grid;grid-template-columns:1fr 1fr;gap:6px;align-items:start}
+.np-card{border:2px solid #e8721c;border-radius:10px;overflow:hidden;break-inside:avoid}
+.np-cardhead{background:#1a1a1a;color:#fff;padding:8px 10px;font-size:16px;font-weight:900;display:flex;justify-content:space-between;align-items:center}
+.np-cardhead .dt{background:#e8721c;color:#fff;font-size:10px;padding:2px 8px;border-radius:10px}
+.np-card table{width:100%;border-collapse:collapse}
+.np-card th{background:#fff3e6;color:#e8721c;font-size:10px;padding:4px;border-bottom:2px solid #e8721c}
+.np-card td{padding:1px 5px;font-size:14px;font-weight:800;border-bottom:1px solid #f0e0cc;line-height:1.15}
+.np-card td.n{text-align:center;width:26px;color:#999;font-size:10px}
+.np-card td.t{text-align:center;width:48px;font-weight:900;font-size:16px;color:#d35400;background:#fff0dd}
+.np-card tr:last-child td{border-bottom:none}
+.np-btn{position:fixed;top:10px;left:10px;z-index:99;background:#e8721c;color:#fff;border:none;border-radius:8px;padding:12px 24px;font-size:16px;font-weight:bold;cursor:pointer;box-shadow:0 2px 8px rgba(0,0,0,.3)}
+@media print{.np-btn{display:none}body{padding:0}}
 </style>`;
+  }
+  function newPrintHead(ddate, username) {
+    const now = new Date();
+    const p = n => String(n).padStart(2,'0');
+    const pd = `${p(now.getDate())}-${p(now.getMonth()+1)}-${now.getFullYear()} ${p(now.getHours())}:${p(now.getMinutes())}`;
+    const M = ['JAN','FEB','MAR','APR','MAY','JUN','JUL','AUG','SEP','OCT','NOV','DEC'];
+    const dp = String(ddate).split('-');
+    const fd = dp.length===3 ? `${dp[2]} ${M[+dp[1]-1]} ${dp[0]}` : ddate;
+    return `<div class="np-top"><div><div class="t1">🏭 گلشن فیکٹری</div><div class="t2">روزانہ ڈیمانڈ شیٹ</div></div><div class="meta">📅 ${fd}<br>👤 ${esc(username)}<br>🕐 ${pd}</div></div>`;
+  }
+  function newDemandBlocks(rows, ddate) {
+    const cats = {}, order = [];
+    rows.forEach(r => {
+      const k = r.category_name || 'متفرق';
+      if (!cats[k]) { cats[k] = []; order.push(k); }
+      cats[k].push(r);
+    });
+    const want = ['بریڈ','ڈرائی','نمکین','فریش'];
+    const sorted = [];
+    want.forEach(w => { if (order.includes(w)) sorted.push(w); });
+    order.forEach(o => { if (!sorted.includes(o)) sorted.push(o); });
+    const M = ['JAN','FEB','MAR','APR','MAY','JUN','JUL','AUG','SEP','OCT','NOV','DEC'];
+    const dp = String(ddate).split('-');
+    const fd = dp.length===3 ? `${dp[2]} ${M[+dp[1]-1]} ${dp[0]}` : ddate;
+    const icons = {'بریڈ':'🍞','ڈرائی':'🥜','نمکین':'🧂','فریش':'🥛'};
+    return sorted.map(cn => {
+      const total = cats[cn].reduce((a,r) => a + (+r.total_qty || 0), 0);
+      const trs = cats[cn].map((r,i) =>
+        `<tr><td class="n">${i+1}</td><td>${esc(r.product_name)}</td><td class="t">${esc(r.total_qty||0)}</td></tr>`).join('');
+      return `<div class="np-card"><div class="np-cardhead"><span>${icons[cn]||'📦'} ${esc(cn)} (کل: ${total})</span><span class="dt">${fd}</span></div><table><tr><th>#</th><th>آئٹم</th><th>ٹوٹل</th></tr>${trs}</table></div>`;
+    }).join('');
+  }
+  function newShopBlocks(shopName, rows, ddate) {
+    const cats = {}, order = [];
+    rows.forEach(r => {
+      const k = r.category_name || 'متفرق';
+      if (!cats[k]) { cats[k] = []; order.push(k); }
+      cats[k].push(r);
+    });
+    const want = ['بریڈ','ڈرائی','نمکین','فریش'];
+    const sorted = [];
+    want.forEach(w => { if (order.includes(w)) sorted.push(w); });
+    order.forEach(o => { if (!sorted.includes(o)) sorted.push(o); });
+    const M = ['JAN','FEB','MAR','APR','MAY','JUN','JUL','AUG','SEP','OCT','NOV','DEC'];
+    const dp = String(ddate).split('-');
+    const fd = dp.length===3 ? `${dp[2]} ${M[+dp[1]-1]} ${dp[0]}` : ddate;
+    return sorted.map(cn => {
+      const trs = cats[cn].map((r,i) =>
+        `<tr><td class="n">${i+1}</td><td>${esc(r.product_name)}</td><td class="t">${r.qty != null ? esc(r.qty) : 0}</td></tr>`).join('');
+      return `<div class="np-card"><div class="np-cardhead"><span>📦 ${esc(cn)}</span><span class="dt">${fd}</span></div><table><tr><th>#</th><th>${esc(shopName)}</th><th>مقدار</th></tr>${trs}</table></div>`;
+    }).join('');
+  }
+  // ========== END NAYA PRINT SYSTEM ==========
+
   function printHead(ddate, username) {
     const now = new Date();
     const pd = String(now.getDate()).padStart(2, '0') + '-' + String(now.getMonth() + 1).padStart(2, '0') + '-' + now.getFullYear();
     const pt = String(now.getHours()).padStart(2, '0') + ':' + String(now.getMinutes()).padStart(2, '0');
-    return `<div class="phead"><div class="pmeta">📅 پیداوار: ${fmtD(ddate)}<br>👤 پرنٹ: ${esc(username)}<br>🕐 ${pd} ${pt}</div><div class="pcenter"><div class="ptitle">گلشن فیکٹری</div><div class="psub">روزانہ ڈیمانڈ شیٹ</div></div><img src="/logo.png" class="plogo"></div>`;
+    return `<div class="phead"><img src="/logo.png" class="plogo"><div class="pmeta">📅 ${fmtD(ddate)} | 👤 ${esc(username)} | 🕐 ${pd} ${pt}</div><div class="ptitle">گلشن فیکٹری</div><div class="psub">روزانہ ڈیمانڈ شیٹ</div></div>`;
   }
   const fmtD = d => { const M = ['JAN','FEB','MAR','APR','MAY','JUN','JUL','AUG','SEP','OCT','NOV','DEC']; const p = String(d).split('-'); return p.length === 3 ? `${p[2]} ${M[Number(p[1]) - 1]} ${p[0]}` : d; };
   // category blocks builder (RateVault pattern) — rows: [{product_name, total_qty}]
   function demandBlocks(rows, ddate) {
     const cats = {}, order = [];
     rows.forEach(r => { const k = r.category_name || 'متفرق'; if (!cats[k]) { cats[k] = []; order.push(k); } cats[k].push(r); });
+    // Custom category order from settings
+    try {
+      const co = db.prepare(`SELECT value FROM daily_settings WHERE key='print_cat_order'`).get();
+      if (co && co.value) {
+        const customOrder = JSON.parse(co.value);
+        order.sort((a, b) => {
+          const ia = customOrder.indexOf(a), ib = customOrder.indexOf(b);
+          return (ia === -1 ? 999 : ia) - (ib === -1 ? 999 : ib);
+        });
+      }
+    } catch(e) {}
+    // 2x2 layout: [Bread, Namkeen, Dry, Fresh] -> HTML: [Bread, Dry, Namkeen, Fresh]
+    // taake column 1 me Bread+Dry, column 2 me Namkeen+Fresh aaye
+    let printOrder = order;
+    try {
+      const cols = db.prepare(`SELECT value FROM daily_settings WHERE key='print_cols'`).get();
+      if ((cols && cols.value || '2') === '2' && order.length === 4) {
+        printOrder = [order[0], order[2], order[1], order[3]];
+      }
+    } catch(e) {}
     const dstr = fmtD(ddate);
-    return order.map(cn => {
+    return printOrder.map(cn => {
       const trs = cats[cn].map((r, i) =>
-        `<tr><td class="num">${i + 1}</td><td class="name">${esc(r.product_name)}</td><td class="total"></td></tr>`).join('');
-      return `<div class="cat-block"><div class="cat-head">${esc(cn)} — ${dstr}</div>
-        <table><tr><th class="num-h">#S</th><th>ALL PARTIES</th><th class="total-h">TOTAL</th></tr>${trs}</table></div>`;
+        `<tr><td class="num">${i + 1}</td><td class="name">${esc(r.product_name)}</td><td class="total">${esc(r.total_qty || 0)}</td></tr>`).join('');
+      return `<div class="cat-block"><div class="cat-head">${esc(cn)} — <span dir="ltr">${dstr}</span></div>
+        <table><tr><th class="num-h">#</th><th>آئٹم</th><th class="total-h">ٹوٹل</th></tr>${trs}</table></div>`;
     }).join('');
   }
   // shop RateVault blocks — rows: [{product_name, category_name, qty}], header: CATEGORY — DATE, mid col: shop name, left: QTY
@@ -1584,7 +2189,7 @@ ${head('تاریخ وائز آرڈر ہسٹری', 'تاریخ: ' + date)}${body 
     return order.map(cn => {
       const trs = cats[cn].map((r, i) =>
         `<tr><td class="num">${i + 1}</td><td class="name">${esc(r.product_name)}</td><td class="total">${r.qty != null ? esc(r.qty) : ''}</td></tr>`).join('');
-      return `<div class="cat-block"><div class="cat-head">${esc(cn)} — ${dstr}</div>
+      return `<div class="cat-block"><div class="cat-head">${esc(cn)} — <span dir="ltr">${dstr}</span></div>
         <table><tr><th class="num-h">#S</th><th class="mid">${esc(shopName)}</th><th class="total-h">QTY</th></tr>${trs}</table></div>`;
     }).join('');
   }
@@ -1594,20 +2199,20 @@ ${head('تاریخ وائز آرڈر ہسٹری', 'تاریخ: ' + date)}${body 
     const ddate = date || dailyOrderDate();
     const sf = dailyShopFilter(sc, 'do');
     let sql = `SELECT p.name AS product_name, c.name AS category_name,
-        COALESCE(SUM(di.quantity), 0) AS total_qty
+        COALESCE(SUM(CASE WHEN do.order_date=? THEN di.quantity ELSE 0 END), 0) AS total_qty
       FROM daily_products p
       LEFT JOIN daily_order_items di ON di.product_id=p.id
-      LEFT JOIN daily_orders do ON do.id=di.order_id AND do.order_date=?${sf.clause}
+      LEFT JOIN daily_orders do ON do.id=di.order_id${sf.clause}
       LEFT JOIN daily_categories c ON c.id=p.category_id
       WHERE p.active=1`;
     const args = [ddate, ...sf.args];
     if (sc.catIds) { sql += ` AND p.category_id IN (${sc.catIds.map(() => '?').join(',')})`; args.push(...sc.catIds); }
     sql += ' GROUP BY p.id ORDER BY p.sort_order, p.name';
     const rows = db.prepare(sql).all(...args);
-    const blocks = demandBlocks(rows, ddate);
-    return res.send(`<!DOCTYPE html><html lang="ur" dir="rtl"><head><meta charset="utf-8"><title>روزانہ ڈیمانڈ شیٹ — ${esc(ddate)}</title>${dcss}</head><body>
-${printHead(ddate, req.user.username)}
-<div class="dcols">${blocks || '<p>کوئی آئٹم نہیں</p>'}</div>${printBtn}</body></html>`);
+    const blocks = newDemandBlocks(rows, ddate);
+    return res.send(`<!DOCTYPE html><html lang="ur" dir="rtl"><head><meta charset="utf-8"><title>روزانہ ڈیمانڈ شیٹ — ${esc(ddate)}</title>${newPrintCss()}</head><body>
+${newPrintHead(ddate, req.user.username)}
+<div class="np-grid">${blocks || '<p>کوئی آئٹم نہیں</p>'}</div><button class="np-btn" onclick="window.print()">🖨 پرنٹ</button></body></html>`);
   }
   // ---------- DAILY: per-shop (RateVault pattern) ----------
   if (type === 'daily_shop') {
@@ -1646,7 +2251,66 @@ ${printHead(ddate, req.user.username)}
     }).join('');
     return res.send(`<!DOCTYPE html><html lang="ur" dir="rtl"><head><meta charset="utf-8"><title>روزانہ سلپ — ${esc(ddate)}</title>${ddCss}</head><body>${pages}${printBtn}</body></html>`);
   }
+
+  // ---------- DAILY: per-shop (RateVault pattern) ----------
+  if (type === 'daily_shop') {
+    if (!can(req.user, 'daily', 'view')) return res.status(403).send('forbidden');
+    const sc = dailyScope(req);
+    const ddate = date || dailyOrderDate();
+    const sidParam = sc.shopId ? String(sc.shopId) : (shop_id || '');
+    let shops = [];
+    if (sc.shopId) {
+      const s = db.prepare('SELECT id, name FROM daily_shops WHERE id=?').get(sc.shopId);
+      if (s) shops = [s];
+    } else if (!sidParam || sidParam === 'all') {
+      shops = db.prepare(`SELECT id, name FROM daily_shops WHERE active=1${sc.shopIds ? ` AND id IN (${sc.shopIds.map(() => '?').join(',')})` : ''} ORDER BY name`).all(...(sc.shopIds || []));
+    } else {
+      const sid = Number(sidParam);
+      if (sc.shopIds && !sc.shopIds.includes(sid)) return res.status(403).send('forbidden');
+      const s = db.prepare('SELECT id, name FROM daily_shops WHERE id=?').get(sid);
+      if (!s) return res.status(404).send('shop_not_found');
+      shops = [s];
+    }
+    if (!shops.length) return res.status(404).send('shop_not_found');
+    const allProds = db.prepare(`SELECT p.id, p.name AS product_name, c.name AS category_name
+      FROM daily_products p LEFT JOIN daily_categories c ON c.id=p.category_id
+      WHERE p.active=1${sc.catIds ? ` AND p.category_id IN (${sc.catIds.map(() => '?').join(',')})` : ''}
+      ORDER BY p.sort_order, p.name`).all(...(sc.catIds || []));
+    const pages = shops.map((shop, si) => {
+      const o = db.prepare('SELECT id, note FROM daily_orders WHERE shop_id=? AND order_date=?').get(shop.id, ddate);
+      const qtyMap = {};
+      if (o) db.prepare('SELECT product_id, quantity FROM daily_order_items WHERE order_id=?').all(o.id).forEach(r => { qtyMap[r.product_id] = r.quantity; });
+      const rows = allProds.map(p => ({ product_name: p.product_name, category_name: p.category_name, qty: qtyMap[p.id] }));
+      const blocks = shopDemandBlocks(shop.name, rows, ddate);
+      const note = o && o.note ? `<div class="note">نوٹ: ${esc(o.note)}</div>` : '';
+      return `<div class="shoppage"${si > 0 ? ' style="page-break-before:always"' : ''}>${printHead(ddate, req.user.username)}
+        <div class="shoptitle"><span class="em">🏪</span> ${esc(shop.name)}</div>
+        <div class="dcols shopcols">${blocks || '<p>کوئی آئٹم نہیں</p>'}</div>${note}</div>`;
+    }).join('');
+    return res.send(`<!DOCTYPE html><html lang="ur" dir="rtl"><head><meta charset="utf-8"><title>روزانہ سلپ — ${esc(ddate)}</title>${ddCss}</head><body>${pages}${printBtn}</body></html>`);
+  }
   // ---------- DAILY: sab kuch ek saath (کل پیداوار + تمام دکانوں کی سلپس) ----------
+  // ---------- Item catalog print (category-wise) ----------
+  if (type === 'catalog') {
+    if (!can(req.user, 'products', 'view')) return res.status(403).send('forbidden');
+    const prods = db.prepare(`SELECT p.name AS product_name, c.name AS category_name, un.name AS unit_name
+      FROM products p LEFT JOIN categories c ON c.id=p.category_id LEFT JOIN units un ON un.id=p.unit_id
+      WHERE p.active=1 ORDER BY c.name, p.name`).all();
+    const cats = {}, order = [];
+    prods.forEach(r => {
+      const k = r.category_name || 'متفرق';
+      if (!cats[k]) { cats[k] = []; order.push(k); }
+      cats[k].push(r);
+    });
+    const blocks = order.map(cn => {
+      const trs = cats[cn].map((r,i) =>
+        `<tr><td class="n">${i+1}</td><td>${esc(r.product_name)}</td><td class="t">${esc(r.unit_name || '—')}</td></tr>`).join('');
+      return `<div class="np-card"><div class="np-cardhead"><span>📂 ${esc(cn)} (${cats[cn].length})</span></div><table><tr><th>#</th><th>آئٹم</th><th>یونٹ</th></tr>${trs}</table></div>`;
+    }).join('');
+    return res.send(`<!DOCTYPE html><html lang="ur" dir="rtl"><head><meta charset="utf-8"><title>آئٹم کیٹلاگ</title>${newPrintCss()}</head><body>
+${newPrintHead('catalog', req.user.username)}
+<div class="np-grid">${blocks}</div><button class="np-btn" onclick="window.print()">🖨 پرنٹ</button></body></html>`);
+  }
   if (type === 'daily_all') {
     if (!can(req.user, 'daily', 'view')) return res.status(403).send('forbidden');
     const sc = dailyScope(req);
@@ -1654,20 +2318,34 @@ ${printHead(ddate, req.user.username)}
     const sf = dailyShopFilter(sc, 'do');
     // Totals — tamam active items (DEMAND DASHBOARD pattern)
     let tsql = `SELECT p.name AS product_name, c.name AS category_name,
-        COALESCE(SUM(di.quantity), 0) AS total_qty
+        COALESCE(SUM(CASE WHEN do.order_date=? THEN di.quantity ELSE 0 END), 0) AS total_qty
       FROM daily_products p
       LEFT JOIN daily_order_items di ON di.product_id=p.id
-      LEFT JOIN daily_orders do ON do.id=di.order_id AND do.order_date=?${sf.clause}
+      LEFT JOIN daily_orders do ON do.id=di.order_id${sf.clause}
       LEFT JOIN daily_categories c ON c.id=p.category_id
       WHERE p.active=1`;
     const targs = [ddate, ...sf.args];
     if (sc.catIds) { tsql += ` AND p.category_id IN (${sc.catIds.map(() => '?').join(',')})`; targs.push(...sc.catIds); }
     tsql += ' GROUP BY p.id ORDER BY p.sort_order, p.name';
     const trows = db.prepare(tsql).all(...targs);
-    const totBody = demandBlocks(trows, ddate);
-    // Per-shop slips — tamam items, har dukan ki quantity
-    const orders = db.prepare(`SELECT do.id, do.shop_id, do.note, s.name AS shop_name FROM daily_orders do
-      JOIN daily_shops s ON s.id=do.shop_id WHERE do.order_date=?${sf.clause} ORDER BY s.name`).all(ddate, ...sf.args);
+    const totBody = newDemandBlocks(trows, ddate);
+    // Per-shop slips — SAARE active shops (order ho ya na ho)
+    let allShops = db.prepare(`SELECT id AS shop_id, name AS shop_name FROM daily_shops WHERE active=1${sc.shopIds ? ` AND id IN (${sc.shopIds.map(() => '?').join(',')})` : ''} ORDER BY name`).all(...(sc.shopIds || []));
+    let orders = allShops.map(sh => {
+      const o = db.prepare(`SELECT id, note FROM daily_orders WHERE shop_id=? AND order_date=?`).get(sh.shop_id, ddate);
+      return { id: o ? o.id : null, shop_id: sh.shop_id, note: o ? o.note : null, shop_name: sh.shop_name };
+    });
+    // Custom shop print order
+    try {
+      const so = db.prepare(`SELECT value FROM daily_settings WHERE key='print_shop_order'`).get();
+      if (so && so.value) {
+        const shopOrder = JSON.parse(so.value);
+        orders.sort((a, b) => {
+          const ia = shopOrder.indexOf(a.shop_name), ib = shopOrder.indexOf(b.shop_name);
+          return (ia === -1 ? 999 : ia) - (ib === -1 ? 999 : ib);
+        });
+      }
+    } catch(e) {}
     const allProds = db.prepare(`SELECT p.id, p.name AS product_name, c.name AS category_name
       FROM daily_products p LEFT JOIN daily_categories c ON c.id=p.category_id
       WHERE p.active=1${sc.catIds ? ` AND p.category_id IN (${sc.catIds.map(() => '?').join(',')})` : ''}
@@ -1675,17 +2353,17 @@ ${printHead(ddate, req.user.username)}
     const qByOrder = db.prepare('SELECT product_id, quantity FROM daily_order_items WHERE order_id=?');
     const slips = orders.map(o => {
       const qtyMap = {};
-      qByOrder.all(o.id).forEach(r => { qtyMap[r.product_id] = r.quantity; });
+      if (o.id) qByOrder.all(o.id).forEach(r => { qtyMap[r.product_id] = r.quantity; });
       const rows = allProds.map(pp => ({ product_name: pp.product_name, category_name: pp.category_name, qty: qtyMap[pp.id] }));
-      const blocks = shopDemandBlocks(o.shop_name, rows, ddate);
-      return `<div class="shoppage" style="page-break-before:always">${printHead(ddate, req.user.username)}
-        <div class="shoptitle"><span class="em">🏪</span> ${esc(o.shop_name)}</div>
-        <div class="dcols">${blocks || '<p>کوئی آئٹم نہیں</p>'}</div>
-        ${o.note ? `<div class="note">نوٹ: ${esc(o.note)}</div>` : ''}</div>`;
+      const blocks = newShopBlocks(o.shop_name, rows, ddate);
+      return `<div style="page-break-before:always">${newPrintHead(ddate, req.user.username)}
+        <div style="text-align:center;font-size:18px;font-weight:900;margin:4px 0;color:#fff;background:#111;padding:6px">🏪 ${esc(o.shop_name)}</div>
+        <div class="np-grid">${blocks || '<p>کوئی آئٹم نہیں</p>'}</div>
+        ${o.note ? `<div style="background:#fdf3e7;border:1px dashed #e8721c;padding:4px;margin:4px 0">نوٹ: ${esc(o.note)}</div>` : ''}</div>`;
     }).join('');
-    return res.send(`<!DOCTYPE html><html lang="ur" dir="rtl"><head><meta charset="utf-8"><title>روزانہ مکمل — ${esc(ddate)}</title>${ddCss}</head><body>
-${printHead(ddate, req.user.username)}
-<div class="dcols">${totBody || '<p>کوئی آئٹم نہیں</p>'}</div>${slips}${printBtn}</body></html>`);
+    return res.send(`<!DOCTYPE html><html lang="ur" dir="rtl"><head><meta charset="utf-8"><title>روزانہ مکمل — ${esc(ddate)}</title>${newPrintCss()}</head><body>
+${newPrintHead(ddate, req.user.username)}
+<div class="np-grid">${totBody || '<p>کوئی آئٹم نہیں</p>'}</div>${slips}<button class="np-btn" onclick="window.print()">🖨 پرنٹ</button></body></html>`);
   }
   const mode = type === 'shops' ? 'shops' : 'totals';
   let f = 'WHERE 1=1'; const args = [];

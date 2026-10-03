@@ -41,7 +41,7 @@ async function api(method, url, body) {
     body: body ? JSON.stringify(body) : undefined });
   const t = await r.text();
   let j = {}; try { j = t ? JSON.parse(t) : {}; } catch (e) { j = { _raw: t }; }
-  if (!r.ok) throw new Error(j.error || ('HTTP ' + r.status));
+  if (!r.ok) { const e = new Error(j.error || ('HTTP ' + r.status)); e.detail = j.detail; throw e; }
   return j;
 }
 const can = (sec, lvl = 'view') => {
@@ -322,6 +322,8 @@ function userAvatar(username, img) {
   return `<span class="avatar sm">${esc(ch)}</span>`;
 }
 async function renderDashboard() {
+  // Gaari wale aur supplier ka dashboard (dono)
+  if (ME.account_type === 'vehicle' || ME.account_type === 'supplier') return renderSupplierDash();
   const d = await api('GET', '/api/dashboard');
   const cd = d.upcoming.map(r => `
     <div class="supcard">
@@ -352,9 +354,11 @@ async function renderDashboard() {
   const cards = d.scope === 'shop'
     ? `<div class="pcard p3 wide"><div class="pic">🏪</div><div class="pnum">${esc(d.shop_name || 'میری دکان')}</div><div class="plbl">میری دکان</div></div>`
       + stat('🧾', d.today_orders, 'نئے آرڈرز (آج)')
-      + stat('📦', d.total_orders, 'کل آرڈرز')
+      + stat('📦', d.total_orders, 'آنے والے آرڈرز')
+      + (d.daily_today != null ? stat('📋', d.daily_today, 'روزانہ آرڈر (آج)') : '')
     : stat('🧾', d.today_orders, 'نئے آرڈرز (آج)')
-      + stat('📦', d.total_orders, 'کل آرڈرز')
+      + stat('📦', d.total_orders, 'آنے والے آرڈرز')
+      + stat('📋', d.daily_today || 0, 'روزانہ آرڈر (آج)')
       + stat('🏪', d.shops, 'شاپس')
       + stat('🗂', d.products, 'پروڈکٹس')
       + stat('👥', d.users, 'کل صارفین')
@@ -370,6 +374,7 @@ async function renderDashboard() {
   const me = (typeof ME !== 'undefined' && ME && ME.username) || '';
   const qaBtns = [
     can('orders', 'full') ? '<button class="qbtn" onclick="showView(\'order\')"><span class="qic">🧾</span>نیا آرڈر</button>' : '',
+    can('daily', 'view') ? '<button class="qbtn" onclick="showView(\'daily\')" style="background:linear-gradient(135deg,#e8721c,#f57c00)"><span class="qic">📋</span>روزانہ آرڈر</button>' : '',
     can('products', 'full') ? '<button class="qbtn" onclick="showView(\'products\')"><span class="qic">🗂</span>پروڈکٹ شامل کریں</button>' : '',
     can('shops', 'full') ? '<button class="qbtn" onclick="showView(\'shops\')"><span class="qic">🏪</span>شاپ شامل کریں</button>' : '',
     can('reports') ? '<button class="qbtn" onclick="showView(\'reports\')"><span class="qic">📊</span>رپورٹ دیکھیں</button>' : '',
@@ -850,9 +855,18 @@ async function routeEdit(id) {
 // products
 async function renderProducts() {
   await refreshCache();
-  const rows = CACHE.products.map(p => `<tr><td>${esc(p.category_name || '—')}</td><td>${esc(p.name)}</td><td>${esc(p.unit_name || '—')}</td>
-    <td>${can('products', 'full') ? `<button class="btn small ghost" onclick="prodEdit(${p.id})">✏</button>
-    <button class="btn small danger" onclick="prodDel(${p.id})">🗑</button>` : ''}</td></tr>`).join('');
+  // Category-wise group karo
+  const byCat = {};
+  CACHE.products.forEach(p => {
+    const k = p.category_name || 'متفرق';
+    (byCat[k] = byCat[k] || []).push(p);
+  });
+  const rows = Object.entries(byCat).map(([cn, items]) => `
+    <tr><td colspan="4" style="background:#111;color:#fff;font-weight:bold;text-align:center;padding:8px">📂 ${esc(cn)} (${items.length} آئٹم)</td></tr>
+    ${items.map(p => `<tr><td>${esc(p.category_name || '—')}</td><td><b>${esc(p.name)}</b></td><td>${esc(p.unit_name || '—')}</td>
+    <td>${can('products', 'full') ? `<button class="btn small ghost" onclick="moveProduct(${p.id},'up')">↑</button><button class="btn small ghost" onclick="moveProduct(${p.id},'down')">↓</button>
+    <button class="btn small ghost" onclick="prodEdit(${p.id})">✏</button>
+    <button class="btn small danger" onclick="prodDel(${p.id})">🗑</button>` : ''}</td></tr>`).join('')}`).join('');
   const form = can('products', 'full') ? `
     <div class="formgrid">
       <label>کیٹیگری<br><select id="pf-cat">${CACHE.cats.map(c => `<option value="${c.id}">${esc(c.name)}</option>`).join('')}</select></label>
@@ -860,7 +874,11 @@ async function renderProducts() {
       <label>یونٹ<br><select id="pf-unit">${CACHE.units.map(u => `<option value="${u.id}">${esc(u.name)}</option>`).join('')}</select></label>
       <label><br><button class="btn small green" onclick="prodAdd()">➕ شامل کریں</button></label>
     </div>` : '';
-  $('#v-products').innerHTML = `<h2 class="st">🍞 <span>آئٹمز</span></h2>${form}
+  $('#v-products').innerHTML = `<h2 class="st">🍞 <span>آئٹمز</span></h2>
+    <div style="margin-bottom:8px;display:flex;gap:8px">
+      <button class="btn small" style="background:#ff9800;color:#fff" onclick="cleanDuplicates()">🧹 ڈپلیکیٹ صاف کرو</button>
+      <button class="btn small" style="background:#1a237e;color:#fff" onclick="window.open('/print?type=catalog&cb='+Date.now(),'_blank')">🖨 کیٹلاگ پرنٹ</button>
+    </div>${form}
     <table><tr><th>کیٹیگری</th><th>نام</th><th>یونٹ</th><th></th></tr>${rows || '<tr><td colspan=4>خالی</td></tr>'}</table>`;
 }
 async function prodAdd() {
@@ -868,6 +886,16 @@ async function prodAdd() {
   renderProducts();
 }
 async function prodDel(id) { if (!confirm('حذف کریں؟')) return; await api('DELETE', '/api/products/' + id); renderProducts(); }
+async function moveProduct(id, dir) {
+  await api('POST', `/api/products/${id}/move`, { dir });
+  renderProducts();
+}
+async function cleanDuplicates() {
+  if (!confirm('ڈپلیکیٹ آئٹمز صاف کریں؟ (پہلا رکھا جائے گا، باقی بند ہوں گے)')) return;
+  const r = await api('POST', '/api/products/clean-duplicates', {});
+  alert(r.cleaned + ' ڈپلیکیٹ صاف ہو گئے!');
+  renderProducts();
+}
 async function prodEdit(id) {
   const p = CACHE.products.find(x => x.id === id); if (!p) return;
   const name = prompt('آئٹم کا نام:', p.name); if (name === null) return;
@@ -1101,7 +1129,8 @@ const ACCT_TYPES = {
   shop: { label: '🏪 دکان (سپلائی)', role: 'shop' },
   daily_shop: { label: '📝 روزانہ دکان', role: 'shop' },
   department: { label: '🏭 ڈیپارٹمنٹ', role: 'factory' },
-  supplier: { label: '🚚 سپلائر', role: 'factory' },
+  supplier: { label: '🏭 سپلائر (ڈیپارٹمنٹ)', role: 'factory' },
+  vehicle: { label: '🚚 گاڑی والا', role: 'factory' },
   viewer: { label: '👁 ویور', role: 'factory' },
   factory_admin: { label: '👑 فیکٹری ایڈمن', role: 'factory' },
   super_admin: { label: '🔑 سپر ایڈمن', role: 'super_admin' },
@@ -1195,6 +1224,11 @@ async function savePerms() {
 
 // ==================== DAILY ORDERS (روزانہ آرڈر) — separate system ====================
 let DAILY_DATE = null, DAILY_CUTOFF = '20:00', DAILY_VIEW_DATE = null, DAILY_SHOP_FILTER = '';
+window.setDailyShopFilter = function(v) {
+  DAILY_SHOP_FILTER = v;
+  renderDailyBoard({order_date: DAILY_VIEW_DATE || DAILY_DATE, cutoff_time: DAILY_CUTOFF, cutoff_passed: false});
+};
+window.dailyShopChange = function(v) { DAILY_SHOP_FILTER = v; const di = {order_date: DAILY_VIEW_DATE || DAILY_DATE, cutoff_time: DAILY_CUTOFF}; renderDailyBoard(di, v); };
 function fmtTime(ts) {
   try { return new Date(ts).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true, timeZone: 'Asia/Karachi' }); }
   catch (e) { return ''; }
@@ -1205,11 +1239,213 @@ async function renderDaily() {
   DAILY_DATE = di.order_date; DAILY_CUTOFF = di.cutoff_time;
   if (ME.role === 'shop' && ME.daily_shop_id) return renderDailyShopForm(di);
   if (ME.role === 'shop') {
-    $('#v-daily').innerHTML = `<h2 class="st">📝 <span>روزانہ آرڈر</span></h2>
-      <p class="note">آپ کا اکاؤنٹ روزانہ آرڈر سسٹم میں رجسٹرڈ نہیں ہے — صرف روزانہ دکان اکاؤنٹ یہاں آرڈر دے سکتا ہے۔</p>`;
+    $('#v-daily').innerHTML = `
+    <div style="background:linear-gradient(135deg,#e8721c,#f0953a);border-radius:16px;padding:24px;color:#fff;text-align:center;box-shadow:0 4px 16px rgba(232,114,28,.3)">
+      <div style="font-size:48px;margin-bottom:12px">🏪</div>
+      <div style="font-size:20px;font-weight:bold;margin-bottom:8px">روزانہ آرڈر</div>
+      <div style="font-size:14px;opacity:.95;line-height:1.6">آپ کا اکاؤنٹ روزانہ آرڈر سسٹم سے منسلک نہیں ہے۔<br>ایڈمن سے رابطہ کریں تاکہ آپ کی دکان رجسٹر ہو سکے۔</div>
+      <div style="margin-top:16px;font-size:12px;opacity:.8">👤 ${esc(ME.username)}</div>
+    </div>`;
     return;
   }
   return renderDailyBoard(di);
+}
+// ---------- Supplier dashboard (supply system) - KHUBSURAT ----------
+async function renderSupplierDash() {
+  const d = await api('GET', '/api/supplier/dashboard');
+  window._supData = d;
+  const sched = await api('GET', '/api/supplier/schedule').catch(() => []);
+  const statusLbl = { new: '🆕 نیا', collected: '📦 اٹھا لیا', delivered: '✅ پہنچا دیا' };
+  const statusCol = { new: '#ff9800', collected: '#2196f3', delivered: '#4caf50' };
+  const pending = d.shopOrders.filter(o => o.status !== 'delivered').length;
+  const done = d.shopOrders.filter(o => o.status === 'delivered').length;
+  const totalQty = d.itemTotals.reduce((a, t) => a + Number(t.total_qty || 0), 0);
+
+  // SAB shops: order aaya ya nahi (NO STATUS - sirf pending/received with time)
+  const shopHtml = (d.shopsStatus || []).map(sh => {
+    if (!sh.has_order) {
+      return `<div style="background:#fff8e1;border-radius:14px;padding:14px;margin-bottom:10px;box-shadow:0 2px 8px rgba(0,0,0,.06);border-right:5px solid #ffc107">
+        <div style="display:flex;justify-content:space-between;align-items:center">
+          <div style="font-weight:bold;font-size:16px">🏪 ${esc(sh.shop_name)}</div>
+          <span style="font-size:11px;background:#ffc107;color:#000;padding:4px 10px;border-radius:12px;font-weight:bold">⏳ پینڈنگ</span>
+        </div>
+      </div>`;
+    }
+    const o = sh.order;
+    const orderTime = o.created_at ? new Date(o.created_at.replace(' ', 'T') + 'Z').toLocaleString('ur-PK', { hour: '2-digit', minute: '2-digit', day: '2-digit', month: '2-digit' }) : '';
+    return `
+    <div style="background:#fff;border-radius:14px;padding:14px;margin-bottom:10px;box-shadow:0 2px 8px rgba(0,0,0,.08);border-right:5px solid #4caf50">
+      <div style="display:flex;justify-content:space-between;align-items:center">
+        <div style="font-weight:bold;font-size:16px">🏪 ${esc(o.shop_name)}</div>
+        <span style="font-size:11px;background:#4caf50;color:#fff;padding:4px 10px;border-radius:12px">✅ موصول</span>
+      </div>
+      <div style="font-size:13px;color:#666;margin:6px 0">📅 ${esc(o.delivery_date)} &nbsp; 🕐 ${orderTime} &nbsp; 📦 <b>${o.total_qty || 0}</b> items</div>
+    </div>`;
+  }).join('') || '<p class="note">کوئی دکان نہیں</p>';
+
+  // Item-wise (khubsurat table)
+  const itemHtml = d.itemTotals.map((t, i) => `
+    <tr style="${i % 2 ? 'background:#f9f9f9' : ''}">
+      <td style="padding:8px;font-weight:bold">${esc(t.product_name)}</td>
+      <td style="text-align:center"><span style="background:#e3f2fd;padding:2px 8px;border-radius:10px;font-size:11px">${esc(t.category_name || '—')}</span></td>
+      <td style="text-align:center;font-weight:900;font-size:16px;color:#e8721c">${t.total_qty}</td>
+      <td style="text-align:center;font-size:12px">${t.shop_count} دکان</td>
+    </tr>`).join('') || '<tr><td colspan=4>کوئی ڈیٹا نہیں</td></tr>';
+
+  // Schedule
+  const schedHtml = sched.map(x => `
+    <div style="background:#fff;padding:10px 12px;border-radius:8px;margin-bottom:6px;border:1px solid #eee">
+      <div>📅 <b>${esc(x.supply_date)}</b> ${x.label ? `(${esc(x.label)})` : ''}</div>
+      <div style="font-size:12px;color:#666">⏰ کٹ آف: ${esc(x.cutoff_date || '')} ${esc(x.cutoff_time || '')}</div>
+    </div>`).join('') || '<p class="note">کوئی شیڈول نہیں</p>';
+
+  const totalShops = (d.shopsStatus || []).length;
+  const orderedShops = (d.shopsStatus || []).filter(x => x.has_order).length;
+  const pct = totalShops ? Math.round(orderedShops / totalShops * 100) : 0;
+  $('#v-dashboard').innerHTML = `
+    <div style="background:linear-gradient(135deg,#e8721c,#f0953a);border-radius:16px;padding:20px;color:#fff;margin-bottom:12px;box-shadow:0 4px 16px rgba(232,114,28,.3)">
+      <div style="font-size:22px;font-weight:bold">🚚 میرا ڈیش بورڈ</div>
+      <div style="font-size:13px;opacity:.9;margin-top:4px">👤 ${esc(ME.username)} &nbsp; 📅 آخری ${d.history_days} دن</div>
+      <div style="display:flex;gap:10px;margin-top:12px">
+        <div style="background:rgba(255,255,255,.2);border-radius:10px;padding:10px;flex:1;text-align:center">
+          <div style="font-size:24px;font-weight:900">${pending}</div><div style="font-size:11px">⏳ پینڈنگ</div>
+        </div>
+        <div style="background:rgba(255,255,255,.2);border-radius:10px;padding:10px;flex:1;text-align:center">
+          <div style="font-size:24px;font-weight:900">${done}</div><div style="font-size:11px">✅ مکمل</div>
+        </div>
+        <div style="background:rgba(255,255,255,.2);border-radius:10px;padding:10px;flex:1;text-align:center">
+          <div style="font-size:24px;font-weight:900">${totalQty}</div><div style="font-size:11px">📦 کل آئٹمز</div>
+        </div>
+      </div>
+    </div>
+
+    <div id="supCountdown" style="background:linear-gradient(135deg,#2e7d32,#43a047);color:#fff;border-radius:12px;padding:14px;text-align:center;margin-bottom:12px;box-shadow:0 3px 10px rgba(46,125,50,.3)"></div>
+
+    <div style="background:linear-gradient(135deg,#43a047,#66bb6a);border-radius:14px;padding:16px;color:#fff;margin-bottom:12px;box-shadow:0 3px 10px rgba(0,0,0,.1)">
+      <div style="display:flex;justify-content:space-between;align-items:center">
+        <div style="font-weight:bold">📊 آرڈر ٹریک</div>
+        <div style="font-size:20px;font-weight:900">${orderedShops}/${totalShops}</div>
+      </div>
+      <div style="font-size:12px;opacity:.9;margin:4px 0">دکانوں کا آرڈر آیا (${pct}%)</div>
+      <div style="background:rgba(255,255,255,.3);border-radius:10px;height:10px;overflow:hidden;margin-top:8px">
+        <div style="background:#fff;height:100%;width:${pct}%;border-radius:10px;transition:width .5s"></div>
+      </div>
+    </div>
+
+    <div style="display:flex;gap:8px;margin-bottom:12px">
+      <button class="btn small" style="flex:1;background:#1a237e;color:#fff;padding:10px" onclick="supTab('shops')">🏪 دکانیں</button>
+      <button class="btn small" style="flex:1;background:#2e7d32;color:#fff;padding:10px" onclick="supTab('items')">📦 آئٹمز</button>
+      <button class="btn small" style="flex:1;background:#e65100;color:#fff;padding:10px" onclick="supTab('order')">📝 آرڈر</button>
+      <button class="btn small" style="flex:1;background:#6a1b9a;color:#fff;padding:10px" onclick="supTab('sched')">📅 شیڈول</button>
+    </div>
+
+    <div id="supTabShops">${shopHtml}</div>
+    <div id="supTabItems" style="display:none">
+      <div style="display:flex;gap:8px;margin-bottom:8px">
+        <button class="btn small" style="flex:1;background:#1a237e;color:#fff" onclick="supPrint('items')">🖨 آئٹم وائز پرنٹ</button>
+        <button class="btn small" style="flex:1;background:#2e7d32;color:#fff" onclick="supPrint('shops')">🖨 دکان وائز پرنٹ</button>
+      </div>
+      <div style="background:#fff;border-radius:12px;overflow:hidden;box-shadow:0 2px 8px rgba(0,0,0,.08)">
+        <table style="width:100%;border-collapse:collapse"><tr style="background:#1a237e;color:#fff"><th style="padding:10px;text-align:right">آئٹم</th><th>کیٹیگری</th><th>کل</th><th>دکانیں</th></tr>${itemHtml}</table>
+      </div>
+    </div>
+    <div id="supTabOrder" style="display:none">
+      <div style="background:#fff;border-radius:12px;padding:14px;box-shadow:0 2px 8px rgba(0,0,0,.08)">
+        <h4>📝 دکان کی طرف سے آرڈر دیں</h4>
+        <label>دکان<br><select id="supOrderShop" style="width:100%;padding:10px;border-radius:8px;border:1px solid #ddd;margin-bottom:10px"></select></label>
+        <label>ڈیلیوری تاریخ<br><input type="date" id="supOrderDate" style="width:100%;padding:10px;border-radius:8px;border:1px solid #ddd;margin-bottom:10px"></label>
+        <div id="supOrderItems" style="max-height:300px;overflow-y:auto;border:1px solid #eee;border-radius:8px;padding:8px;margin-bottom:10px"></div>
+        <button class="btn" style="width:100%;background:linear-gradient(135deg,#4caf50,#388e3c);color:#fff;padding:12px;border:none;border-radius:8px;font-weight:bold;font-size:16px" onclick="supSubmitOrder()">✅ آرڈر جمع کریں</button>
+      </div>
+    </div>
+    <div id="supTabSched" style="display:none">
+      <div style="background:#f5f5f5;border-radius:12px;padding:14px">
+        <h4>📅 سپلائی شیڈول (ایڈمن نے سیٹ کیا)</h4>
+        <p class="note">یہ سپلائی کیلنڈر سے آ رہا ہے</p>
+        ${schedHtml}
+      </div>
+    </div>`;
+}
+function supTab(t) {
+  ['shops', 'items', 'order', 'sched'].forEach(x => document.getElementById('supTab' + x[0].toUpperCase() + x.slice(1)).style.display = x === t ? '' : 'none');
+  if (t === 'order') loadSupOrderForm();
+}
+async function supAddSched() {
+  const d = document.getElementById('supDate').value, t = document.getElementById('supTime').value;
+  if (!d) return alert('تاریخ منتخب کریں');
+  await api('POST', '/api/supplier/schedule', { supply_date: d, cutoff_time: t });
+  renderSupplierDash();
+}
+async function supDelSched(dt) {
+  if (!confirm('حذف کریں؟')) return;
+  await api('DELETE', '/api/supplier/schedule/' + dt);
+  renderSupplierDash();
+}
+async function loadSupOrderForm() {
+  const d = await api('GET', '/api/supplier/dashboard');
+  const shops = d.shopsStatus || [];
+  document.getElementById('supOrderShop').innerHTML = shops.map(s => `<option value="${s.shop_id}">${esc(s.shop_name)}</option>`).join('');
+  const tomorrow = new Date(Date.now() + 864e5).toISOString().slice(0, 10);
+  const dt = document.getElementById('supOrderDate');
+  dt.min = tomorrow;
+  dt.value = tomorrow;
+  const prods = await api('GET', '/api/products').catch(() => []);
+  document.getElementById('supOrderItems').innerHTML = prods.filter(p => p.active).map(p => `
+    <div style="display:flex;justify-content:space-between;align-items:center;padding:6px;border-bottom:1px solid #f0f0f0">
+      <span style="font-size:14px">${esc(p.name)}</span>
+      <input type="number" min="0" data-pid="${p.id}" placeholder="0" style="width:70px;padding:6px;border-radius:6px;border:1px solid #ddd;text-align:center">
+    </div>`).join('');
+}
+async function supSubmitOrder() {
+  const shop_id = Number(document.getElementById('supOrderShop').value);
+  const delivery_date = document.getElementById('supOrderDate').value;
+  const items = {};
+  document.querySelectorAll('#supOrderItems input').forEach(el => {
+    const q = Number(el.value) || 0;
+    if (q > 0) items[el.dataset.pid] = q;
+  });
+  if (!Object.keys(items).length) return alert('کوئی آئٹم منتخب نہیں!');
+  await api('POST', '/api/supplier/order', { shop_id, delivery_date, items });
+  alert('✅ آرڈر ہو گیا!');
+  renderSupplierDash();
+}
+// Countdown
+function supCountdown() {
+  const el = document.getElementById('supCountdown');
+  if (!el) return;
+  api('GET', '/api/supplier/schedule').then(sched => {
+    if (!sched.length) { el.innerHTML = '⏰ کوئی شیڈول سیٹ نہیں'; return; }
+    const next = sched.sort((a,b) => a.supply_date.localeCompare(b.supply_date))[0];
+    const target = new Date(next.supply_date + 'T' + (next.cutoff_time || '20:00'));
+    const now = new Date();
+    const diff = target - now;
+    if (diff < 0) { el.innerHTML = `⏰ کٹ آف گزر گیا (${next.supply_date})`; return; }
+    const h = Math.floor(diff / 36e5), m = Math.floor(diff % 36e5 / 6e4), sec = Math.floor(diff % 6e4 / 1e3);
+    el.innerHTML = `⏰ کٹ آف: <b>${next.supply_date}</b> ${next.cutoff_time} &nbsp; | &nbsp; باقی: <b style="font-size:18px">${h}:${String(m).padStart(2,'0')}:${String(sec).padStart(2,'0')}</b>`;
+  }).catch(() => {});
+}
+setInterval(supCountdown, 1000);
+function supPrint(type) {
+  // Simple print: current dashboard data
+  const d = window._supData;
+  if (!d) return alert('ڈیٹا لوڈ نہیں ہوا');
+  let html = '';
+  if (type === 'items') {
+    html = '<h2>آئٹم وائز آرڈر</h2><table border=1 style="width:100%;border-collapse:collapse"><tr><th>آئٹم</th><th>کیٹیگری</th><th>کل</th><th>دکانیں</th></tr>' +
+      d.itemTotals.map(t => `<tr><td>${t.product_name}</td><td>${t.category_name || ''}</td><td>${t.total_qty}</td><td>${t.shop_count}</td></tr>`).join('') + '</table>';
+  } else {
+    html = '<h2>دکان وائز آرڈر</h2>' + (d.shopsStatus || []).map(sh => {
+      if (!sh.has_order) return `<p>🏪 ${sh.shop_name} - ⏳ پینڈنگ</p>`;
+      const o = sh.order;
+      return `<p>🏪 ${o.shop_name} - ✅ ${o.total_qty} items (${o.delivery_date})</p>`;
+    }).join('');
+  }
+  const w = window.open('', '_blank');
+  w.document.write(`<html><head><title>پرنٹ</title><style>body{font-family:serif;direction:rtl}table{border-collapse:collapse}td,th{border:1px solid #000;padding:6px}</style></head><body>${html}<br><button onclick="window.print()">🖨 پرنٹ</button></body></html>`);
+}
+async function supSetStatus(id, status) {
+  await api('POST', `/api/supplier/order/${id}/status`, { status });
+  renderSupplierDash();
 }
 // countdown target = order_date se ek din pehle, cutoff time par
 function dailyCutDate(orderDate) {
@@ -1235,19 +1471,31 @@ async function renderDailyShopForm(di) {
        <input type="number" min="0" step="any" data-pid="${p.id}" value="${qty[p.id] || ''}" placeholder="0"${locked ? ' disabled' : ''}></div>`).join('');
   }).join('');
   $('#v-daily').innerHTML = `
-    <h2 class="st">📝 <span>روزانہ آرڈر</span></h2>
-    <div class="supcard" style="border:2px solid #e8721c">
-      <div class="suphead" style="font-size:18px">🖨 <b>پرنٹ آپشنز</b></div>
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:10px">
-        <a class="btn dark" style="padding:14px;font-size:15px;text-align:center" target="_blank" href="/print?type=daily_total&date=${esc(date)}">📋<br>آئٹم وائز کل<br><small>تمام دکانوں کا ٹوٹل</small></a>
-        <a class="btn dark" style="padding:14px;font-size:15px;text-align:center" target="_blank" href="/print?type=daily_all&date=${esc(date)}">📦<br>تمام دکانیں<br><small>ہر دکان الگ پیج</small></a>
+    <div style="background:linear-gradient(135deg,#e8721c,#f0953a);border-radius:16px;padding:20px;margin-bottom:12px;color:#fff;box-shadow:0 4px 16px rgba(232,114,28,.3);position:relative;overflow:hidden">
+      <div style="position:absolute;top:-30px;left:-30px;width:100px;height:100px;background:rgba(255,255,255,.1);border-radius:50%"></div>
+      <div style="position:absolute;bottom:-40px;right:20px;width:80px;height:80px;background:rgba(255,255,255,.08);border-radius:50%"></div>
+      <div style="position:relative;display:flex;align-items:center;gap:12px">
+        <div style="font-size:40px;filter:drop-shadow(0 2px 4px rgba(0,0,0,.2))">📝</div>
+        <div>
+          <div style="font-size:24px;font-weight:bold;text-shadow:0 2px 4px rgba(0,0,0,.2)">روزانہ آرڈر</div>
+          <div style="font-size:13px;opacity:.9">${esc(date)} ${isCurrent ? '• آج' : ''}</div>
+        </div>
       </div>
-      <div class="formgrid" style="margin-top:10px">
-        <label style="font-size:15px"><b>🏪 دکان منتخب کریں</b><br><select id="dPrintShop" style="font-size:15px;padding:10px">
+    </div>
+    <div class="supcard" style="background:linear-gradient(135deg,#fff8f0,#ffecd2);border:2px solid #e8721c;box-shadow:0 2px 8px rgba(232,114,28,.15)">
+      <div class="suphead" style="font-size:19px;color:#c25e10">🖨 <b>پرنٹ آپشنز</b></div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:12px">
+        <a class="btn" style="padding:16px;font-size:16px;text-align:center;background:linear-gradient(135deg,#2e7d32,#43a047);color:#fff;border:none;border-radius:10px;box-shadow:0 2px 6px rgba(46,125,50,.3)" target="_blank" href="/print?type=daily_total&date=${esc(date)}&cb="+Date.now()+"">📋<br><b>آئٹم وائز کل</b><br><small style="opacity:.9">تمام دکانوں کا ٹوٹل</small></a>
+        <a class="btn" style="padding:16px;font-size:16px;text-align:center;background:linear-gradient(135deg,#1565c0,#1e88e5);color:#fff;border:none;border-radius:10px;box-shadow:0 2px 6px rgba(21,101,192,.3)" target="_blank" href="/print?type=daily_all&date=${esc(date)}&cb="+Date.now()+"">📦<br><b>مکمل پرنٹ</b><br><small style="opacity:.9">ٹوٹل + تمام دکانیں ایک ساتھ</small></a>
+      </div>
+      <div style="font-size:12px;color:#666;margin-top:8px;text-align:center">💡 <b>PDF</b> کے لیے پرنٹ کھولیں → <b>Ctrl+P</b> → <b>Save as PDF</b> منتخب کریں</div>
+      <div style="display:flex;gap:10px;margin-top:12px;align-items:end">
+        <label style="flex:1;font-size:15px"><b>🏪 دکان منتخب کریں</b><br><select id="dPrintShop" style="font-size:15px;padding:12px;width:100%;border-radius:8px;border:1px solid #e8721c">
           <option value="">-- دکان چنیں --</option>
           ${tracker.shops.map(s => `<option value="${s.id}">🏪 ${esc(s.name)}${s.ordered ? ' ✅' : ''}</option>`).join('')}
         </select></label>
-        <label><br><button class="btn dark" style="padding:12px 20px;font-size:15px" onclick="printDailyShop()">🖨 منتخب دکان پرنٹ کریں</button></label>
+        <button class="btn" style="padding:12px 24px;font-size:16px;background:linear-gradient(135deg,#e8721c,#f0953a);color:#fff;border:none;border-radius:10px;white-space:nowrap" onclick="printDailyShop()">🖨 پرنٹ کریں</button>
+      </div>
       </div>
     </div>
     <div class="supbanner">📦 پیداوار: <b>${esc(di.order_date)}</b></div>
@@ -1265,7 +1513,7 @@ async function submitDailyOrder() {
     await api('POST', '/api/daily/orders', { order_date: DAILY_DATE, items });
     alert('آرڈر بھیج دیا گیا ✅');
     renderDaily();
-  } catch (e) { $('#dErr').textContent = 'خرابی: ' + e.message; }
+  } catch (e) { $('#dErr').textContent = 'خرابی: ' + e.message + (e.detail ? ' (' + e.detail + ')' : ''); }
 }
 // ---------- admin: kisi dukan ka order do ----------
 async function renderDailyAdminOrder() {
@@ -1318,54 +1566,116 @@ async function renderDailyBoard(di) {
     api('GET', '/api/daily/catalog'),
   ]);
   const isCurrent = date === di.order_date;
+
   const rec = tracker.shops.filter(s => s.ordered), pend = tracker.shops.filter(s => !s.ordered);
   const pct = tracker.total ? Math.round(tracker.received / tracker.total * 100) : 0;
   const trackerHtml = `
-    <div class="supcard" style="background:linear-gradient(135deg,#1b5e20,#2e7d32);color:#fff;border:none">
-      <div style="display:flex;justify-content:space-between;align-items:center">
+    <div class="supcard" style="background:linear-gradient(135deg,#1b5e20,#2e7d32,#43a047);color:#fff;border:none;border-radius:16px;box-shadow:0 4px 16px rgba(27,94,32,.3);overflow:hidden;position:relative">
+      <div style="position:absolute;top:-20px;right:-20px;width:120px;height:120px;background:rgba(255,255,255,.08);border-radius:50%"></div>
+      <div style="position:absolute;bottom:-30px;left:-30px;width:100px;height:100px;background:rgba(255,255,255,.05);border-radius:50%"></div>
+      <div style="display:flex;justify-content:space-between;align-items:center;position:relative">
         <div><div style="font-size:13px;opacity:.85">📊 آرڈر ٹریکر</div>
-        <div style="font-size:32px;font-weight:bold">${tracker.received}<span style="font-size:18px;opacity:.7"> / ${tracker.total}</span></div>
+        <div style="font-size:36px;font-weight:bold;text-shadow:0 2px 4px rgba(0,0,0,.2)">${tracker.received}<span style="font-size:18px;opacity:.7"> / ${tracker.total}</span></div>
         <div style="font-size:13px;opacity:.85">دکانوں کا آرڈر آ گیا (${pct}%)</div></div>
-        <div style="font-size:40px">${pct === 100 ? '🎉' : '⏳'}</div>
+        <div style="font-size:48px;filter:drop-shadow(0 2px 4px rgba(0,0,0,.2))">${pct === 100 ? '🎉' : '⏳'}</div>
       </div>
-      <div style="background:rgba(255,255,255,.25);border-radius:8px;height:10px;margin:10px 0;overflow:hidden">
-        <div style="background:#fff;height:100%;width:${pct}%;border-radius:8px;transition:width .5s"></div>
+      <div style="background:rgba(255,255,255,.25);border-radius:10px;height:12px;margin:12px 0;overflow:hidden;position:relative">
+        <div style="background:linear-gradient(90deg,#fff,#e8f5e9);height:100%;width:${pct}%;border-radius:10px;transition:width .5s;box-shadow:0 0 8px rgba(255,255,255,.5)"></div>
       </div>
-      ${rec.length ? `<div style="margin:6px 0;font-size:14px"><b>✅ آ گیا:</b> ${rec.map(s => `${esc(s.name)} <small style="opacity:.8">${fmtTime(s.at)} · ${s.items} آئٹم</small>`).join(' ، ')}</div>` : ''}
-      ${pend.length ? `<div style="font-size:14px"><b>⏳ باقی:</b> ${pend.map(s => esc(s.name)).join(' ، ')}</div>` : '<div><b>🎉 سب دکانوں کا آرڈر آ گیا!</b></div>'}
-    </div>`;
-  // Category-wise totals cards
+    </div>
+    ${pend.length ? `
+    <div style="margin:12px 0">
+      <div style="font-size:16px;font-weight:bold;color:#c62828;margin-bottom:8px">⏳ پینڈنگ (${pend.length})</div>
+      <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:8px">
+        ${pend.map(s => `<div style="background:linear-gradient(135deg,#ffebee,#ffcdd2);border:2px solid #e57373;border-radius:10px;padding:10px;text-align:center;box-shadow:0 2px 6px rgba(198,40,40,.15)">
+          <div style="font-size:14px;font-weight:bold;color:#b71c1c">🏪 ${esc(s.name)}</div>
+          <div style="font-size:11px;color:#c62828">آرڈر باقی</div>
+        </div>`).join('')}
+      </div>
+    </div>` : `<div style="background:linear-gradient(135deg,#e8f5e9,#c8e6c9);border-radius:12px;padding:16px;text-align:center;margin:12px 0;font-size:16px;font-weight:bold;color:#2e7d32">🎉 سب دکانوں کا آرڈر آ گیا!</div>`}
+    ${rec.length ? `
+    <div style="margin:12px 0">
+      <div style="font-size:16px;font-weight:bold;color:#2e7d32;margin-bottom:8px">✅ موصول (${rec.length})</div>
+      <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:8px">
+        ${rec.map(s => `<div style="background:linear-gradient(135deg,#e8f5e9,#c8e6c9);border:2px solid #81c784;border-radius:10px;padding:10px;text-align:center;box-shadow:0 2px 6px rgba(46,125,50,.15)">
+          <div style="font-size:14px;font-weight:bold;color:#1b5e20">🏪 ${esc(s.name)}</div>
+          <div style="font-size:11px;color:#388e3c">${fmtTime(s.at)} · ${s.items} آئٹم</div>
+        </div>`).join('')}
+      </div>
+    </div>` : ''}`;
+  // Category-wise cards: shop filter ho to us shop ke items, warna totals
   const cats = {};
-  totals.forEach(t => { const k = t.category_name || 'متفرق'; (cats[k] = cats[k] || []).push(t); });
-  const totHtml = Object.entries(cats).map(([cn, items]) => `
-    <div class="ocard" style="margin-bottom:12px">
-      <div class="ochead"><b>🗂 ${esc(cn)}</b><span class="obadge">${items.length} آئٹم</span></div>
-      ${items.map(t => `<div class="prow"><span class="pn">${esc(t.product_name)}</span><span class="un">${t.shop_count} دکان</span><b style="font-size:18px">${esc(t.total_qty)}</b></div>`).join('')}
-    </div>`).join('');
   const shopF = DAILY_SHOP_FILTER;
+  if (shopF) {
+    const so = orders.find(o => String(o.shop_id) === shopF);
+    if (so && so.items) {
+      so.items.forEach(it => {
+        const k = it.category_name || 'متفرق';
+        (cats[k] = cats[k] || []).push({ product_name: it.product_name, total_qty: it.quantity, shop_count: 1 });
+      });
+    }
+    // Shop ke catalog se baqi items bhi dikhao (0 quantity)
+    if (catalog && Array.isArray(catalog)) {
+      const hasNames = new Set();
+      Object.values(cats).forEach(arr => arr.forEach(x => hasNames.add(x.product_name)));
+      catalog.forEach(cat => {
+        (cat.products || []).forEach(p => {
+          if (!hasNames.has(p.name)) {
+            const k = cat.name || 'متفرق';
+            (cats[k] = cats[k] || []).push({ product_name: p.name, total_qty: 0, shop_count: 0 });
+          }
+        });
+      });
+    }
+  } else {
+    totals.forEach(t => { const k = t.category_name || 'متفرق'; (cats[k] = cats[k] || []).push(t); });
+  }
+  const catColors = {'بریڈ':'#e8721c','نمکین':'#2e7d32','ڈرائی':'#1565c0','فریش':'#9c27b0'};
+  // Shop select hai to uska naam, warna "ٹوٹل"
+  const colHead = shopF ? esc(((tracker.shops || []).find(x => String(x.id) === shopF) || {}).name || 'دکان') : 'ٹوٹل';
+  const totHtml = `<div style="column-count:2;column-gap:12px">` + Object.entries(cats).map(([cn, items]) => {
+    const total = items.reduce((a, t) => a + Number(t.total_qty || 0), 0);
+    return `
+    <div style="border:2px solid #111;border-radius:6px;overflow:hidden;background:#fff;break-inside:avoid;margin-bottom:12px;display:inline-block;width:100%">
+      <div style="background:#111;color:#fff;font-size:15px;font-weight:bold;text-align:center;padding:8px">${esc(cn)} <span style="color:#ffb74d">(کل: ${total})</span></div>
+      <table style="width:100%;border-collapse:collapse;font-size:14px">
+        <tr><th style="background:#f5f5f5;font-size:11px;padding:5px;border:1px solid #999;width:35px">#</th><th style="background:#f5f5f5;font-size:11px;padding:5px;border:1px solid #999">آئٹم</th><th style="background:#f5f5f5;font-size:11px;padding:5px;border:1px solid #999;width:60px">${colHead}</th></tr>
+        ${items.map((t, i) => `<tr><td style="text-align:center;padding:6px;border:1px solid #bbb;font-weight:bold">${i+1}</td><td style="padding:6px;border:1px solid #bbb;font-weight:bold">${esc(t.product_name)} <small style="color:#888">(${t.shop_count} دکان)</small></td><td style="text-align:center;padding:6px;border:1px solid #bbb;font-weight:bold;font-size:16px">${esc(t.total_qty)}</td></tr>`).join('')}
+      </table>
+    </div>`; }).join('') + `</div>`;
   const ordersHtml = orders.filter(o => !shopF || String(o.shop_id) === shopF).map(o => `
-    <div class="ocard">
-      <div class="ochead"><b>🏪 ${esc(o.shop_name)}</b>
-        <span><a class="btn small" target="_blank" href="/print?type=daily_shop&date=${esc(date)}&shop_id=${o.shop_id}">🖨 پرنٹ</a>
+    <div class="ocard" style="border-radius:14px;overflow:hidden;box-shadow:0 3px 12px rgba(0,0,0,.08);border:1px solid #eee;margin-bottom:12px">
+      <div class="ochead" style="background:linear-gradient(135deg,#37474f,#546e7a);color:#fff;padding:12px 16px;display:flex;justify-content:space-between;align-items:center"><b style="font-size:15px">🏪 ${esc(o.shop_name)}</b>
+        <span><a class="btn small" target="_blank" href="/print?type=daily_shop&date=${esc(date)}&shop_id=${o.shop_id}&cb="+Date.now()+"">🖨 پرنٹ</a>
         ${can('daily', 'full') ? `<button class="btn small" style="background:#c62828;color:#fff" onclick="delDailyOrderBoard(${o.id})">🗑</button>` : ''}</span>
       </div>
       ${(o.items || []).map(i => `<div class="prow"><span class="pn">${esc(i.product_name)} <small class="note">${esc(i.category_name || '')}</small></span><b>${esc(i.quantity)}</b></div>`).join('') || '<p class="note">کوئی آئٹم نہیں</p>'}
       ${o.note ? `<div class="note">نوٹ: ${esc(o.note)}</div>` : ''}
     </div>`).join('');
   $('#v-daily').innerHTML = `
-    <h2 class="st">📝 <span>روزانہ آرڈر</span></h2>
-    <div class="supcard" style="border:2px solid #e8721c;margin:8px 0">
-      <div class="suphead" style="font-size:18px">🖨 <b>پرنٹ آپشنز</b></div>
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:10px">
-        <a class="btn dark" style="padding:14px;font-size:15px;text-align:center" target="_blank" href="/print?type=daily_total&date=${esc(date)}">📋<br>آئٹم وائز کل<br><small>تمام دکانوں کا ٹوٹل</small></a>
-        <a class="btn dark" style="padding:14px;font-size:15px;text-align:center" target="_blank" href="/print?type=daily_all&date=${esc(date)}">📦<br>تمام دکانیں<br><small>ہر دکان الگ پیج</small></a>
+    <div style="background:linear-gradient(135deg,#e8721c,#f0953a);border-radius:16px;padding:20px;margin-bottom:12px;color:#fff;box-shadow:0 4px 16px rgba(232,114,28,.3);position:relative;overflow:hidden">
+      <div style="position:absolute;top:-30px;left:-30px;width:100px;height:100px;background:rgba(255,255,255,.1);border-radius:50%"></div>
+      <div style="position:absolute;bottom:-40px;right:20px;width:80px;height:80px;background:rgba(255,255,255,.08);border-radius:50%"></div>
+      <div style="position:relative;display:flex;align-items:center;gap:12px">
+        <div style="font-size:40px;filter:drop-shadow(0 2px 4px rgba(0,0,0,.2))">📝</div>
+        <div>
+          <div style="font-size:24px;font-weight:bold;text-shadow:0 2px 4px rgba(0,0,0,.2)">روزانہ آرڈر</div>
+          <div style="font-size:13px;opacity:.9">${esc(date)} ${isCurrent ? '• آج' : ''}</div>
+        </div>
       </div>
-      <div class="formgrid" style="margin-top:10px">
-        <label style="font-size:15px"><b>🏪 دکان منتخب کریں</b><br><select id="dPrintShop2" style="font-size:15px;padding:10px">
+    </div>
+    <div class="supcard" style="background:linear-gradient(135deg,#fff8f0,#ffecd2);border:2px solid #e8721c;margin:8px 0;box-shadow:0 2px 8px rgba(232,114,28,.15)">
+      <div class="suphead" style="font-size:19px;color:#c25e10">🖨 <b>پرنٹ آپشنز</b></div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:12px">
+        <a class="btn" style="padding:16px;font-size:16px;text-align:center;background:linear-gradient(135deg,#2e7d32,#43a047);color:#fff;border:none;border-radius:10px;box-shadow:0 2px 6px rgba(46,125,50,.3)" target="_blank" href="/print?type=daily_total&date=${esc(date)}&cb="+Date.now()+"">📋<br><b>آئٹم وائز کل</b><br><small style="opacity:.9">تمام دکانوں کا ٹوٹل</small></a>
+        <a class="btn" style="padding:16px;font-size:16px;text-align:center;background:linear-gradient(135deg,#1565c0,#1e88e5);color:#fff;border:none;border-radius:10px;box-shadow:0 2px 6px rgba(21,101,192,.3)" target="_blank" href="/print?type=daily_all&date=${esc(date)}&cb="+Date.now()+"">📦<br><b>مکمل پرنٹ</b><br><small style="opacity:.9">ٹوٹل + تمام دکانیں ایک ساتھ</small></a>
+      </div>
+      <div style="display:flex;gap:10px;margin-top:12px;align-items:end">
+        <label style="flex:1;font-size:15px"><b>🏪 دکان منتخب کریں</b><br><select id="dPrintShop2" style="font-size:15px;padding:12px;width:100%;border-radius:8px;border:1px solid #e8721c">
           <option value="">-- دکان چنیں --</option>
           ${tracker.shops.map(s => `<option value="${s.id}">🏪 ${esc(s.name)}${s.ordered ? ' ✅' : ''}</option>`).join('')}
         </select></label>
-        <label><br><button class="btn dark" style="padding:12px 20px;font-size:15px" onclick="printDailyShop2()">🖨 منتخب دکان پرنٹ کریں</button></label>
+        <button class="btn" style="padding:12px 24px;font-size:16px;background:linear-gradient(135deg,#e8721c,#f0953a);color:#fff;border:none;border-radius:10px;white-space:nowrap" onclick="printDailyShop2()">🖨 پرنٹ کریں</button>
       </div>
     </div>
     ${isAdmin ? `<div style="margin:8px 0"><button class="btn green" onclick="renderDailyAdminOrder()">📝 دکان کا آرڈر دیں</button></div>` : ''}
@@ -1374,27 +1684,233 @@ async function renderDailyBoard(di) {
     ${trackerHtml}
     <div class="formgrid">
       <label>پیداوار کی تاریخ<br><input type="date" id="dDate" value="${esc(date)}" onchange="DAILY_VIEW_DATE=this.value;DAILY_SHOP_FILTER='';renderDaily()"></label>
-      <label>دکان<br><select id="dShopF" onchange="DAILY_SHOP_FILTER=this.value;renderDaily()">
+      <label>دکان<br><select id="dShopF" onchange="setDailyShopFilter(this.value)">
         <option value="">تمام دکانیں</option>
         ${tracker.shops.map(s => `<option value="${s.id}"${shopF === String(s.id) ? ' selected' : ''}>${esc(s.name)}${s.ordered ? ' ✅' : ''}</option>`).join('')}
       </select></label>
       ${isAdmin ? `<label><br><button class="btn small" onclick="renderDailyAccess()">⚙ ایکسس سیٹنگ</button></label>` : ''}
     </div>
-    <h3 class="st">📋 کل پیداوار</h3>
+    <div style="background:linear-gradient(135deg,#1a237e,#283593);border-radius:14px;padding:16px;margin:12px 0;color:#fff;box-shadow:0 4px 12px rgba(26,35,126,.25)">
+      <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+        <div style="font-size:32px">📋</div>
+        <div style="flex:1;min-width:200px">
+          <div style="font-size:20px;font-weight:bold">${shopF ? '🏪 ' + esc((tracker.shops.find(x => String(x.id) === shopF) || {}).name || '') + ' — آئٹم وائز' : 'All Parties — آئٹم وائز ٹوٹل'}</div>
+          <div style="font-size:12px;opacity:.85">${shopF ? 'اس دکان کا آرڈر' : 'تمام دکانوں کا ملا کر ٹوٹل (live)'}</div>
+        </div>
+        <div style="display:flex;gap:8px">
+          <button class="btn small" style="background:#fff;color:#1a237e" onclick="window.open('/print?type=daily_total&date=${esc(date)}&cb='+Date.now(),'_blank')">🖨 ٹوٹل پرنٹ</button>
+          ${shopF ? `<button class="btn small" style="background:#ffb74d;color:#111" onclick="window.open('/print?type=daily_shop&date=${esc(date)}&shop_id=${shopF}&cb='+Date.now(),'_blank')">🖨 دکان پرنٹ</button>` : ''}
+        </div>
+      </div>
+    </div>
     ${totHtml || '<p class="note">کوئی آرڈر نہیں</p>'}
+    ${shopF ? `<div style="background:linear-gradient(135deg,#e8721c,#f0953a);border-radius:12px;padding:14px;margin:12px 0;color:#fff"><b style="font-size:16px">🏪 ${esc((tracker.shops.find(x => String(x.id) === shopF) || {}).name || '')} کا آرڈر</b><div style="font-size:12px;opacity:.9">نیچے اس دکان کی مکمل تفصیل</div></div>` : ''}
     <h3 class="st">🏪 دکان وائز آرڈر (${orders.filter(o => !shopF || String(o.shop_id) === shopF).length})</h3>
     <div class="ocards">${ordersHtml || '<p class="note">کوئی آرڈر نہیں</p>'}</div>`;
   if (isCurrent && !di.cutoff_passed) startCountdown(dailyCutDate(di.order_date), di.cutoff_time, 'روزانہ آرڈر', 'dCd', { onDone: () => renderDaily() });
+  // Auto-refresh har 30 sec (naye orders ke liye)
+  if (window._dailyRefresh) clearInterval(window._dailyRefresh);
+  window._dailyRefresh = setInterval(() => {
+    if (document.getElementById('v-daily') && document.getElementById('v-daily').innerHTML.includes('All Parties')) {
+      renderDaily();
+    }
+  }, 30000);
 }
 function printDailyShop2() {
   const sel = $('#dPrintShop2'); if (!sel || !sel.value) { alert('کوئی دکان منتخب نہیں'); return; }
   const d = ($('#dDate') || {}).value || DAILY_DATE;
-  window.open(`/print?type=daily_shop&date=${encodeURIComponent(d)}&shop_id=${encodeURIComponent(sel.value)}`, '_blank');
+  window.open(`/print?type=daily_shop&date=${encodeURIComponent(d)}&shop_id=${encodeURIComponent(sel.value)}&cb=${Date.now()}`, '_blank');
+}
+async function loadPrintSettings() {
+  try {
+    const ps = await api('GET', '/api/daily/print-settings');
+    const set = (id, v) => { const el = document.getElementById(id); if (el) el.value = v; };
+    const setC = (id, v) => { const el = document.getElementById(id); if (el) el.checked = v === '1'; };
+    set('ps_cols', ps.print_cols || '2');
+    set('ps_margin', ps.print_margin || '6');
+    set('ps_gap', ps.print_gap || '10');
+    set('ps_font', ps.print_font || 'Jameel Noori Nastaleeq');
+    set('ps_title', ps.print_title_size || '24');
+    setC('ps_title_bold', ps.print_title_bold || '1');
+    setC('ps_title_italic', ps.print_title_italic || '0');
+    set('ps_sub', ps.print_sub_size || '13');
+    setC('ps_sub_bold', ps.print_sub_bold || '1');
+    set('ps_cat', ps.print_cat_size || '17');
+    setC('ps_cat_bold', ps.print_cat_bold || '1');
+    set('ps_table', ps.print_table_size || '15');
+    set('ps_name', ps.print_name_size || '15');
+    setC('ps_name_bold', ps.print_name_bold || '1');
+    set('ps_num', ps.print_num_size || '16');
+    set('ps_head', ps.print_head_size || '14');
+    setC('ps_num_bold', ps.print_num_bold || '1');
+    previewPrint();
+    loadCatOrder();
+    loadShopOrder();
+    loadSupUsers();
+    loadHistDays();
+    setTimeout(refreshPreview, 1000);
+  } catch(e) {}
+}
+let _psCatOrder = [];
+async function loadCatOrder() {
+  try {
+    const cats = await api('GET', '/api/daily-categories');
+    const ps = await api('GET', '/api/daily/print-settings');
+    let order = [];
+    try { order = JSON.parse(ps.print_cat_order || '[]'); } catch(e) {}
+    // Sort by saved order, then by name
+    _psCatOrder = cats.map(c => c.name).sort((a, b) => {
+      const ia = order.indexOf(a), ib = order.indexOf(b);
+      if (ia === -1 && ib === -1) return a.localeCompare(b);
+      return (ia === -1 ? 999 : ia) - (ib === -1 ? 999 : ib);
+    });
+    renderCatOrder();
+  } catch(e) {}
+}
+function renderCatOrder() {
+  const el = document.getElementById('ps_cat_order');
+  if (!el) return;
+  el.innerHTML = '<div style="font-size:12px;color:#888;margin-bottom:6px">🖱️ پکڑ کر گھسیٹیں (drag) یا ↑↓ دبائیں</div>' + _psCatOrder.map((cn, i) => `
+    <div draggable="true" ondragstart="dragCatStart(event,${i})" ondragover="dragCatOver(event)" ondrop="dragCatDrop(event,${i})" ondragend="dragCatEnd(event)"
+      style="display:flex;align-items:center;gap:8px;padding:8px;background:#fff;border:2px solid #ddd;border-radius:8px;margin-bottom:6px;cursor:grab;transition:all .2s">
+      <span style="cursor:grab;font-size:18px">⋮⋮</span>
+      <span style="font-weight:bold;color:#9c27b0">${i+1}.</span>
+      <span style="flex:1;font-weight:500">${esc(cn)}</span>
+      <button class="btn small" onclick="moveCat(${i},-1)" ${i===0?'disabled':''}>↑</button>
+      <button class="btn small" onclick="moveCat(${i},1)" ${i===_psCatOrder.length-1?'disabled':''}>↓</button>
+    </div>`).join('');
+}
+let _dragCatIdx = null;
+function dragCatStart(e, i) { _dragCatIdx = i; e.target.style.opacity = '0.5'; e.target.style.borderColor = '#9c27b0'; }
+function dragCatOver(e) { e.preventDefault(); }
+function dragCatDrop(e, i) {
+  e.preventDefault();
+  if (_dragCatIdx === null || _dragCatIdx === i) return;
+  const [moved] = _psCatOrder.splice(_dragCatIdx, 1);
+  _psCatOrder.splice(i, 0, moved);
+  renderCatOrder();
+  previewPrint();
+  try { api('POST', '/api/daily/print-settings', { print_cat_order: JSON.stringify(_psCatOrder) }); } catch(e) {}
+}
+function dragCatEnd(e) { e.target.style.opacity = '1'; _dragCatIdx = null; }
+async function moveCat(i, dir) {
+  const j = i + dir;
+  if (j < 0 || j >= _psCatOrder.length) return;
+  [_psCatOrder[i], _psCatOrder[j]] = [_psCatOrder[j], _psCatOrder[i]];
+  renderCatOrder();
+  previewPrint();
+  // Auto-save!
+  try { await api('POST', '/api/daily/print-settings', { print_cat_order: JSON.stringify(_psCatOrder) }); } catch(e) {}
+}
+let _psShopOrder = [];
+async function loadShopOrder() {
+  try {
+    const shops = await api('GET', '/api/daily-shops');
+    const ps = await api('GET', '/api/daily/print-settings');
+    let order = [];
+    try { order = JSON.parse(ps.print_shop_order || '[]'); } catch(e) {}
+    _psShopOrder = shops.map(sh => sh.name).sort((a, b) => {
+      const ia = order.indexOf(a), ib = order.indexOf(b);
+      if (ia === -1 && ib === -1) return a.localeCompare(b);
+      return (ia === -1 ? 999 : ia) - (ib === -1 ? 999 : ib);
+    });
+    renderShopOrder();
+  } catch(e) {}
+}
+function renderShopOrder() {
+  const el = document.getElementById('ps_shop_order');
+  if (!el) return;
+  el.innerHTML = '<div style="font-size:12px;color:#888;margin-bottom:6px">🖱️ پکڑ کر گھسیٹیں — پہلے کس دکان کا پرنٹ نکلے</div>' + _psShopOrder.map((sn, i) => `
+    <div draggable="true" ondragstart="dragShopStart(event,${i})" ondragover="event.preventDefault()" ondrop="dragShopDrop(event,${i})"
+      style="display:flex;align-items:center;gap:8px;padding:8px;background:#fff;border:2px solid #ddd;border-radius:8px;margin-bottom:6px;cursor:grab">
+      <span style="cursor:grab;font-size:18px">⋮⋮</span>
+      <span style="font-weight:bold;color:#2e7d32">${i+1}.</span>
+      <span style="flex:1;font-weight:500">🏪 ${esc(sn)}</span>
+      <button class="btn small" onclick="moveShop(${i},-1)" ${i===0?'disabled':''}>↑</button>
+      <button class="btn small" onclick="moveShop(${i},1)" ${i===_psShopOrder.length-1?'disabled':''}>↓</button>
+    </div>`).join('');
+}
+let _dragShopIdx = null;
+function dragShopStart(e, i) { _dragShopIdx = i; e.target.style.opacity = '0.5'; }
+function dragShopDrop(e, i) {
+  e.preventDefault();
+  if (_dragShopIdx === null || _dragShopIdx === i) return;
+  const [m] = _psShopOrder.splice(_dragShopIdx, 1);
+  _psShopOrder.splice(i, 0, m);
+  renderShopOrder();
+  _dragShopIdx = null;
+}
+function moveShop(i, dir) {
+  const j = i + dir;
+  if (j < 0 || j >= _psShopOrder.length) return;
+  [_psShopOrder[i], _psShopOrder[j]] = [_psShopOrder[j], _psShopOrder[i]];
+  renderShopOrder();
+}
+function refreshPreview() {
+  const d = (document.getElementById('dDate') || {}).value || DAILY_DATE || new Date().toISOString().split('T')[0];
+  const f = document.getElementById('printPreviewFrame');
+  if (f) f.src = `/print?type=daily_total&date=${encodeURIComponent(d)}&cb=${Date.now()}`;
+}
+function previewPrint() {
+  const gv = id => (document.getElementById(id) || {}).value || '';
+  const gc = id => (document.getElementById(id) || {}).checked ? '1' : '0';
+  const cols = gv('ps_cols') || '2', gap = gv('ps_gap') || '10';
+  const ts = gv('ps_title') || '24', tb = gc('ps_title_bold') === '1' ? 'bold' : 'normal', ti = gc('ps_title_italic') === '1' ? 'italic' : 'normal';
+  const ss = gv('ps_sub') || '13', sb = gc('ps_sub_bold') === '1' ? 'bold' : 'normal';
+  const cs = gv('ps_cat') || '17', cb = gc('ps_cat_bold') === '1' ? 'bold' : 'normal';
+  const ns = gv('ps_name') || '15', nb = gc('ps_name_bold') === '1' ? 'bold' : 'normal';
+  const us = gv('ps_num') || '16', ub = gc('ps_num_bold') === '1' ? 'bold' : 'normal';
+  const ff = gv('ps_font') || 'Jameel Noori Nastaleeq';
+  const el = document.getElementById('printPreview');
+  if (!el) return;
+  const cats = _psCatOrder.length ? _psCatOrder : ['بریڈ', 'نمکین', 'ڈرائی', 'فریش'];
+  const catTables = cats.map((cn, i) => `
+    <div draggable="true" ondragstart="dragPrevStart(event,${i})" ondragover="event.preventDefault()" ondrop="dragPrevDrop(event,${i})"
+      style="border:2px solid #111;border-radius:4px;cursor:grab;background:#fff;transition:transform .2s">
+      <div style="background:#111;color:#fff;font-size:${cs}px;font-weight:${cb};text-align:center;padding:6px;cursor:grab">⋮⋮ ${esc(cn)}</div>
+      <div style="font-size:${ns}px;font-weight:${nb};padding:4px;border-bottom:1px solid #555">نمونہ آئٹم <span style="font-size:${us}px;font-weight:${ub};float:left">00</span></div>
+      <div style="font-size:${ns}px;font-weight:${nb};padding:4px;">نمونہ آئٹم <span style="font-size:${us}px;font-weight:${ub};float:left">00</span></div>
+    </div>`).join('');
+  el.innerHTML = `<div style="font-family:'${ff}',serif;text-align:center;border-bottom:2px solid #e8721c;padding-bottom:6px;margin-bottom:8px">
+    <div style="font-size:${ts}px;font-weight:${tb};font-style:${ti}">گلشن فیکٹری</div>
+    <div style="font-size:${ss}px;color:#e8721c;font-weight:${sb}">روزانہ ڈیمانڈ شیٹ</div></div>
+  <div style="font-size:11px;color:#9c27b0;margin-bottom:6px">🖱️ ٹیبل پکڑ کر گھسیٹیں — ترتیب بدلیں!</div>
+  <div style="display:grid;grid-template-columns:repeat(${cols},1fr);gap:${gap}px">${catTables}</div>
+  <div style="font-size:11px;color:#888;margin-top:6px">👆 لائیو پریویو — تبدیل کریں اور دیکھیں</div>`;
+}
+let _dragPrevIdx = null;
+function dragPrevStart(e, i) { _dragPrevIdx = i; e.target.style.opacity = '0.6'; }
+function dragPrevDrop(e, i) {
+  e.preventDefault();
+  if (_dragPrevIdx === null || _dragPrevIdx === i) return;
+  const [m] = _psCatOrder.splice(_dragPrevIdx, 1);
+  _psCatOrder.splice(i, 0, m);
+  renderCatOrder();
+  previewPrint();
+  e.target.style.opacity = '1';
+  _dragPrevIdx = null;
+}
+async function savePrintSettings() {
+  const gv = id => (document.getElementById(id) || {}).value;
+  const gc = id => (document.getElementById(id) || {}).checked ? '1' : '0';
+  await api('POST', '/api/daily/print-settings', {
+    print_cols: gv('ps_cols'), print_margin: gv('ps_margin'), print_gap: gv('ps_gap'),
+    print_title_size: gv('ps_title'), print_title_bold: gc('ps_title_bold'), print_title_italic: gc('ps_title_italic'),
+    print_sub_size: gv('ps_sub'), print_sub_bold: gc('ps_sub_bold'),
+    print_cat_size: gv('ps_cat'), print_cat_bold: gc('ps_cat_bold'),
+    print_table_size: gv('ps_table'),
+    print_name_size: gv('ps_name'), print_name_bold: gc('ps_name_bold'),
+    print_num_size: gv('ps_num'), print_num_bold: gc('ps_num_bold'), print_head_size: gv('ps_head'),
+    print_font: gv('ps_font'),
+    print_cat_order: JSON.stringify(_psCatOrder),
+    print_shop_order: JSON.stringify(_psShopOrder),
+  });
+  alert('✅ پرنٹ سیٹنگز محفوظ ہو گئیں!');
 }
 function printDailyShop() {
   const sel = $('#dPrintShop'); if (!sel || !sel.value) { alert('کوئی دکان منتخب نہیں'); return; }
   const d = ($('#dDate') || {}).value || DAILY_DATE;
-  window.open(`/print?type=daily_shop&date=${encodeURIComponent(d)}&shop_id=${encodeURIComponent(sel.value)}`, '_blank');
+  window.open(`/print?type=daily_shop&date=${encodeURIComponent(d)}&shop_id=${encodeURIComponent(sel.value)}&cb=${Date.now()}`, '_blank');
 }
 async function delDailyOrderBoard(id) {
   if (!confirm('آرڈر حذف کریں؟')) return;
@@ -1404,7 +1920,7 @@ async function delDailyOrderBoard(id) {
 
 // ---------- admin: access settings ----------
 async function renderDailyAccess() {
-  const users = (await api('GET', '/api/users')).filter(u => u.role !== 'super_admin');
+  const users = (await api('GET', '/api/users')).filter(u => u.role !== 'super_admin' && (u.permissions && u.permissions.daily && u.permissions.daily !== 'none'));
   const [cats, shops] = await Promise.all([api('GET', '/api/daily-categories'), api('GET', '/api/daily-shops')]);
   window._daCats = cats; window._daShops = shops;
   const groups = {};
@@ -1422,9 +1938,94 @@ async function renderDailyAccess() {
       ${optGroups}
     </select></label></div>
     <div id="daForm"><p class="note">👆 پہلے اوپر سے یوزر منتخب کریں — پھر یہاں کیٹیگری اور دکانوں پر ✅ ٹک لگائیں</p></div>
+    <h3 class="st">🚚 گاڑی والے کی دکانیں (Supply)</h3>
+    <p class="note">گاڑی والے کو کونسی دکانیں دکھانی ہیں؟</p>
+    <div class="formgrid"><label>گاڑی والا<br><select id="supUser" onchange="loadSupShops()"><option value="">— منتخب کریں —</option></select></label></div>
+    <div id="supShops"></div>
+    <h3 class="st">📅 گاڑی والے کا شیڈول (Admin set kare)</h3>
+    <div id="supSchedAdmin"></div>
+    <h3 class="st">🎨 تھیم (رنگ)</h3>
+    <p class="note">ایڈمن خود تھیم منتخب کرے!</p>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px">
+      <button class="btn small" style="background:linear-gradient(135deg,#e8721c,#f0953a);color:#fff;padding:12px 20px" onclick="setTheme('orange')">🟠 اورنج</button>
+      <button class="btn small" style="background:linear-gradient(135deg,#11998e,#38ef7d);color:#fff;padding:12px 20px" onclick="setTheme('green')">🟢 سبز</button>
+      <button class="btn small" style="background:linear-gradient(135deg,#4facfe,#00f2fe);color:#fff;padding:12px 20px" onclick="setTheme('blue')">🔵 نیلا</button>
+      <button class="btn small" style="background:linear-gradient(135deg,#a18cd1,#fbc2eb);color:#fff;padding:12px 20px" onclick="setTheme('purple')">🟣 جامنی</button>
+      <button class="btn small" style="background:linear-gradient(135deg,#f093fb,#f5576c);color:#fff;padding:12px 20px" onclick="setTheme('pink')">🌸 گلابی</button>
+    </div>
+    <h3 class="st">📅 ہسٹری سیٹنگ (کتنے دن پرانا ڈیٹا)</h3>
+    <div style="background:#f5f5f5;border-radius:10px;padding:12px">
+      <div style="display:flex;gap:8px;align-items:center;margin-bottom:8px">
+        <span style="flex:1">🚚 گاڑی والا:</span>
+        <input type="number" id="histSupplier" min="1" max="365" value="2" style="width:70px;padding:6px;border-radius:6px;border:1px solid #ddd">
+        <span>دن</span>
+      </div>
+      <div style="display:flex;gap:8px;align-items:center;margin-bottom:8px">
+        <span style="flex:1">🏪 سپلائی دکان:</span>
+        <input type="number" id="histShop" min="1" max="365" value="30" style="width:70px;padding:6px;border-radius:6px;border:1px solid #ddd">
+        <span>دن</span>
+      </div>
+      <div style="display:flex;gap:8px;align-items:center;margin-bottom:8px">
+        <span style="flex:1">📝 روزانہ دکان:</span>
+        <input type="number" id="histDaily" min="1" max="365" value="30" style="width:70px;padding:6px;border-radius:6px;border:1px solid #ddd">
+        <span>دن</span>
+      </div>
+      <div style="display:flex;gap:8px;align-items:center;margin-bottom:8px">
+        <span style="flex:1">🚚 گاڑی والا کتنے دن آگے تک آرڈر دے:</span>
+        <input type="number" id="vehOrderDays" min="1" max="30" value="7" style="width:70px;padding:6px;border-radius:6px;border:1px solid #ddd">
+        <span>دن</span>
+      </div>
+      <button class="btn small green" onclick="saveHistDays()">💾 محفوظ کریں</button>
+    </div>
     <h3 class="st">⏰ روزانہ کٹ آف ٹائم</h3>
     <div class="formgrid"><label>کٹ آف<br><input type="time" id="daCutoff" value="${esc(DAILY_CUTOFF)}"></label>
     <label><br><button class="btn small" onclick="saveDailyCutoff()">💾 محفوظ کریں</button></label></div>
+    <h3 class="st">🖨 پرنٹ سیٹنگز</h3>
+    
+<div class="supcard" style="border:2px solid #9c27b0;margin:8px 0">
+      <div class="suphead" style="font-size:18px;color:#7b1fa2;cursor:pointer" onclick="document.getElementById('printSettings').style.display=document.getElementById('printSettings').style.display==='none'?'block':'none'">⚙️ <b>پرنٹ سیٹنگز (Excel Style)</b> <small>(کلک کریں)</small></div>
+      <div id="printSettings" style="display:none;margin-top:10px">
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+          <div style="grid-column:1/-1;background:#f3e5f5;padding:8px;border-radius:6px"><b>📄 پیج</b></div>
+          <label>کالم تعداد<br><select id="ps_cols" onchange="previewPrint()" style="width:100%;padding:8px"><option value="2">2</option><option value="3">3</option><option value="4">4</option></select></label>
+          <label>مارجن (mm)<br><input id="ps_margin" type="number" min="2" max="20" oninput="previewPrint()" style="width:100%;padding:8px"></label>
+          <label>کالم گیپ<br><input id="ps_gap" type="number" min="4" max="30" oninput="previewPrint()" style="width:100%;padding:8px"></label>
+          <div style="grid-column:1/-1;background:#e3f2fd;padding:8px;border-radius:6px;margin-top:4px"><b>🔤 فونٹ</b></div>
+          <label style="grid-column:1/-1">فونٹ منتخب کریں<br><select id="ps_font" onchange="previewPrint()" style="width:100%;padding:8px">
+            <option value="Jameel Noori Nastaleeq">Jameel Noori Nastaleeq</option>
+            <option value="Urdu Typesetting">Urdu Typesetting</option>
+            <option value="Noto Nastaliq Urdu">Noto Nastaliq Urdu</option>
+            <option value="Gulzar">Gulzar</option>
+          </select></label>
+          <div style="grid-column:1/-1;background:#fce4ec;padding:8px;border-radius:6px;margin-top:4px"><b>📂 کیٹیگری ترتیب</b> <small>(اوپر نیچے کریں)</small></div>
+          <div id="ps_cat_order" style="grid-column:1/-1"></div>
+          <div style="grid-column:1/-1;background:#e8f5e9;padding:8px;border-radius:6px;margin-top:4px"><b>🏪 دکان پرنٹ ترتیب</b> <small>(پہلے کس کا پرنٹ)</small></div>
+          <div id="ps_shop_order" style="grid-column:1/-1"></div>
+          <div style="grid-column:1/-1;background:#e8f5e9;padding:8px;border-radius:6px;margin-top:4px"><b>📌 ہیڈر</b></div>
+          <label>ہیڈنگ سائز<br><input id="ps_title" type="number" min="12" max="48" oninput="previewPrint()" style="width:100%;padding:8px"></label>
+          <label>ہیڈنگ اسٹائل<br><div><label><input type="checkbox" id="ps_title_bold" onchange="previewPrint()"> <b>B</b></label> <label><input type="checkbox" id="ps_title_italic" onchange="previewPrint()"> <i>I</i></label></div></label>
+          <label>سب ہیڈنگ سائز<br><input id="ps_sub" type="number" min="8" max="30" oninput="previewPrint()" style="width:100%;padding:8px"></label>
+          <label>سب ہیڈنگ <b>B</b><br><input type="checkbox" id="ps_sub_bold" onchange="previewPrint()"></label>
+          <div style="grid-column:1/-1;background:#fff3e0;padding:8px;border-radius:6px;margin-top:4px"><b>📊 ٹیبل</b></div>
+          <label>کیٹیگری سائز<br><input id="ps_cat" type="number" min="10" max="36" oninput="previewPrint()" style="width:100%;padding:8px"></label>
+          <label>کیٹیگری <b>B</b><br><input type="checkbox" id="ps_cat_bold" onchange="previewPrint()"></label>
+          <label>آئٹم نام سائز<br><input id="ps_name" type="number" min="10" max="30" oninput="previewPrint()" style="width:100%;padding:8px"></label>
+          <label>نام <b>B</b><br><input type="checkbox" id="ps_name_bold" onchange="previewPrint()"></label>
+          <label>تعداد سائز<br><input id="ps_num" type="number" min="10" max="36" oninput="previewPrint()" style="width:100%;padding:8px"></label>
+          <label>ہیڈر سائز (#/آئٹم/ٹوٹل)<br><input id="ps_head" type="number" min="10" max="24" oninput="previewPrint()" style="width:100%;padding:8px"></label>
+          <label>تعداد <b>B</b><br><input type="checkbox" id="ps_num_bold" onchange="previewPrint()"></label>
+        </div>
+        <div style="margin-top:12px">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+            <b>👁️ لائیو پریویو</b>
+            <button class="btn small" onclick="refreshPreview()">🔄 ریفریش</button>
+          </div>
+          <iframe id="printPreviewFrame" style="width:100%;height:500px;border:2px dashed #9c27b0;border-radius:8px;background:#fff"></iframe>
+          <div id="printPreview" style="margin-top:8px;border:1px solid #ddd;padding:8px;border-radius:6px;background:#fafafa;font-size:12px"></div>
+        </div>
+        <button class="btn green" style="margin-top:12px;padding:12px 24px;font-size:16px" onclick="savePrintSettings()">💾 سیٹنگز محفوظ کریں</button>
+      </div>
+
     <h3 class="st">🏪 دکان کے آئٹمز <small class="note">(کونسی دکان کو کونسے آئٹم نظر آئیں — خالی = تمام)</small></h3>
     <div class="formgrid"><label>دکان<br><select id="daShop" onchange="renderDailyShopItems()">
       <option value="">— منتخب کریں —</option>
@@ -1432,6 +2033,7 @@ async function renderDailyAccess() {
     </select></label></div>
     <div id="daShopForm"></div>
     <p class="note">نوٹ: روزانہ آرڈر کی رسائی (بند / صرف دیکھیں / مکمل) یوزر مینجمنٹ → رسائی سے سیٹ کریں۔</p>`;
+  setTimeout(loadPrintSettings, 500);
 }
 async function renderDailyShopItems() {
   const sid = $('#daShop').value; if (!sid) { $('#daShopForm').innerHTML = ''; return; }
@@ -1563,6 +2165,78 @@ async function renderDailyShops() {
     <button class="btn small" onclick="renderDailyData()">← واپس</button>
     <p class="note"><b>➕ شامل کریں</b> دبائیں — جو شامل ہے اس پر <b>✓ شامل ہے</b> ہوگا۔</p>
     <table><tr><th>دکان</th><th>فون</th><th style="text-align:center">روزانہ میں</th></tr>${rows || '<tr><td colspan=3>خالی</td></tr>'}</table>`;
+}
+// ---------- Supplier shops assignment ----------
+async function loadSupUsers() {
+  const users = (await api('GET', '/api/users')).filter(u => u.account_type === 'vehicle' || u.account_type === 'supplier');
+  const sel = document.getElementById('supUser');
+  if (sel) sel.innerHTML = '<option value="">— منتخب کریں —</option>' + users.map(u => `<option value="${u.id}">${esc(u.username)}</option>`).join('');
+}
+async function loadSupShops() {
+  const uid = document.getElementById('supUser').value;
+  if (!uid) { document.getElementById('supShops').innerHTML = ''; document.getElementById('supSchedAdmin').innerHTML = ''; return; }
+  loadSupSchedAdmin(uid);
+  const [shops, assigned] = await Promise.all([api('GET', '/api/shops'), api('GET', `/api/supplier/shops/${uid}`)]);
+  const set = new Set(assigned);
+  document.getElementById('supShops').innerHTML = shops.filter(s => s.active).map(s => `
+    <label style="display:block;padding:6px;border:1px solid #ddd;border-radius:6px;margin-bottom:4px">
+      <input type="checkbox" data-shop="${s.id}" ${set.has(s.id) ? 'checked' : ''}> ${esc(s.name)}
+    </label>`).join('') + `<button class="btn small green" onclick="saveSupShops(${uid})">💾 محفوظ کریں</button>`;
+}
+async function setTheme(t) {
+  await api('POST', '/api/app-theme', { theme: t });
+  alert('✅ تھیم بدل گیا! (' + t + ')');
+  location.reload();
+}
+async function saveHistDays() {
+  const s = Number(document.getElementById('histSupplier').value) || 2;
+  const sh = Number(document.getElementById('histShop').value) || 30;
+  const d = Number(document.getElementById('histDaily').value) || 30;
+  const v = Number(document.getElementById('vehOrderDays').value) || 7;
+  await api('POST', '/api/history-days', { key: 'supplier_history_days', days: s });
+  await api('POST', '/api/history-days', { key: 'shop_history_days', days: sh });
+  await api('POST', '/api/history-days', { key: 'daily_history_days', days: d });
+  await api('POST', '/api/history-days', { key: 'vehicle_order_days', days: v });
+  alert('✅ محفوظ ہو گیا!');
+}
+async function loadHistDays() {
+  try {
+    const h = await api('GET', '/api/history-days');
+    document.getElementById('histSupplier').value = h.supplier_history_days;
+    document.getElementById('histShop').value = h.shop_history_days;
+    document.getElementById('histDaily').value = h.daily_history_days;
+    document.getElementById('vehOrderDays').value = h.vehicle_order_days || '7';
+  } catch(e) {}
+}
+async function saveSupShops(uid) {
+  const ids = [...document.querySelectorAll('#supShops input:checked')].map(el => Number(el.dataset.shop));
+  await api('POST', `/api/supplier/shops/${uid}`, { shop_ids: ids });
+  alert('✅ محفوظ ہو گیا!');
+}
+async function loadSupSchedAdmin(uid) {
+  if (!uid) { document.getElementById('supSchedAdmin').innerHTML = ''; return; }
+  const sched = await api('GET', `/api/supplier/schedule/${uid}`);
+  document.getElementById('supSchedAdmin').innerHTML =
+    sched.map(x => `<div style="display:flex;justify-content:space-between;align-items:center;background:#fff;padding:8px;border-radius:6px;margin-bottom:4px;border:1px solid #eee">
+      <span>📅 <b>${esc(x.supply_date)}</b> ⏰ ${esc(x.cutoff_time)}</span>
+      <button class="btn small danger" onclick="delSupSchedAdmin(${uid},'${x.supply_date}')">🗑</button>
+    </div>`).join('') +
+    `<div style="display:flex;gap:6px;margin-top:8px">
+      <input type="date" id="supSchedDate" style="flex:1;padding:6px;border-radius:6px;border:1px solid #ddd">
+      <input type="time" id="supSchedTime" value="20:00" style="padding:6px;border-radius:6px;border:1px solid #ddd">
+      <button class="btn small green" onclick="addSupSchedAdmin(${uid})">➕</button>
+    </div>`;
+}
+async function addSupSchedAdmin(uid) {
+  const d = document.getElementById('supSchedDate').value, t = document.getElementById('supSchedTime').value;
+  if (!d) return alert('تاریخ منتخب کریں');
+  await api('POST', `/api/supplier/schedule/${uid}`, { supply_date: d, cutoff_time: t });
+  loadSupSchedAdmin(uid);
+}
+async function delSupSchedAdmin(uid, dt) {
+  if (!confirm('حذف کریں؟')) return;
+  await api('DELETE', `/api/supplier/schedule/${uid}/${dt}`);
+  loadSupSchedAdmin(uid);
 }
 // ---------- Daily: supply se select karke import ----------
 const DIMPORT_CONF = {
