@@ -33,6 +33,41 @@ async function sendWhatsApp(to, message) {
 function waAlert(msg) {
   const adminNum = waGet('admin_number');
   if (adminNum) sendWhatsApp(adminNum, '🏭 Gulshan Factory\n' + msg);
+  emailAlert('🏭 Gulshan Factory Alert', msg);
+}
+// ---------- Email alerts (via Gmail SMTP) ----------
+db.exec(`CREATE TABLE IF NOT EXISTS email_settings (key TEXT PRIMARY KEY, value TEXT)`);
+function emailGet(k) { try { const r = db.prepare('SELECT value FROM email_settings WHERE key=?').get(k); return r ? r.value : ''; } catch(e) { return ''; } }
+function emailSet(k, v) { db.prepare('INSERT INTO email_settings (key, value) VALUES (?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value').run(k, v); }
+// Pre-configure admin email
+try { if (!emailGet('admin_email')) emailSet('admin_email', 'skui.bukhari@gmail.com'); } catch(e) {}
+let _emailTransporter = null;
+function emailTransporter() {
+  if (_emailTransporter) return _emailTransporter;
+  const user = emailGet('smtp_user'), pass = emailGet('smtp_pass');
+  if (!user || !pass) return null;
+  try {
+    const nodemailer = require('nodemailer');
+    _emailTransporter = nodemailer.createTransport({
+      host: 'smtp.gmail.com', port: 587, secure: false,
+      auth: { user, pass }
+    });
+    return _emailTransporter;
+  } catch(e) { console.log('[email] nodemailer missing:', e.message); return null; }
+}
+function resetEmailTransporter() { _emailTransporter = null; }
+async function sendEmail(to, subject, text) {
+  if (!to || !subject) return false;
+  const t = emailTransporter();
+  if (!t) { console.log('[email] no SMTP configured'); return false; }
+  try {
+    await t.sendMail({ from: emailGet('smtp_user'), to, subject: String(subject).slice(0, 200), text: String(text).slice(0, 8000) });
+    return true;
+  } catch(e) { console.log('[email] send failed:', e.message); return false; }
+}
+function emailAlert(subject, msg) {
+  const adminEmail = emailGet('admin_email');
+  if (adminEmail) sendEmail(adminEmail, subject, '🏭 Gulshan Factory\n' + msg);
 }
 // MIGRATION: pre-configure WhatsApp (phone ID + admin number); token set via /api/wa-settings
 try {
@@ -527,6 +562,23 @@ app.post('/api/wa-test', requireLogin, isAdmin, async (req, res) => {
   if (!to) return res.status(400).json({ error: 'no_admin_number' });
   await sendWhatsApp(to, '✅ Gulshan Factory WhatsApp alerts test!');
   res.json({ ok: true });
+});
+// ---------- Email alert settings ----------
+app.get('/api/email-settings', requireLogin, isAdmin, (req, res) => {
+  res.json({ admin_email: emailGet('admin_email'), smtp_user: emailGet('smtp_user'), has_pass: !!emailGet('smtp_pass') });
+});
+app.post('/api/email-settings', requireLogin, isAdmin, (req, res) => {
+  const b = req.body || {};
+  if (b.admin_email !== undefined) emailSet('admin_email', String(b.admin_email).trim());
+  if (b.smtp_user !== undefined) { emailSet('smtp_user', String(b.smtp_user).trim()); resetEmailTransporter(); }
+  if (b.smtp_pass) { emailSet('smtp_pass', String(b.smtp_pass).trim()); resetEmailTransporter(); }
+  res.json({ ok: true });
+});
+app.post('/api/email-test', requireLogin, isAdmin, async (req, res) => {
+  const to = emailGet('admin_email');
+  if (!to) return res.status(400).json({ error: 'no_admin_email' });
+  const ok = await sendEmail(to, '✅ Gulshan Factory Email Test', '🏭 Gulshan Factory\nEmail alerts kaam kar rahe hain! 🎉');
+  res.json({ ok });
 });
 
 app.get('/api/status', (req, res) => {
@@ -1839,6 +1891,9 @@ app.get('/api/dashboard', requireLogin, requireSection('dashboard'), (req, res) 
       (SELECT COUNT(*) FROM orders o WHERE o.route_id=r.id) AS order_count FROM routes r
       LEFT JOIN vehicles v ON v.id=r.vehicle_id
       WHERE r.active=1 AND r.supply_date > ? ORDER BY r.supply_date LIMIT 5`).all(ktoday);
+  // Recent orders: scoped to the NEXT upcoming supply date (auto-refreshes when supply moves)
+  const nextSupply = upcoming.length ? upcoming[0].supply_date : null;
+  const recentDateFilter = nextSupply ? `o.delivery_date = '${nextSupply}'` : `o.delivery_date >= '${ktoday}'`;
   const dailyRows = db.prepare(`SELECT date(created_at, '+5 hours') d, COUNT(*) c FROM orders
     WHERE date(created_at, '+5 hours') >= date('now', '+5 hours', '-6 days') ${sf} GROUP BY d`).all();
   const daily = [];
@@ -1863,7 +1918,7 @@ app.get('/api/dashboard', requireLogin, requireSection('dashboard'), (req, res) 
     recent_orders: db.prepare(`SELECT o.id, o.created_at, o.delivery_date, s.name AS shop_name,
       s.image AS shop_image, u.username AS created_by, u.avatar AS user_avatar,
       (SELECT COUNT(*) FROM order_items WHERE order_id=o.id) AS items
-      FROM orders o JOIN shops s ON s.id=o.shop_id LEFT JOIN users u ON u.id=o.created_by WHERE o.delivery_date >= ? ${sfj} ORDER BY o.id DESC LIMIT 10`).all(ktoday),
+      FROM orders o JOIN shops s ON s.id=o.shop_id LEFT JOIN users u ON u.id=o.created_by WHERE ${recentDateFilter} ${sfj} ORDER BY o.id DESC LIMIT 10`).all(),
     upcoming,
   });
 });
