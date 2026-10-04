@@ -260,10 +260,24 @@ function _showView(name) {
   document.querySelectorAll('.view').forEach(v => v.classList.remove('on'));
   const el = $('#v-' + (name === 'order_history' ? 'history' : name)); if (el) el.classList.add('on');
   document.querySelectorAll('#menuNav button').forEach(b => b.classList.toggle('active', b.dataset.view === name));
-  ({ dashboard: renderDashboard, supply: renderSupplyCalendar, order: renderOrderForm, orders: renderOrders, daily: renderDaily, order_history: renderHistory,
+  // View render karo — error aaye to blank screen ki bajaye friendly message
+  const _fn = ({ dashboard: renderDashboard, supply: renderSupplyCalendar, order: renderOrderForm, orders: renderOrders, daily: renderDaily, order_history: renderHistory,
      vehicles: () => renderMaster('vehicles'), routes: renderRoutes, cats: () => renderMaster('cats'),
      units: () => renderMaster('units'), products: renderProducts, shops: () => renderMaster('shops'),
-     reports: renderReports }[name] || (() => {}))();
+     reports: renderReports }[name] || (() => {}));
+  const _showViewError = (e) => {
+    const vname = (name === 'order_history' ? 'history' : name);
+    const el2 = $('#v-' + vname);
+    const msg = (e && e.message === 'forbidden') ? 'آپ کو اس صفحے کی اجازت نہیں ہے۔ ایڈمن سے رابطہ کریں۔' : 'صفحہ لوڈ نہیں ہو سکا۔ دوبارہ کوشش کریں۔';
+    if (el2) el2.innerHTML = `<div style="text-align:center;padding:60px 20px;color:#666">
+      <div style="font-size:48px;margin-bottom:12px">🔒</div>
+      <div style="font-size:18px;font-weight:bold">رسائی نہیں</div>
+      <div style="font-size:14px;margin-top:8px">${msg}</div></div>`;
+  };
+  try {
+    const _r = _fn();
+    if (_r && _r.catch) _r.catch(_showViewError);
+  } catch (e) { _showViewError(e); }
 }
 function showView(name) {
   _showView(name);
