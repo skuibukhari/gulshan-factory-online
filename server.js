@@ -2305,13 +2305,13 @@ ${newPrintHead(ddate, req.user.username)}
       const qtyMap = {};
       if (o) db.prepare('SELECT product_id, quantity FROM daily_order_items WHERE order_id=?').all(o.id).forEach(r => { qtyMap[r.product_id] = r.quantity; });
       const rows = allProds.map(p => ({ product_name: p.product_name, category_name: p.category_name, qty: qtyMap[p.id] }));
-      const blocks = shopDemandBlocks(shop.name, rows, ddate);
-      const note = o && o.note ? `<div class="note">نوٹ: ${esc(o.note)}</div>` : '';
-      return `<div class="shoppage"${si > 0 ? ' style="page-break-before:always"' : ''}>${printHead(ddate, req.user.username)}
-        <div class="shoptitle"><span class="em">🏪</span> ${esc(shop.name)}</div>
-        <div class="dcols shopcols">${blocks || '<p>کوئی آئٹم نہیں</p>'}</div>${note}</div>`;
+      const blocks = newShopBlocks(shop.name, rows, ddate);
+      const note = o && o.note ? `<div style="background:#fdf3e7;border:1px dashed #e8721c;padding:4px;margin:4px 0">نوٹ: ${esc(o.note)}</div>` : '';
+      return `<div${si > 0 ? ' style="page-break-before:always"' : ''}>${newPrintHead(ddate, req.user.username)}
+        <div style="text-align:center;font-size:18px;font-weight:900;margin:4px 0;color:#fff;background:#111;padding:6px">🏪 ${esc(shop.name)}</div>
+        <div class="np-grid">${blocks || '<p>کوئی آئٹم نہیں</p>'}</div>${note}</div>`;
     }).join('');
-    return res.send(`<!DOCTYPE html><html lang="ur" dir="rtl"><head><meta charset="utf-8"><title>روزانہ سلپ — ${esc(ddate)}</title>${ddCss}</head><body>${pages}${printBtn}</body></html>`);
+    return res.send(`<!DOCTYPE html><html lang="ur" dir="rtl"><head><meta charset="utf-8"><title>روزانہ سلپ — ${esc(ddate)}</title>${newPrintCss()}</head><body>${pages}<button class="np-btn" onclick="window.print()">🖨 پرنٹ</button></body></html>`);
   }
 
   // ---------- DAILY: per-shop (RateVault pattern) ----------
