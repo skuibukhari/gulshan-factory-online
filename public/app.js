@@ -1504,21 +1504,22 @@ async function renderDailyShopForm(di) {
         <div style="font-size:40px;filter:drop-shadow(0 2px 4px rgba(0,0,0,.2))">📝</div>
         <div>
           <div style="font-size:24px;font-weight:bold;text-shadow:0 2px 4px rgba(0,0,0,.2)">روزانہ آرڈر</div>
-          <div style="font-size:13px;opacity:.9">${esc(date)} ${isCurrent ? '• آج' : ''}</div>
+          <div style="font-size:13px;opacity:.9">${esc(di.order_date)}</div>
         </div>
       </div>
     </div>
     <div class="supcard" style="background:linear-gradient(135deg,#fff8f0,#ffecd2);border:2px solid #e8721c;box-shadow:0 2px 8px rgba(232,114,28,.15)">
       <div class="suphead" style="font-size:19px;color:#c25e10">🖨 <b>پرنٹ آپشنز</b></div>
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:12px">
-        <a class="btn" style="padding:16px;font-size:16px;text-align:center;background:linear-gradient(135deg,#2e7d32,#43a047);color:#fff;border:none;border-radius:10px;box-shadow:0 2px 6px rgba(46,125,50,.3)" target="_blank" href="/print?type=daily_total&date=${esc(date)}&cb="+Date.now()+"">📋<br><b>آئٹم وائز کل</b><br><small style="opacity:.9">تمام دکانوں کا ٹوٹل</small></a>
-        <a class="btn" style="padding:16px;font-size:16px;text-align:center;background:linear-gradient(135deg,#1565c0,#1e88e5);color:#fff;border:none;border-radius:10px;box-shadow:0 2px 6px rgba(21,101,192,.3)" target="_blank" href="/print?type=daily_all&date=${esc(date)}&cb="+Date.now()+"">📦<br><b>مکمل پرنٹ</b><br><small style="opacity:.9">ٹوٹل + تمام دکانیں ایک ساتھ</small></a>
+        <a class="btn" style="padding:16px;font-size:16px;text-align:center;background:linear-gradient(135deg,#2e7d32,#43a047);color:#fff;border:none;border-radius:10px;box-shadow:0 2px 6px rgba(46,125,50,.3)" target="_blank" href="/print?type=daily_total&date=${esc(di.order_date)}&cb="+Date.now()+"">📋<br><b>آئٹم وائز کل</b><br><small style="opacity:.9">تمام دکانوں کا ٹوٹل</small></a>
+        <a class="btn" style="padding:16px;font-size:16px;text-align:center;background:linear-gradient(135deg,#1565c0,#1e88e5);color:#fff;border:none;border-radius:10px;box-shadow:0 2px 6px rgba(21,101,192,.3)" target="_blank" href="/print?type=daily_all&date=${esc(di.order_date)}&cb="+Date.now()+"">📦<br><b>مکمل پرنٹ</b><br><small style="opacity:.9">ٹوٹل + تمام دکانیں ایک ساتھ</small></a>
       </div>
       <div style="font-size:12px;color:#666;margin-top:8px;text-align:center">💡 <b>PDF</b> کے لیے پرنٹ کھولیں → <b>Ctrl+P</b> → <b>Save as PDF</b> منتخب کریں</div>
       <div style="display:flex;gap:10px;margin-top:12px;align-items:end">
         <label style="flex:1;font-size:15px"><b>🏪 دکان منتخب کریں</b><br><select id="dPrintShop" style="font-size:15px;padding:12px;width:100%;border-radius:8px;border:1px solid #e8721c">
           <option value="">-- دکان چنیں --</option>
-          ${tracker.shops.map(s => `<option value="${s.id}">🏪 ${esc(s.name)}${s.ordered ? ' ✅' : ''}</option>`).join('')}
+          <option value="mine">🏪 میری دکان</option>
+        </select></label>
         </select></label>
         <button class="btn" style="padding:12px 24px;font-size:16px;background:linear-gradient(135deg,#e8721c,#f0953a);color:#fff;border:none;border-radius:10px;white-space:nowrap" onclick="printDailyShop()">🖨 پرنٹ کریں</button>
       </div>
