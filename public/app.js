@@ -324,7 +324,19 @@ function userAvatar(username, img) {
 async function renderDashboard() {
   // Gaari wale aur supplier ka dashboard (dono)
   if (ME.account_type === 'vehicle' || ME.account_type === 'supplier') return renderSupplierDash();
-  const d = await api('GET', '/api/dashboard');
+  let d;
+  try {
+    d = await api('GET', '/api/dashboard');
+  } catch (e) {
+    // Permission nahi (403) to pehle allowed view par bhejo, warna friendly message
+    const fav = firstAllowedView();
+    if (fav && fav !== 'dashboard') { _showView(fav); return; }
+    $('#v-dashboard').innerHTML = `<div style="text-align:center;padding:60px 20px;color:#666">
+      <div style="font-size:48px;margin-bottom:12px">🔒</div>
+      <div style="font-size:18px;font-weight:bold">ڈیش بورڈ دستیاب نہیں</div>
+      <div style="font-size:14px;margin-top:8px">آپ کے اکاؤنٹ کو ڈیش بورڈ کی اجازت نہیں ہے۔</div></div>`;
+    return;
+  }
   const cd = d.upcoming.map(r => `
     <div class="supcard">
       <div class="suphead">🚚 <b>${esc(r.name)}</b>${(d.scope !== 'shop' && r.order_count != null) ? ` <span class="obadge">🧾 ${r.order_count} آرڈر</span>` : ''}</div>
