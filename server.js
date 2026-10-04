@@ -1146,15 +1146,17 @@ try {
     try { order_date = dailyOrderDate(); } catch(e) { order_date = new Date().toISOString().slice(0,10); }
   }
   const shop_id = Number(b.shop_id) || 0;
-  if (!shop_id) return res.status(400).json({ error: 'shop_required' });
-  const shopExists = db.prepare('SELECT id FROM daily_shops WHERE id=?').get(shop_id);
+  // Shop user apna daily_shop_id automatic use kare
+  const effective_shop_id = (req.user.role === 'shop' && req.user.daily_shop_id) ? req.user.daily_shop_id : shop_id;
+  if (!effective_shop_id) return res.status(400).json({ error: 'shop_required' });
+  const shopExists = db.prepare('SELECT id FROM daily_shops WHERE id=?').get(effective_shop_id);
   if (!shopExists) return res.status(400).json({ error: 'bad_shop' });
   const items = b.items || {};
   const now = Date.now();
-  let order = db.prepare('SELECT id FROM daily_orders WHERE shop_id=? AND order_date=?').get(shop_id, order_date);
+  let order = db.prepare('SELECT id FROM daily_orders WHERE shop_id=? AND order_date=?').get(effective_shop_id, order_date);
   if (!order) {
     const r = db.prepare('INSERT INTO daily_orders (shop_id, order_date, note, created_by, created_at) VALUES (?,?,?,?,?)')
-      .run(shop_id, order_date, b.note || '', req.user.id, now);
+      .run(effective_shop_id, order_date, b.note || '', req.user.id, now);
     order = { id: r.lastInsertRowid };
   } else {
     db.prepare('UPDATE daily_orders SET note=?, created_by=? WHERE id=?').run(b.note || '', req.user.id, order.id);
@@ -1168,7 +1170,7 @@ try {
       try { ins.run(order.id, nid, qty); } catch(e) {}
     }
   }
-  const shopName = (db.prepare('SELECT name FROM daily_shops WHERE id=?').get(shop_id) || {}).name || shop_id;
+  const shopName = (db.prepare('SELECT name FROM daily_shops WHERE id=?').get(effective_shop_id) || {}).name || effective_shop_id;
   const itemCount = Object.keys(items).length;
   waAlert(`📝 ڈیلی آرڈر: ${shopName} - ${itemCount} آئٹم (${order_date})`);
   res.json({ ok: true, id: order.id });
