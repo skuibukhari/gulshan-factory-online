@@ -72,7 +72,7 @@ function emailAlert(subject, msg) {
 // MIGRATION: pre-configure WhatsApp (phone ID + admin number); token set via /api/wa-settings
 try {
   if (!waGet('phone_number_id')) waSet('phone_number_id', '1351675744699144');
-  if (!waGet('admin_number')) waSet('admin_number', '923350666338');
+  if (!waGet('admin_number')) waSet('admin_number', '');
 } catch(e) {}
 // MIGRATION: daily_cat_access.category_id wrongly referenced categories(id); it holds daily_categories ids.
 // Wrong FK made PUT /api/daily/access/:uid fail (whole transaction rolled back) -> access never saved.
