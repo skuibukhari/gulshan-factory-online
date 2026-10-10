@@ -1654,6 +1654,10 @@ app.post('/api/products/:id/move', requireLogin, requireSection('products', 'ful
   res.json({ ok: true, moved: true });
 });
 app.get('/api/products', requireLogin, requireSection('products', 'view'), (req, res) => {
+  res.json(db.prepare(`SELECT p.*, c.name AS category_name, u.name AS unit_name
+    FROM products p LEFT JOIN categories c ON c.id=p.category_id LEFT JOIN units u ON u.id=p.unit_id
+    ORDER BY c.sort, c.id, p.name`).all());
+});
 // میٹرکس آرڈر شیٹ کے لیے: دکانیں + کیٹیگری وائز آئٹمز (پرنٹ کے لیے، vehicle بھی access کر سکتا ہے)
 app.get('/api/matrix-data', requireLogin, (req, res) => {
   try {
@@ -1661,14 +1665,10 @@ app.get('/api/matrix-data', requireLogin, (req, res) => {
     const prods = db.prepare(`SELECT p.id, p.name, p.category_id, c.name AS category_name
       FROM products p LEFT JOIN categories c ON c.id=p.category_id
       WHERE p.active=1 ORDER BY c.sort, c.id, p.name`).all();
-    res.json({ shops: allShops, products: prods, _dbg: { n_shops: allShops.length, n_prods: prods.length, role: req.user && req.user.role } });
+    res.json({ shops: allShops, products: prods });
   } catch (e) {
     res.json({ shops: [], products: [], _err: e.message });
   }
-});
-  res.json(db.prepare(`SELECT p.*, c.name AS category_name, u.name AS unit_name
-    FROM products p LEFT JOIN categories c ON c.id=p.category_id LEFT JOIN units u ON u.id=p.unit_id
-    ORDER BY c.sort, c.id, p.name`).all());
 });
 app.post('/api/products', requireLogin, requireSection('products', 'full'), (req, res) => {
   const b = req.body || {};

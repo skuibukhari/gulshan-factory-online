@@ -1564,8 +1564,6 @@ async function printMatrixSheet(shopList) {
   try { md = await api('GET', '/api/matrix-data'); } catch (e) { return alert('ڈیٹا نہیں ملا'); }
   const shops = (shopList && shopList.length) ? shopList : (md.shops || []);
   const products = md.products || [];
-  if (md._err) return alert('Error: ' + md._err);
-  if (md._dbg && !shops.length) return alert('Debug: shops=' + md._dbg.n_shops + ', prods=' + md._dbg.n_prods + ', role=' + md._dbg.role);
   if (!shops.length) return alert('کوئی دکان نہیں');
   if (!products.length) return alert('کوئی آئٹم نہیں');
   let vehLabel = (typeof ME !== 'undefined' && ME && ME.username) ? ME.username : '';
