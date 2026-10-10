@@ -1373,7 +1373,7 @@ async function renderSupplierDash() {
         <button class="btn small" style="flex:1;background:#1a237e;color:#fff" onclick="supPrint('items')">🖨 آئٹم وائز پرنٹ</button>
         <button class="btn small" style="flex:1;background:#2e7d32;color:#fff" onclick="supPrint('shops')">🖨 دکان وائز پرنٹ</button>
         <button class="btn small" style="flex:1;background:#6a1b9a;color:#fff" onclick="supPrint('blanksheet')">📝 خالی آرڈر شیٹ</button>
-        <button class="btn small" style="flex:1;background:#4a148c;color:#fff" onclick="printMatrixSheet()">📊 میٹرکس شیٹ</button>
+        <button class="btn small" style="flex:1;background:#4a148c;color:#fff" onclick="supPrintMatrix()">📊 میٹرکس شیٹ</button>
       </div>
       <div style="background:#fff;border-radius:12px;overflow:hidden;box-shadow:0 2px 8px rgba(0,0,0,.08)">
         <table style="width:100%;border-collapse:collapse"><tr style="background:#1a237e;color:#fff"><th style="padding:10px;text-align:right">آئٹم</th><th>کیٹیگری</th><th>کل</th><th>دکانیں</th></tr>${itemHtml}</table>
@@ -1474,6 +1474,13 @@ function supPrint(type) {
   const w = window.open('', '_blank');
   w.document.write(`<html><head><title>پرنٹ</title><style>body{font-family:serif;direction:rtl}table{border-collapse:collapse}td,th{border:1px solid #000;padding:6px}</style></head><body>${html}<br><button onclick="window.print()">🖨 پرنٹ</button></body></html>`);
 }
+// گاڑی: میٹرکس شیٹ اپنی assigned دکانوں کے لیے
+function supPrintMatrix() {
+  const d = window._supData;
+  if (!d) return alert('ڈیٹا لوڈ نہیں ہوا');
+  const shops = (d.shopsStatus || []).map(s => ({ id: s.shop_id, name: s.shop_name }));
+  printMatrixSheet(shops);
+}
 // خالی آرڈر شیٹ: ہر دکان کا اپنا بلاک — نام ڈرائیور لکھے گا، نیچے آئٹم + مقدار کی خالی لائنیں
 async function supPrintBlankSheet(d) {
   const n = (d.shopsStatus || []).length;
@@ -1549,12 +1556,14 @@ async function adminBlankSheet() {
   supPrintBlankSheet(d);
 }
 // میٹرکس آرڈر شیٹ (Sample A): آئٹم پہلے سے لکھے (کیٹیگری وائز)، صرف مقدار لکھنی ہے
-async function printMatrixSheet() {
+// shopList: vehicle dashboard apni assigned dukanein dega؛ admin ke liye khaali = sab dukanein
+async function printMatrixSheet(shopList) {
   const UR_D = '۰۱۲۳۴۵۶۷۸۹';
   const ur = n => String(n).replace(/\d/g, d => UR_D[d]);
   let md;
   try { md = await api('GET', '/api/matrix-data'); } catch (e) { return alert('ڈیٹا نہیں ملا'); }
-  const shops = md.shops || [], products = md.products || [];
+  const shops = (shopList && shopList.length) ? shopList : (md.shops || []);
+  const products = md.products || [];
   if (!shops.length) return alert('کوئی دکان نہیں');
   if (!products.length) return alert('کوئی آئٹم نہیں');
   let vehLabel = (typeof ME !== 'undefined' && ME && ME.username) ? ME.username : '';
