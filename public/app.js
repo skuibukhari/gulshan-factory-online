@@ -1741,7 +1741,7 @@ async function printMatrixSheet(shopList, productIds) {
     cur.push(r);
   });
   if (cur.length) faces.push(cur);
-  const shopTh = shops.map((s, i) => '<th>' + ur((s._origIdx != null ? s._origIdx : i) + 1) + '</th>').join('');
+  const shopTh = shops.map((s) => '<th class="shop">' + esc(s.name) + '</th>').join('');
   let pagesHtml = '';
   faces.forEach((fr, p) => {
     let trs = '';
@@ -1754,14 +1754,6 @@ async function printMatrixSheet(shopList, productIds) {
       + '<div class="pmeta">گاڑی: ' + esc(vehLabel) + ' &nbsp;|&nbsp; تاریخ: ' + esc(dateStr) + ' &nbsp;|&nbsp; صفحہ ' + ur(p + 1) + ' / ' + ur(faces.length) + '</div></div>'
       + '<table class="mx"><tr><th class="it">آئٹم</th>' + shopTh + '</tr>' + trs + '</table></div>';
   });
-  // دکانوں کی فہرست (legend) — نمبر = نام
-  const legendRows = shops.map((s) => {
-    const num = ur((s._origIdx != null ? s._origIdx : shops.indexOf(s)) + 1);
-    return '<div class="lg-row"><span class="lg-num">' + num + '</span><span class="lg-name">' + esc(s.name) + '</span></div>';
-  }).join('');
-  pagesHtml += '<div class="page"><div class="phead"><div class="ptitle">دکانوں کی فہرست</div>'
-    + '<div class="pmeta">گاڑی: ' + esc(vehLabel) + ' &nbsp;|&nbsp; تاریخ: ' + esc(dateStr) + '</div></div>'
-    + '<div class="legend">' + legendRows + '</div></div>';
   const css = "*{margin:0;padding:0;box-sizing:border-box}"
     + "body{font-family:'Noto Nastaliq Urdu','Jameel Noori Nastaleeq',serif;direction:rtl;background:#fff;color:#111}"
     + "@page{size:A4 landscape;margin:7mm}"
@@ -1772,13 +1764,10 @@ async function printMatrixSheet(shopList, productIds) {
     + "table.mx{width:100%;border-collapse:collapse;table-layout:fixed}"
     + "table.mx th{background:#4a148c;color:#fff;font-size:11px;padding:1mm;line-height:2;border:1px solid #4a148c}"
     + "table.mx th.it{width:50mm;text-align:right;padding-right:3mm}"
+    + "table.mx th.shop{font-size:9px;line-height:1.4;padding:1mm 0.5mm;vertical-align:middle;word-wrap:break-word}"
     + "table.mx td{border:1px solid #cfcfcf;font-size:12px}"
     + "table.mx td.it{text-align:right;padding-right:3mm;line-height:2}"
     + "table.mx tr.cat td{background:#ef6c00;color:#fff;font-weight:700;font-size:12.5px;text-align:center;line-height:2;border:1px solid #ef6c00}"
-    + ".legend{display:grid;grid-template-columns:1fr 1fr;gap:3mm;margin-top:4mm}"
-    + ".lg-row{display:flex;align-items:center;gap:3mm;border:1px solid #ddd;border-radius:2mm;padding:2mm 3mm}"
-    + ".lg-num{background:#4a148c;color:#fff;min-width:10mm;height:10mm;display:flex;align-items:center;justify-content:center;border-radius:2mm;font-weight:700;font-size:14px}"
-    + ".lg-name{font-size:14px;line-height:2}"
     + "@media screen{body{background:#eee;padding:10mm}.page{background:#fff;max-width:283mm;margin:0 auto 10mm;padding:7mm;box-shadow:0 2px 12px rgba(0,0,0,.15)}}"
     + "@media print{.no-print{display:none}}";
   const w = window.open('', '_blank');
