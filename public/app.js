@@ -1562,6 +1562,7 @@ async function showMatrixSelect(presetShops) {
   if (!products.length) return alert('کوئی آئٹم نہیں');
   const UR_D = '۰۱۲۳۴۵۶۷۸۹';
   const ur = n => String(n).replace(/\d/g, d => UR_D[d]);
+  const saved = mxLoadSel();
   // کیٹیگری وائز گروپ
   const groups = [], gmap = {};
   products.forEach(p => {
@@ -1569,13 +1570,16 @@ async function showMatrixSelect(presetShops) {
     if (!gmap[key]) { gmap[key] = { name: p.category_name || 'متفرق', items: [] }; groups.push(gmap[key]); }
     gmap[key].items.push(p);
   });
-  const shopHtml = shops.map((s, i) =>
-    `<label class="mx-chk" data-shop="${s.id}"><input type="checkbox" checked onchange="mxUpd(this)"> ${esc(s.name)}</label>`
-  ).join('');
+  const shopHtml = shops.map((s, i) => {
+    const checked = saved ? saved.shops.includes(s.id) : true;
+    // نمبر بھی دکھائیں تاکہ میٹرکس سے ملان ہو سکے
+    return `<label class="mx-chk${checked ? '' : ' off'}" data-shop="${s.id}" data-idx="${i}"><input type="checkbox" ${checked ? 'checked' : ''} onchange="mxUpd(this)"> <b>${ur(i + 1)}</b> - ${esc(s.name)}</label>`;
+  }).join('');
   const prodHtml = groups.map((g, gi) => {
-    const items = g.items.map(p =>
-      `<label class="mx-chk mx-prod" data-prod="${p.id}" data-cat="${gi}"><input type="checkbox" checked onchange="mxUpd(this)"> ${esc(p.name)}</label>`
-    ).join('');
+    const items = g.items.map(p => {
+      const checked = saved ? saved.prods.includes(p.id) : true;
+      return `<label class="mx-chk mx-prod${checked ? '' : ' off'}" data-prod="${p.id}" data-cat="${gi}"><input type="checkbox" ${checked ? 'checked' : ''} onchange="mxUpd(this)"> ${esc(p.name)}</label>`;
+    }).join('');
     return `<div class="mx-cat"><span>${esc(g.name)}</span><button type="button" onclick="mxCat(${gi},true)">سب ✓</button><button type="button" onclick="mxCat(${gi},false)">سب ✗</button></div><div class="mx-pgrid">${items}</div>`;
   }).join('');
   const ov = document.createElement('div');
@@ -1621,12 +1625,31 @@ async function showMatrixSelect(presetShops) {
     <div id="mxCount"></div>
     <div id="mxFoot">
       <button id="mxPrint" onclick="mxDoPrint()">🖨 پرنٹ کریں</button>
+      <button type="button" onclick="mxResetSel()" style="background:#ffccbc;color:#bf360c;flex:.5;padding:12px;border:none;border-radius:10px;font-size:14px;font-family:inherit;cursor:pointer">↺ ری سیٹ</button>
       <button id="mxCancel" onclick="document.getElementById('mxOverlay').remove()">واپس</button>
     </div>
   </div>`;
   document.body.appendChild(ov);
   // preset shops محفوظ کریں تاکہ پرنٹ میں وہی جائیں
   ov._shops = shops;
+  mxUpdCount();
+}
+// میٹرکس سلیکشن localStorage میں محفوظ کریں
+function mxLoadSel() {
+  try {
+    const s = localStorage.getItem('mxSel');
+    return s ? JSON.parse(s) : null;
+  } catch (e) { return null; }
+}
+function mxSaveSel(shopIds, prodIds) {
+  try { localStorage.setItem('mxSel', JSON.stringify({ shops: shopIds, prods: prodIds })); } catch (e) {}
+}
+function mxResetSel() {
+  try { localStorage.removeItem('mxSel'); } catch (e) {}
+  // سب دوبارہ چیک کر دیں
+  document.querySelectorAll('#mxOverlay input[type="checkbox"]').forEach(i => {
+    i.checked = true; i.closest('.mx-chk').classList.remove('off');
+  });
   mxUpdCount();
 }
 function mxUpd(el) {
@@ -1656,9 +1679,18 @@ function mxDoPrint() {
   const ov = document.getElementById('mxOverlay');
   if (!ov) return;
   const shops = ov._shops || [];
-  const selShopIds = new Set([...ov.querySelectorAll('[data-shop] input:checked')].map(i => +i.closest('[data-shop]').dataset.shop));
+  const selData = [...ov.querySelectorAll('[data-shop] input:checked')].map(i => {
+    const lbl = i.closest('[data-shop]');
+    return { id: +lbl.dataset.shop, idx: +lbl.dataset.idx };
+  });
+  const selShopIds = new Set(selData.map(d => d.id));
   const selProdIds = [...ov.querySelectorAll('[data-prod] input:checked')].map(i => +i.closest('[data-prod]').dataset.prod);
-  const selShops = shops.filter(s => selShopIds.has(s.id));
+  const selShops = shops.filter(s => selShopIds.has(s.id)).map(s => {
+    const d = selData.find(x => x.id === s.id);
+    return { ...s, _origIdx: d ? d.idx : 0 };
+  });
+  // سلیکشن محفوظ کریں تاکہ اگلی بار وہی رہے
+  mxSaveSel([...selShopIds], selProdIds);
   ov.remove();
   printMatrixSheet(selShops, selProdIds);
 }
@@ -1709,7 +1741,7 @@ async function printMatrixSheet(shopList, productIds) {
     cur.push(r);
   });
   if (cur.length) faces.push(cur);
-  const shopTh = shops.map((s, i) => '<th>' + ur(i + 1) + '</th>').join('');
+  const shopTh = shops.map((s, i) => '<th>' + ur((s._origIdx != null ? s._origIdx : i) + 1) + '</th>').join('');
   let pagesHtml = '';
   faces.forEach((fr, p) => {
     let trs = '';
