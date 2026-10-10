@@ -948,7 +948,8 @@ async function loadTotals() {
   $('#rpBody').innerHTML = `<table><tr><th>کیٹیگری</th><th>آئٹم</th><th>کل مقدار</th><th>دکانیں</th></tr>${rows || '<tr><td colspan=4>کوئی آرڈر نہیں</td></tr>'}</table>`;
   $('#rpPrint').innerHTML = `<a class="btn green" target="_blank" href="/print?type=totals&date=${d}${r ? '&route_id=' + r : ''}">🖨 آئٹم وائز ٹوٹل پرنٹ کریں</a>
   <a class="btn dark" target="_blank" href="/print?type=shops&date=${d}${r ? '&route_id=' + r : ''}">🧾 دکان وائز سلپ پرنٹ کریں (ہر دکان الگ صفحہ)</a>
-  <a class="btn" target="_blank" href="/print?type=date_history&date=${d}">📜 اس تاریخ کی مکمل ہسٹری پرنٹ کریں</a>`;
+  <a class="btn" target="_blank" href="/print?type=date_history&date=${d}">📜 اس تاریخ کی مکمل ہسٹری پرنٹ کریں</a>
+  <a class="btn" style="background:#6a1b9a;color:#fff" href="#" onclick="adminBlankSheet();return false">📝 خالی آرڈر شیٹ (گاڑی کے لیے)</a>`;
 }
 
 // ---------- settings: users & access ----------
@@ -1535,6 +1536,12 @@ async function supPrintBlankSheet(d) {
     + '<button onclick="window.print()" style="font-size:18px;padding:10px 30px;background:#1a237e;color:#fff;border:none;border-radius:8px;cursor:pointer">🖨 پرنٹ کریں</button></div>'
     + pagesHtml + '</body></html>');
   w.document.close();
+}
+// ایڈمن: خالی آرڈر شیٹ (تمام دکانیں — /api/supplier/dashboard super_admin کو سب دیتی ہے)
+async function adminBlankSheet() {
+  const d = await api('GET', '/api/supplier/dashboard').catch(() => null);
+  if (!d || !(d.shopsStatus || []).length) return alert('دکانیں نہیں ملیں');
+  supPrintBlankSheet(d);
 }
 async function supSetStatus(id, status) {
   await api('POST', `/api/supplier/order/${id}/status`, { status });
