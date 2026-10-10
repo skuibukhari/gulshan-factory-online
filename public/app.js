@@ -950,7 +950,7 @@ async function loadTotals() {
   <a class="btn dark" target="_blank" href="/print?type=shops&date=${d}${r ? '&route_id=' + r : ''}">🧾 دکان وائز سلپ پرنٹ کریں (ہر دکان الگ صفحہ)</a>
   <a class="btn" target="_blank" href="/print?type=date_history&date=${d}">📜 اس تاریخ کی مکمل ہسٹری پرنٹ کریں</a>
   <a class="btn" style="background:#6a1b9a;color:#fff" href="#" onclick="adminBlankSheet();return false">📝 خالی آرڈر شیٹ (گاڑی کے لیے)</a>
-  <a class="btn" style="background:#4a148c;color:#fff" href="#" onclick="printMatrixSheet();return false">📊 میٹرکس آرڈر شیٹ</a>`;
+  <a class="btn" style="background:#4a148c;color:#fff" href="#" onclick="showMatrixSelect();return false">📊 میٹرکس آرڈر شیٹ</a>`;
 }
 
 // ---------- settings: users & access ----------
@@ -1373,7 +1373,7 @@ async function renderSupplierDash() {
         <button class="btn small" style="flex:1;background:#1a237e;color:#fff" onclick="supPrint('items')">🖨 آئٹم وائز پرنٹ</button>
         <button class="btn small" style="flex:1;background:#2e7d32;color:#fff" onclick="supPrint('shops')">🖨 دکان وائز پرنٹ</button>
         <button class="btn small" style="flex:1;background:#6a1b9a;color:#fff" onclick="supPrint('blanksheet')">📝 خالی آرڈر شیٹ</button>
-        <button class="btn small" style="flex:1;background:#4a148c;color:#fff" onclick="supPrintMatrix()">📊 میٹرکس شیٹ</button>
+        <button class="btn small" style="flex:1;background:#4a148c;color:#fff" onclick="supMatrixSelect()">📊 میٹرکس شیٹ</button>
       </div>
       <div style="background:#fff;border-radius:12px;overflow:hidden;box-shadow:0 2px 8px rgba(0,0,0,.08)">
         <table style="width:100%;border-collapse:collapse"><tr style="background:#1a237e;color:#fff"><th style="padding:10px;text-align:right">آئٹم</th><th>کیٹیگری</th><th>کل</th><th>دکانیں</th></tr>${itemHtml}</table>
@@ -1474,13 +1474,6 @@ function supPrint(type) {
   const w = window.open('', '_blank');
   w.document.write(`<html><head><title>پرنٹ</title><style>body{font-family:serif;direction:rtl}table{border-collapse:collapse}td,th{border:1px solid #000;padding:6px}</style></head><body>${html}<br><button onclick="window.print()">🖨 پرنٹ</button></body></html>`);
 }
-// گاڑی: میٹرکس شیٹ اپنی assigned دکانوں کے لیے
-function supPrintMatrix() {
-  const d = window._supData;
-  if (!d) return alert('ڈیٹا لوڈ نہیں ہوا');
-  const shops = (d.shopsStatus || []).map(s => ({ id: s.shop_id, name: s.shop_name }));
-  printMatrixSheet(shops);
-}
 // خالی آرڈر شیٹ: ہر دکان کا اپنا بلاک — نام ڈرائیور لکھے گا، نیچے آئٹم + مقدار کی خالی لائنیں
 async function supPrintBlankSheet(d) {
   const n = (d.shopsStatus || []).length;
@@ -1555,15 +1548,140 @@ async function adminBlankSheet() {
   if (!d || !(d.shopsStatus || []).length) return alert('دکانیں نہیں ملیں');
   supPrintBlankSheet(d);
 }
+// میٹرکس سلیکشن اسکرین: پرنٹ سے پہلے دکانیں اور آئٹمز منتخب کریں
+async function showMatrixSelect(presetShops) {
+  let md;
+  try { md = await api('GET', '/api/matrix-data'); } catch (e) { return alert('ڈیٹا نہیں ملا'); }
+  let shops = md.shops || [];
+  if (presetShops && presetShops.length) {
+    const ids = new Set(presetShops.map(s => s.id));
+    shops = shops.filter(s => ids.has(s.id));
+  }
+  const products = md.products || [];
+  if (!shops.length) return alert('کوئی دکان نہیں');
+  if (!products.length) return alert('کوئی آئٹم نہیں');
+  const UR_D = '۰۱۲۳۴۵۶۷۸۹';
+  const ur = n => String(n).replace(/\d/g, d => UR_D[d]);
+  // کیٹیگری وائز گروپ
+  const groups = [], gmap = {};
+  products.forEach(p => {
+    const key = p.category_id || 0;
+    if (!gmap[key]) { gmap[key] = { name: p.category_name || 'متفرق', items: [] }; groups.push(gmap[key]); }
+    gmap[key].items.push(p);
+  });
+  const shopHtml = shops.map((s, i) =>
+    `<label class="mx-chk" data-shop="${s.id}"><input type="checkbox" checked onchange="mxUpd(this)"> ${esc(s.name)}</label>`
+  ).join('');
+  const prodHtml = groups.map((g, gi) => {
+    const items = g.items.map(p =>
+      `<label class="mx-chk mx-prod" data-prod="${p.id}" data-cat="${gi}"><input type="checkbox" checked onchange="mxUpd(this)"> ${esc(p.name)}</label>`
+    ).join('');
+    return `<div class="mx-cat"><span>${esc(g.name)}</span><button type="button" onclick="mxCat(${gi},true)">سب ✓</button><button type="button" onclick="mxCat(${gi},false)">سب ✗</button></div><div class="mx-pgrid">${items}</div>`;
+  }).join('');
+  const ov = document.createElement('div');
+  ov.id = 'mxOverlay';
+  ov.innerHTML = `
+  <style>
+    #mxOverlay { position: fixed; inset: 0; background: rgba(0,0,0,.6); z-index: 9999; display: flex; align-items: center; justify-content: center; padding: 12px; }
+    #mxBox { background: #fff; border-radius: 12px; max-width: 700px; width: 100%; max-height: 92vh; display: flex; flex-direction: column; overflow: hidden; }
+    #mxHead { background: linear-gradient(135deg,#4a148c,#6a1b9a); color: #fff; padding: 14px 18px; }
+    #mxHead h3 { margin: 0; font-size: 18px; }
+    #mxHead p { margin: 4px 0 0; font-size: 12px; opacity: .85; }
+    #mxBody { overflow-y: auto; padding: 14px 18px; flex: 1; }
+    #mxBody h4 { color: #4a148c; margin: 0 0 4px; font-size: 16px; }
+    #mxBody .mx-hint { font-size: 12px; color: #888; margin-bottom: 8px; }
+    .mx-sgrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(110px,1fr)); gap: 6px; margin-bottom: 14px; }
+    .mx-pgrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px,1fr)); gap: 6px; margin-bottom: 6px; }
+    .mx-chk { display: flex; align-items: center; gap: 6px; background: #faf7ff; border: 1px solid #e0d4f5; border-radius: 8px; padding: 7px 9px; font-size: 13px; cursor: pointer; }
+    .mx-chk.off { opacity: .45; background: #f0f0f0; }
+    .mx-chk.off span { text-decoration: line-through; }
+    .mx-chk input { width: 17px; height: 17px; accent-color: #6a1b9a; }
+    .mx-cat { background: #4a148c; color: #fff; border-radius: 8px; padding: 7px 12px; margin: 12px 0 6px; font-size: 15px; display: flex; gap: 8px; align-items: center; }
+    .mx-cat span { flex: 1; }
+    .mx-cat button { background: rgba(255,255,255,.25); border: none; color: #fff; border-radius: 6px; padding: 3px 10px; font-size: 12px; cursor: pointer; font-family: inherit; }
+    #mxCount { text-align: center; padding: 10px; background: #fff3e0; color: #e65100; font-size: 14px; border-top: 1px solid #ffe0b2; }
+    #mxFoot { display: flex; gap: 10px; padding: 12px 18px; background: #faf7ff; }
+    #mxFoot button { flex: 1; padding: 12px; border: none; border-radius: 10px; font-size: 16px; font-family: inherit; cursor: pointer; }
+    #mxPrint { background: linear-gradient(135deg,#2e7d32,#43a047); color: #fff; }
+    #mxCancel { background: #e0e0e0; color: #333; flex: .4; }
+    .mx-quick { display: flex; gap: 6px; margin-bottom: 8px; }
+    .mx-quick button { background: #ede7f6; border: 1px solid #d1c4e9; border-radius: 6px; padding: 5px 12px; font-size: 12px; cursor: pointer; color: #4a148c; font-family: inherit; }
+  </style>
+  <div id="mxBox">
+    <div id="mxHead"><h3>📊 میٹرکس — انتخاب</h3><p>جو دکانیں اور آئٹمز پرنٹ کرنے ہیں ان پر ✓ رکھیں</p></div>
+    <div id="mxBody">
+      <h4>🏪 دکانیں (<b id="mxShopN">${ur(shops.length)}</b>)</h4>
+      <div class="mx-quick"><button type="button" onclick="mxAll('shop',true)">سب ✓</button><button type="button" onclick="mxAll('shop',false)">سب ✗</button></div>
+      <div class="mx-sgrid">${shopHtml}</div>
+      <h4>🍞 آئٹمز (<b id="mxProdN">${ur(products.length)}</b>)</h4>
+      <div class="mx-hint">جو آئٹم گاڑی پر نہیں جاتا اس سے ✓ ہٹا دیں</div>
+      <div class="mx-quick"><button type="button" onclick="mxAll('prod',true)">سب ✓</button><button type="button" onclick="mxAll('prod',false)">سب ✗</button></div>
+      ${prodHtml}
+    </div>
+    <div id="mxCount"></div>
+    <div id="mxFoot">
+      <button id="mxPrint" onclick="mxDoPrint()">🖨 پرنٹ کریں</button>
+      <button id="mxCancel" onclick="document.getElementById('mxOverlay').remove()">واپس</button>
+    </div>
+  </div>`;
+  document.body.appendChild(ov);
+  // preset shops محفوظ کریں تاکہ پرنٹ میں وہی جائیں
+  ov._shops = shops;
+  mxUpdCount();
+}
+function mxUpd(el) {
+  el.closest('.mx-chk').classList.toggle('off', !el.checked);
+  mxUpdCount();
+}
+function mxUpdCount() {
+  const UR_D = '۰۱۲۳۴۵۶۷۸۹';
+  const ur = n => String(n).replace(/\d/g, d => UR_D[d]);
+  const s = document.querySelectorAll('#mxOverlay [data-shop] input:checked').length;
+  const p = document.querySelectorAll('#mxOverlay [data-prod] input:checked').length;
+  const sn = document.getElementById('mxShopN'), pn = document.getElementById('mxProdN'), c = document.getElementById('mxCount');
+  if (sn) sn.textContent = ur(s);
+  if (pn) pn.textContent = ur(p);
+  if (c) c.textContent = `🖨 ${ur(s)} دکانیں × ${ur(p)} آئٹمز`;
+}
+function mxAll(kind, v) {
+  const sel = kind === 'shop' ? '#mxOverlay [data-shop] input' : '#mxOverlay [data-prod] input';
+  document.querySelectorAll(sel).forEach(i => { i.checked = v; i.closest('.mx-chk').classList.toggle('off', !v); });
+  mxUpdCount();
+}
+function mxCat(gi, v) {
+  document.querySelectorAll(`#mxOverlay [data-cat="${gi}"] input`).forEach(i => { i.checked = v; i.closest('.mx-chk').classList.toggle('off', !v); });
+  mxUpdCount();
+}
+function mxDoPrint() {
+  const ov = document.getElementById('mxOverlay');
+  if (!ov) return;
+  const shops = ov._shops || [];
+  const selShopIds = new Set([...ov.querySelectorAll('[data-shop] input:checked')].map(i => +i.closest('[data-shop]').dataset.shop));
+  const selProdIds = [...ov.querySelectorAll('[data-prod] input:checked')].map(i => +i.closest('[data-prod]').dataset.prod);
+  const selShops = shops.filter(s => selShopIds.has(s.id));
+  ov.remove();
+  printMatrixSheet(selShops, selProdIds);
+}
+// گاڑی: اپنی assigned دکانوں کے ساتھ سلیکشن اسکرین
+function supMatrixSelect() {
+  const d = window._supData;
+  if (!d) return alert('ڈیٹا لوڈ نہیں ہوا');
+  const shops = (d.shopsStatus || []).map(s => ({ id: s.shop_id, name: s.shop_name }));
+  showMatrixSelect(shops);
+}
 // میٹرکس آرڈر شیٹ (Sample A): آئٹم پہلے سے لکھے (کیٹیگری وائز)، صرف مقدار لکھنی ہے
 // shopList: vehicle dashboard apni assigned dukanein dega؛ admin ke liye khaali = sab dukanein
-async function printMatrixSheet(shopList) {
+async function printMatrixSheet(shopList, productIds) {
   const UR_D = '۰۱۲۳۴۵۶۷۸۹';
   const ur = n => String(n).replace(/\d/g, d => UR_D[d]);
   let md;
   try { md = await api('GET', '/api/matrix-data'); } catch (e) { return alert('ڈیٹا نہیں ملا'); }
   const shops = (shopList && shopList.length) ? shopList : (md.shops || []);
-  const products = md.products || [];
+  let products = md.products || [];
+  if (productIds && productIds.length) {
+    const pset = new Set(productIds);
+    products = products.filter(p => pset.has(p.id));
+  }
   if (!shops.length) return alert('کوئی دکان نہیں');
   if (!products.length) return alert('کوئی آئٹم نہیں');
   let vehLabel = (typeof ME !== 'undefined' && ME && ME.username) ? ME.username : '';
