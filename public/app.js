@@ -1370,6 +1370,7 @@ async function renderSupplierDash() {
       <div style="display:flex;gap:8px;margin-bottom:8px">
         <button class="btn small" style="flex:1;background:#1a237e;color:#fff" onclick="supPrint('items')">🖨 آئٹم وائز پرنٹ</button>
         <button class="btn small" style="flex:1;background:#2e7d32;color:#fff" onclick="supPrint('shops')">🖨 دکان وائز پرنٹ</button>
+        <button class="btn small" style="flex:1;background:#6a1b9a;color:#fff" onclick="supPrint('blanksheet')">📝 خالی آرڈر شیٹ</button>
       </div>
       <div style="background:#fff;border-radius:12px;overflow:hidden;box-shadow:0 2px 8px rgba(0,0,0,.08)">
         <table style="width:100%;border-collapse:collapse"><tr style="background:#1a237e;color:#fff"><th style="padding:10px;text-align:right">آئٹم</th><th>کیٹیگری</th><th>کل</th><th>دکانیں</th></tr>${itemHtml}</table>
@@ -1455,6 +1456,7 @@ function supPrint(type) {
   // Simple print: current dashboard data
   const d = window._supData;
   if (!d) return alert('ڈیٹا لوڈ نہیں ہوا');
+  if (type === 'blanksheet') { supPrintBlankSheet(d); return; }
   let html = '';
   if (type === 'items') {
     html = '<h2>آئٹم وائز آرڈر</h2><table border=1 style="width:100%;border-collapse:collapse"><tr><th>آئٹم</th><th>کیٹیگری</th><th>کل</th><th>دکانیں</th></tr>' +
@@ -1468,6 +1470,71 @@ function supPrint(type) {
   }
   const w = window.open('', '_blank');
   w.document.write(`<html><head><title>پرنٹ</title><style>body{font-family:serif;direction:rtl}table{border-collapse:collapse}td,th{border:1px solid #000;padding:6px}</style></head><body>${html}<br><button onclick="window.print()">🖨 پرنٹ</button></body></html>`);
+}
+// خالی آرڈر شیٹ: ہر دکان کا اپنا بلاک — نام ڈرائیور لکھے گا، نیچے آئٹم + مقدار کی خالی لائنیں
+async function supPrintBlankSheet(d) {
+  const n = (d.shopsStatus || []).length;
+  if (!n) return alert('کوئی دکان نہیں');
+  // گاڑی کا نام: /api/vehicles سے (permission ہو تو)، ورنہ username
+  let vehLabel = (typeof ME !== 'undefined' && ME && ME.username) ? ME.username : '';
+  try {
+    const vs = await api('GET', '/api/vehicles');
+    const act = (vs || []).filter(v => v.active);
+    if (act.length === 1) vehLabel = act[0].name + (act[0].plate ? ' (' + act[0].plate + ')' : '');
+  } catch (e) { /* permission nahi — username hi */ }
+  const dateStr = new Date().toLocaleDateString('ur-PK', { day: 'numeric', month: 'long', year: 'numeric' });
+  const PER_PAGE = 6, LINES = 10;
+  const pages = Math.ceil(n / PER_PAGE);
+  const logoUrl = location.origin + '/logo.png';
+  let pagesHtml = '';
+  for (let p = 0; p < pages; p++) {
+    const s = p * PER_PAGE, e = Math.min(s + PER_PAGE, n);
+    let blocks = '';
+    for (let i = s; i < e; i++) {
+      let rows = '';
+      for (let r = 0; r < LINES; r++) rows += '<tr><td class="it"></td><td class="qt"></td></tr>';
+      blocks += '<div class="shopblock"><div class="sb-head">🏪 دکان ' + (i + 1) + ': <span class="sb-line"></span></div>'
+        + '<table class="sb-table"><tr><th class="th-it">آئٹم کا نام ✍️</th><th class="th-qt">مقدار ✍️</th></tr>' + rows + '</table></div>';
+    }
+    pagesHtml += '<div class="page">'
+      + '<div class="phead"><img src="' + logoUrl + '" alt=""><div class="ptitle"><h1>🚚 گاڑی وائز آرڈر شیٹ</h1>'
+      + '<div class="psub">ہر دکان کا نام اوپر، نیچے آئٹمز اور مقداریں لکھیں ✍️</div></div>'
+      + '<div class="date-badge"><div class="dl">تاریخ</div><div class="dv">' + esc(dateStr) + '</div></div></div>'
+      + '<div class="vehicle-strip"><span>🚚 گاڑی: <b>' + esc(vehLabel) + '</b></span><span>📄 صفحہ: <b>' + (p + 1) + ' / ' + pages + '</b></span></div>'
+      + '<div class="blocks">' + blocks + '</div>'
+      + '<div class="pfoot"><span>فیکٹری انچارج: ____________</span><span>ڈرائیور: ____________</span></div>'
+      + '</div>';
+  }
+  const css = "*{margin:0;padding:0;box-sizing:border-box}"
+    + "body{font-family:'Noto Nastaliq Urdu','Jameel Noori Nastaleeq',serif;direction:rtl;background:#fff;color:#111;width:297mm;margin:0 auto}"
+    + "@page{size:A4 landscape;margin:8mm 10mm}"
+    + ".page{padding:8mm 10mm;page-break-after:always}"
+    + ".page:last-child{page-break-after:auto}"
+    + ".phead{display:flex;align-items:center;gap:10px;background:linear-gradient(135deg,#1a237e 0%,#283593 100%);color:#fff;border-radius:10px;padding:5px 14px;margin-bottom:5px}"
+    + ".phead img{width:38px;height:38px;object-fit:contain;background:#fff;border-radius:50%;padding:2px}"
+    + ".ptitle{flex:1}.ptitle h1{font-size:17px;line-height:1.9}.psub{font-size:11px;color:#ffcc80;line-height:1.9}"
+    + ".date-badge{background:#e8721c;border-radius:8px;padding:3px 14px;text-align:center;min-width:130px}"
+    + ".date-badge .dl{font-size:10px;color:#fff3e0;line-height:1.8}.date-badge .dv{font-size:15px;font-weight:bold;color:#fff;line-height:2;white-space:nowrap}"
+    + ".vehicle-strip{display:flex;justify-content:space-between;align-items:center;background:#fff8e1;border:1.5px solid #ffcc80;border-radius:8px;padding:2px 12px;margin-bottom:6px;font-size:12px;line-height:2.2}"
+    + ".vehicle-strip b{color:#b34a00}"
+    + ".blocks{display:grid;grid-template-columns:repeat(3,1fr);gap:5mm}"
+    + ".shopblock{border:2px solid #1a237e;border-radius:10px;overflow:hidden}"
+    + ".sb-head{background:#1a237e;color:#fff;font-size:13px;font-weight:bold;padding:3px 10px;line-height:2.1}"
+    + ".sb-line{display:inline-block;min-width:55%;border-bottom:1px dashed #fff}"
+    + ".sb-table{width:100%;border-collapse:collapse}"
+    + ".sb-table th{background:#e8721c;color:#fff;font-size:10.5px;padding:2px;line-height:2;border:1px solid #e8721c}"
+    + ".sb-table th.th-it{width:62%}.sb-table th.th-qt{width:38%}"
+    + ".sb-table td{border:1px solid #aaa;height:6.5mm}.sb-table td.it{background:#fffdf5}"
+    + ".pfoot{margin-top:6px;display:flex;justify-content:space-between;font-size:11px;color:#444;line-height:2}"
+    + "@media print{.no-print{display:none}.page{padding:0}}";
+  const w = window.open('', '_blank');
+  w.document.write('<!DOCTYPE html><html lang="ur" dir="rtl"><head><meta charset="utf-8"><title>خالی آرڈر شیٹ</title>'
+    + '<link href="https://fonts.googleapis.com/css2?family=Noto+Nastaliq+Urdu:wght@400;600;700&display=swap" rel="stylesheet">'
+    + '<style>' + css + '</style></head><body>'
+    + '<div class="no-print" style="text-align:center;padding:10px">'
+    + '<button onclick="window.print()" style="font-size:18px;padding:10px 30px;background:#1a237e;color:#fff;border:none;border-radius:8px;cursor:pointer">🖨 پرنٹ کریں</button></div>'
+    + pagesHtml + '</body></html>');
+  w.document.close();
 }
 async function supSetStatus(id, status) {
   await api('POST', `/api/supplier/order/${id}/status`, { status });
