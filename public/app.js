@@ -1494,46 +1494,49 @@ async function supPrintBlankSheet(d) {
     for (let i = s; i < e; i++) {
       let rows = '';
       for (let r = 0; r < LINES; r++) rows += '<tr><td class="it"></td><td class="qt"></td></tr>';
-      blocks += '<div class="shopblock"><div class="sb-head">🏪 دکان ' + (i + 1) + ': <span class="sb-line"></span></div>'
-        + '<table class="sb-table"><tr><th class="th-it">آئٹم کا نام ✍️</th><th class="th-qt">مقدار ✍️</th></tr>' + rows + '</table></div>';
+      blocks += '<div class="shopblock"><div class="sb-head">دکان ' + (i + 1) + ': <span class="sb-line"></span></div>'
+        + '<table class="sb-table"><tr><th class="th-it">آئٹم کا نام</th><th class="th-qt">مقدار</th></tr>' + rows + '</table></div>';
     }
     pagesHtml += '<div class="page">'
-      + '<div class="phead"><img src="' + logoUrl + '" alt=""><div class="ptitle"><h1>🚚 گاڑی وائز آرڈر شیٹ</h1>'
-      + '<div class="psub">ہر دکان کا نام اوپر، نیچے آئٹمز اور مقداریں لکھیں ✍️</div></div>'
-      + '<div class="date-badge"><div class="dl">تاریخ</div><div class="dv">' + esc(dateStr) + '</div></div></div>'
-      + '<div class="vehicle-strip"><span>🚚 گاڑی: <b>' + esc(vehLabel) + '</b></span><span>📄 صفحہ: <b>' + (p + 1) + ' / ' + pages + '</b></span></div>'
+      + '<div class="phead"><img src="' + logoUrl + '" alt="">'
+      + '<div class="ptitle"><h1>گاڑی وائز آرڈر شیٹ</h1><div class="vline">گاڑی: <b>' + esc(vehLabel) + '</b></div></div>'
+      + '<div class="datebox"><div class="dl">تاریخ</div><div class="dv">' + esc(dateStr) + '</div></div></div>'
       + '<div class="blocks">' + blocks + '</div>'
-      + '<div class="pfoot"><span>فیکٹری انچارج: ____________</span><span>ڈرائیور: ____________</span></div>'
+      + '<div class="pfoot"><span>فیکٹری انچارج: ____________</span><span>ڈرائیور: ____________</span><span>صفحہ ' + (p + 1) + ' / ' + pages + '</span></div>'
       + '</div>';
   }
   const css = "*{margin:0;padding:0;box-sizing:border-box}"
-    + "body{font-family:'Noto Nastaliq Urdu','Jameel Noori Nastaleeq',serif;direction:rtl;background:#fff;color:#111;width:297mm;margin:0 auto}"
-    + "@page{size:A4 landscape;margin:8mm 10mm}"
-    + ".page{padding:8mm 10mm;page-break-after:always}"
+    + "body{font-family:'Noto Nastaliq Urdu','Jameel Noori Nastaleeq',serif;direction:rtl;background:#fff;color:#111}"
+    + "@page{size:A4 landscape;margin:7mm}"
+    + ".page{page-break-after:always;break-inside:avoid}"
     + ".page:last-child{page-break-after:auto}"
-    + ".phead{display:flex;align-items:center;gap:10px;background:linear-gradient(135deg,#1a237e 0%,#283593 100%);color:#fff;border-radius:10px;padding:5px 14px;margin-bottom:5px}"
-    + ".phead img{width:38px;height:38px;object-fit:contain;background:#fff;border-radius:50%;padding:2px}"
-    + ".ptitle{flex:1}.ptitle h1{font-size:17px;line-height:1.9}.psub{font-size:11px;color:#ffcc80;line-height:1.9}"
-    + ".date-badge{background:#e8721c;border-radius:8px;padding:3px 14px;text-align:center;min-width:130px}"
-    + ".date-badge .dl{font-size:10px;color:#fff3e0;line-height:1.8}.date-badge .dv{font-size:15px;font-weight:bold;color:#fff;line-height:2;white-space:nowrap}"
-    + ".vehicle-strip{display:flex;justify-content:space-between;align-items:center;background:#fff8e1;border:1.5px solid #ffcc80;border-radius:8px;padding:2px 12px;margin-bottom:6px;font-size:12px;line-height:2.2}"
-    + ".vehicle-strip b{color:#b34a00}"
-    + ".blocks{display:grid;grid-template-columns:repeat(3,1fr);gap:5mm}"
-    + ".shopblock{border:2px solid #1a237e;border-radius:10px;overflow:hidden}"
-    + ".sb-head{background:#1a237e;color:#fff;font-size:13px;font-weight:bold;padding:3px 10px;line-height:2.1}"
-    + ".sb-line{display:inline-block;min-width:55%;border-bottom:1px dashed #fff}"
+    + ".phead{display:flex;align-items:center;gap:12px;border-bottom:3px solid #1a237e;padding-bottom:5px;margin-bottom:7px}"
+    + ".phead img{width:42px;height:42px;object-fit:contain}"
+    + ".ptitle{flex:1}"
+    + ".ptitle h1{font-size:22px;line-height:2.2}"
+    + ".ptitle .vline{font-size:13px;line-height:2;color:#333}"
+    + ".ptitle .vline b{color:#1a237e}"
+    + ".datebox{border:2px solid #e8721c;border-radius:10px;padding:2px 18px;text-align:center;flex-shrink:0}"
+    + ".datebox .dl{font-size:10px;color:#b34a00;line-height:1.9}"
+    + ".datebox .dv{font-size:16px;font-weight:bold;color:#111;line-height:2.1;white-space:nowrap}"
+    + ".blocks{display:grid;grid-template-columns:repeat(3,1fr);gap:4mm}"
+    + ".shopblock{border:2px solid #1a237e;border-radius:8px;overflow:hidden;break-inside:avoid}"
+    + ".sb-head{background:#1a237e;color:#fff;font-size:13px;font-weight:bold;padding:2px 10px;line-height:2.2}"
+    + ".sb-line{display:inline-block;min-width:52%;border-bottom:1px dashed #fff}"
     + ".sb-table{width:100%;border-collapse:collapse}"
     + ".sb-table th{background:#e8721c;color:#fff;font-size:10.5px;padding:2px;line-height:2;border:1px solid #e8721c}"
     + ".sb-table th.th-it{width:62%}.sb-table th.th-qt{width:38%}"
-    + ".sb-table td{border:1px solid #aaa;height:6.5mm}.sb-table td.it{background:#fffdf5}"
-    + ".pfoot{margin-top:6px;display:flex;justify-content:space-between;font-size:11px;color:#444;line-height:2}"
-    + "@media print{.no-print{display:none}.page{padding:0}}";
+    + ".sb-table td{border:1px solid #999;height:5.6mm}"
+    + ".sb-table td.it{background:#fffdf5}"
+    + ".pfoot{margin-top:5px;display:flex;justify-content:space-between;font-size:11.5px;line-height:2.2;border-top:1px solid #999;padding-top:2px}"
+    + "@media screen{body{background:#eee;padding:10mm}.page{background:#fff;width:283mm;margin:0 auto 10mm;padding:7mm;box-shadow:0 2px 12px rgba(0,0,0,.15)}}"
+    + "@media print{.no-print{display:none}}";
   const w = window.open('', '_blank');
   w.document.write('<!DOCTYPE html><html lang="ur" dir="rtl"><head><meta charset="utf-8"><title>خالی آرڈر شیٹ</title>'
     + '<link href="https://fonts.googleapis.com/css2?family=Noto+Nastaliq+Urdu:wght@400;600;700&display=swap" rel="stylesheet">'
     + '<style>' + css + '</style></head><body>'
     + '<div class="no-print" style="text-align:center;padding:10px">'
-    + '<button onclick="window.print()" style="font-size:18px;padding:10px 30px;background:#1a237e;color:#fff;border:none;border-radius:8px;cursor:pointer">🖨 پرنٹ کریں</button></div>'
+    + '<button onclick="window.print()" style="font-size:18px;padding:10px 30px;background:#1a237e;color:#fff;border:none;border-radius:8px;cursor:pointer">پرنٹ کریں</button></div>'
     + pagesHtml + '</body></html>');
   w.document.close();
 }
