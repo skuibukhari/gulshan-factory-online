@@ -1849,6 +1849,7 @@ app.get('/api/tray/vouchers', requireLogin, requireSection('tray_basket', 'view'
   const cond = [], args = [];
   if (scope) { cond.push('v.shop_id=?'); args.push(scope); }
   else if (q.shop_id) { cond.push('v.shop_id=?'); args.push(parseInt(q.shop_id, 10)); }
+  if (q.shop_type) { cond.push('v.shop_type=?'); args.push(q.shop_type); }
   if (q.vehicle_id) { cond.push('v.vehicle_id=?'); args.push(parseInt(q.vehicle_id, 10)); }
   if (q.item_id) { cond.push('v.item_id=?'); args.push(parseInt(q.item_id, 10)); }
   if (q.from) { cond.push('v.date>=?'); args.push(q.from); }

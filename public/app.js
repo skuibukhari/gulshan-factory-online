@@ -1276,7 +1276,7 @@ async function renderTrayReport() {
     <div class="formgrid">
       <label>سے<br><input type="date" id="trFrom"></label>
       <label>تک<br><input type="date" id="trTo" value="${karachiToday()}"></label>
-      ${isAdmin ? `<label>🏪 دکان<br><select id="trShop"><option value="">تمام</option>${shops.filter(s => s.active !== 0).map(s => `<option value="${s.id}">${esc(s.name)}</option>`).join('')}</select></label>
+      ${isAdmin ? `<label>🏪 دکان<br><select id="trShop"><option value="">تمام</option>${await trayShopOptions()}</select></label>
       <label>🚚 گاڑی<br><select id="trVeh"><option value="">تمام</option>${vehicles.map(v => `<option value="${v.id}">${esc(v.name)}</option>`).join('')}</select></label>` : ''}
       <label>آئٹم<br><select id="trItem"><option value="">تمام</option>${TRAY.items.map(i => `<option value="${i.id}">${i.icon} ${i.name_ur}</option>`).join('')}</select></label>
       <label>دکان کی قسم<br><select id="trShopType"><option value="">تمام</option><option value="shop">🏪 سپلائی</option><option value="daily">📝 روزانہ</option></select></label>
@@ -1288,7 +1288,11 @@ async function loadTrayReport() {
   const p = new URLSearchParams();
   if ($('#trFrom').value) p.set('from', $('#trFrom').value);
   if ($('#trTo').value) p.set('to', $('#trTo').value);
-  if ($('#trShop') && $('#trShop').value) p.set('shop_id', $('#trShop').value);
+  if ($('#trShop') && $('#trShop').value) {
+    const sh = trayParseShop($('#trShop').value);
+    p.set('shop_id', sh.shop_id);
+    if (sh.shop_type) p.set('shop_type', sh.shop_type);
+  }
   if ($('#trVeh') && $('#trVeh').value) p.set('vehicle_id', $('#trVeh').value);
   if ($('#trItem').value) p.set('item_id', $('#trItem').value);
   let rows = [];
