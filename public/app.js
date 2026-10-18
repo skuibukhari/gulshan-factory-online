@@ -221,12 +221,12 @@ async function refreshCache() {
 // ---------- menu / views ----------
 const MENU = [
   ['dashboard', '📊 ڈیش بورڈ'], ['supply', '🗓 سپلائی کیلنڈر'], ['order', '🧾 نیا آرڈر'], ['orders', '📦 آرڈرز'],
-  ['daily', '📝 روزانہ آرڈر'],
+  ['daily', '📝 روزانہ آرڈر'], ['tray', '🧺 ٹرے باسکٹ'],
   ['order_history', '🕘 آرڈر ہسٹری'], ['reports', '🖨 رپورٹس'],
   ['vehicles', '🚚 گاڑیاں'], ['routes', '🗺 روٹس و شیڈول'], ['cats', '🗂 کیٹیگریز'],
   ['units', '⚖ یونٹس'], ['products', '🍞 آئٹمز'], ['shops', '🏪 دکانیں'],
 ];
-const VIEW_SEC = { dashboard: 'dashboard', supply: 'routes', order: 'orders', orders: 'orders', daily: 'daily', order_history: 'order_history', reports: 'reports',
+const VIEW_SEC = { dashboard: 'dashboard', supply: 'routes', order: 'orders', orders: 'orders', daily: 'daily', tray: 'tray_basket', order_history: 'order_history', reports: 'reports',
   vehicles: 'vehicles', routes: 'routes', cats: 'categories', units: 'units', products: 'products', shops: 'shops' };
 function viewAllowed(key) {
   const sec = VIEW_SEC[key];
@@ -264,7 +264,7 @@ function _showView(name) {
   const _fn = ({ dashboard: renderDashboard, supply: renderSupplyCalendar, order: renderOrderForm, orders: renderOrders, daily: renderDaily, order_history: renderHistory,
      vehicles: () => renderMaster('vehicles'), routes: renderRoutes, cats: () => renderMaster('cats'),
      units: () => renderMaster('units'), products: renderProducts, shops: () => renderMaster('shops'),
-     reports: renderReports }[name] || (() => {}));
+     reports: renderReports, tray: renderTray }[name] || (() => {}));
   const _showViewError = (e) => {
     const vname = (name === 'order_history' ? 'history' : name);
     const el2 = $('#v-' + vname);
@@ -941,6 +941,158 @@ async function renderReports() {
     <div id="rpPrint"></div>`;
   loadTotals();
 }
+// ==================== Tray & Basket module ====================
+let TRAY = { items: [], tab: 'dash' };
+async function renderTray() {
+  const el = $('#v-tray');
+  const full = can('tray_basket', 'full'); // super_admin: entry + opening
+  const isShop = ME.role === 'shop';
+  try { TRAY.items = await api('GET', '/api/tray/items'); } catch (e) { TRAY.items = []; }
+  const tabs = [['dash', '📊 ڈیش بورڈ']];
+  if (full) { tabs.push(['voucher', '📝 واؤچر']); tabs.push(['opening', '🏭 اوپننگ']); }
+  tabs.push(['report', '🖨 رپورٹ']);
+  if (!tabs.some(t => t[0] === TRAY.tab)) TRAY.tab = 'dash';
+  el.innerHTML = `<h2 class="st">🧺 <span>ٹرے اور باسکٹ</span></h2>
+    <div class="tabs">${tabs.map(t => `<button class="${TRAY.tab === t[0] ? 'active' : ''}" onclick="TRAY.tab='${t[0]}';renderTray()">${t[1]}</button>`).join('')}</div>
+    <div id="trayBody" style="margin-top:12px"></div>`;
+  if (TRAY.tab === 'dash') renderTrayDash();
+  else if (TRAY.tab === 'voucher') renderTrayVoucher();
+  else if (TRAY.tab === 'opening') renderTrayOpening();
+  else renderTrayReport();
+}
+async function renderTrayDash() {
+  const box = $('#trayBody');
+  const isShop = ME.role === 'shop';
+  let s;
+  try { s = await api('GET', '/api/tray/summary'); }
+  catch (e) { box.innerHTML = '<p>لوڈ نہیں ہو سکا</p>'; return; }
+  const itemName = id => { const it = s.items.find(x => x.id === id); return it ? `${it.icon} ${it.name_ur}` : ''; };
+  let html = '';
+  if (!isShop) {
+    html += `<h3>🏭 فیکٹری اسٹاک (دستیاب)</h3><div class="cards">` +
+      s.factory.map(f => `<div class="card"><div class="n">${f.available}</div><div class="l">${f.icon} ${f.name_ur}<br>${f.name_en}</div></div>`).join('') + `</div>`;
+  }
+  const myShops = s.shops;
+  html += `<h3 style="margin-top:14px">${isShop ? '🏪 میرا حساب' : '🏪 دکانوں کے پاس (بقایا)'}</h3>
+    <div style="overflow-x:auto"><table class="tbl"><tr><th>دکان</th>${s.items.map(i => `<th>${i.icon}<br>${i.name_ur}</th>`).join('')}</tr>` +
+    myShops.map(sh => {
+      const tot = sh.balances.reduce((a, b) => a + b.balance, 0);
+      return `<tr class="${!isShop && tot >= 30 ? 'hot' : ''}"><td><b>${esc(sh.name)}</b>${!isShop && tot >= 30 ? ' 🔴' : ''}</td>` +
+        sh.balances.map(b => `<td><b>${b.balance}</b></td>`).join('') + `</tr>`;
+    }).join('') + `</table></div>`;
+  if (isShop) html += `<div class="note">🔒 آپ صرف اپنا حساب دیکھ سکتے ہیں — انٹری صرف سپر ایڈمن کرے گا</div>`;
+  box.innerHTML = html;
+}
+async function renderTrayVoucher() {
+  const box = $('#trayBody');
+  let shops = [], vehicles = [];
+  try {
+    [shops, vehicles] = await Promise.all([
+      api('GET', '/api/shops').catch(() => []),
+      api('GET', '/api/vehicles').catch(() => []),
+    ]);
+  } catch (e) {}
+  box.innerHTML = `<h3>📝 نیا واؤچر — New Voucher</h3>
+    <div class="formgrid">
+      <label>📅 تاریخ<br><input type="date" id="tvDate" value="${karachiToday()}"></label>
+      <label>🏪 دکان<br><select id="tvShop">${shops.filter(s => s.active !== 0).map(s => `<option value="${s.id}">${esc(s.name)}</option>`).join('')}</select></label>
+      <label>🚚 گاڑی (اختیاری)<br><select id="tvVeh"><option value="">—</option>${vehicles.map(v => `<option value="${v.id}">${esc(v.name)}</option>`).join('')}</select></label>
+      <label>آئٹم<br><select id="tvItem">${TRAY.items.map(i => `<option value="${i.id}">${i.icon} ${i.name_ur}</option>`).join('')}</select></label>
+      <label>➡️ گئی (Sent)<br><input type="number" id="tvSent" value="0" min="0"></label>
+      <label>⬅️ واپس (Returned)<br><input type="number" id="tvRet" value="0" min="0"></label>
+      <label>📝 نوٹ<br><input type="text" id="tvNote" placeholder="اختیاری"></label>
+    </div>
+    <button class="btn green" onclick="saveTrayVoucher()">💾 واؤچر محفوظ کریں</button>
+    <div id="tvMsg" style="margin-top:10px"></div>`;
+}
+async function saveTrayVoucher() {
+  const body = {
+    date: $('#tvDate').value,
+    shop_id: Number($('#tvShop').value),
+    vehicle_id: $('#tvVeh').value ? Number($('#tvVeh').value) : null,
+    item_id: Number($('#tvItem').value),
+    sent: Number($('#tvSent').value) || 0,
+    returned: Number($('#tvRet').value) || 0,
+    notes: $('#tvNote').value,
+  };
+  try {
+    const r = await api('POST', '/api/tray/vouchers', body);
+    $('#tvMsg').innerHTML = `<div class="note">✅ واؤچر <b>${r.voucher_no}</b> محفوظ ہو گیا</div>`;
+    $('#tvSent').value = 0; $('#tvRet').value = 0; $('#tvNote').value = '';
+  } catch (e) { $('#tvMsg').innerHTML = `<div class="err">❌ ${e.message || 'خرابی'}</div>`; }
+}
+async function renderTrayOpening() {
+  const box = $('#trayBody');
+  let shops = [];
+  try { shops = await api('GET', '/api/shops').catch(() => []); } catch (e) {}
+  let opening = [];
+  try { opening = await api('GET', '/api/tray/opening'); } catch (e) {}
+  const oname = sid => sid === 0 ? '🏭 فیکٹری' : esc((shops.find(s => s.id === sid) || {}).name || sid);
+  box.innerHTML = `<h3>🏭 اوپننگ اسٹاک — Opening Stock</h3>
+    <div class="formgrid">
+      <label>جگہ<br><select id="toShop"><option value="0">🏭 فیکٹری</option>${shops.filter(s => s.active !== 0).map(s => `<option value="${s.id}">${esc(s.name)}</option>`).join('')}</select></label>
+      <label>آئٹم<br><select id="toItem">${TRAY.items.map(i => `<option value="${i.id}">${i.icon} ${i.name_ur}</option>`).join('')}</select></label>
+      <label>تعداد<br><input type="number" id="toQty" value="0" min="0"></label>
+      <label><br><button class="btn green" onclick="saveTrayOpening()">💾 محفوظ کریں</button></label>
+    </div><div id="toMsg" style="margin:8px 0"></div>
+    <h3>موجودہ اوپننگ</h3>
+    <table class="tbl"><tr><th>جگہ</th><th>آئٹم</th><th>تعداد</th></tr>
+    ${opening.map(o => `<tr><td>${oname(o.shop_id)}</td><td>${o.icon} ${o.name_ur}</td><td><b>${o.qty}</b></td></tr>`).join('') || '<tr><td colspan="3">کوئی اوپننگ نہیں</td></tr>'}</table>`;
+}
+async function saveTrayOpening() {
+  try {
+    await api('PUT', '/api/tray/opening', { shop_id: Number($('#toShop').value), item_id: Number($('#toItem').value), qty: Number($('#toQty').value) || 0 });
+    $('#toMsg').innerHTML = `<div class="note">✅ اوپننگ محفوظ ہو گئی</div>`;
+    renderTrayOpening();
+  } catch (e) { $('#toMsg').innerHTML = `<div class="err">❌ ${e.message || 'خرابی'}</div>`; }
+}
+async function renderTrayReport() {
+  const box = $('#trayBody');
+  const isAdmin = ME.role === 'super_admin' || ME.role === 'factory';
+  let shops = [], vehicles = [];
+  if (isAdmin) {
+    try {
+      [shops, vehicles] = await Promise.all([
+        api('GET', '/api/shops').catch(() => []),
+        api('GET', '/api/vehicles').catch(() => []),
+      ]);
+    } catch (e) {}
+  }
+  box.innerHTML = `<h3>🖨 رپورٹ — فلٹر</h3>
+    <div class="formgrid">
+      <label>سے<br><input type="date" id="trFrom"></label>
+      <label>تک<br><input type="date" id="trTo" value="${karachiToday()}"></label>
+      ${isAdmin ? `<label>🏪 دکان<br><select id="trShop"><option value="">تمام</option>${shops.filter(s => s.active !== 0).map(s => `<option value="${s.id}">${esc(s.name)}</option>`).join('')}</select></label>
+      <label>🚚 گاڑی<br><select id="trVeh"><option value="">تمام</option>${vehicles.map(v => `<option value="${v.id}">${esc(v.name)}</option>`).join('')}</select></label>` : ''}
+      <label>آئٹم<br><select id="trItem"><option value="">تمام</option>${TRAY.items.map(i => `<option value="${i.id}">${i.icon} ${i.name_ur}</option>`).join('')}</select></label>
+      <label><br><button class="btn small dark" onclick="loadTrayReport()">🔍 دیکھیں</button></label>
+    </div><div id="trBody"></div>`;
+  loadTrayReport();
+}
+async function loadTrayReport() {
+  const p = new URLSearchParams();
+  if ($('#trFrom').value) p.set('from', $('#trFrom').value);
+  if ($('#trTo').value) p.set('to', $('#trTo').value);
+  if ($('#trShop') && $('#trShop').value) p.set('shop_id', $('#trShop').value);
+  if ($('#trVeh') && $('#trVeh').value) p.set('vehicle_id', $('#trVeh').value);
+  if ($('#trItem').value) p.set('item_id', $('#trItem').value);
+  let rows = [];
+  try { rows = await api('GET', '/api/tray/vouchers?' + p.toString()); } catch (e) {}
+  const tot = rows.reduce((a, r) => ({ s: a.s + r.sent, r: a.r + r.returned }), { s: 0, r: 0 });
+  $('#trBody').innerHTML = `<table class="tbl"><tr><th>تاریخ</th><th>واؤچر</th><th>دکان</th><th>آئٹم</th><th>گئی</th><th>واپس</th><th>بقایا</th></tr>` +
+    (rows.map(r => `<tr><td>${r.date}</td><td>${r.voucher_no}</td><td>${esc(r.shop_name)}</td><td>${r.item_icon} ${r.item_ur}</td><td>${r.sent}</td><td>${r.returned}</td><td><b>${r.sent - r.returned}</b></td></tr>`).join('') || '<tr><td colspan="7">کوئی ریکارڈ نہیں</td></tr>') +
+    `</table><p style="margin-top:8px"><b>ٹوٹل:</b> گئی ${tot.s} | واپس ${tot.r} | بقایا ${tot.s - tot.r}</p>
+    <button class="btn small dark" onclick="printTrayReport()">🖨 پرنٹ / PDF</button>`;
+  window._trayRows = rows;
+}
+function printTrayReport() {
+  const rows = window._trayRows || [];
+  const html = `<h2>🧺 ٹرے اور باسکٹ رپورٹ — گلشن فیکٹری</h2><p>تاریخ: ${karachiToday()}</p>
+    <table border="1" style="width:100%;border-collapse:collapse"><tr><th>تاریخ</th><th>واؤچر</th><th>دکان</th><th>آئٹم</th><th>گئی</th><th>واپس</th><th>بقایا</th></tr>` +
+    rows.map(r => `<tr><td>${r.date}</td><td>${r.voucher_no}</td><td>${r.shop_name}</td><td>${r.item_ur}</td><td>${r.sent}</td><td>${r.returned}</td><td>${r.sent - r.returned}</td></tr>`).join('') + `</table>`;
+  const w = window.open('', '_blank');
+  w.document.write(`<html><head><title>ٹرے رپورٹ</title><style>body{font-family:serif;direction:rtl}table{border-collapse:collapse}td,th{border:1px solid #000;padding:6px}</style></head><body>${html}<br><button onclick="window.print()">🖨 پرنٹ</button></body></html>`);
+}
 async function loadTotals() {
   const d = $('#rpDate').value, r = $('#rpRoute').value;
   const t = await api('GET', `/api/totals?date=${d}${r ? '&route_id=' + r : ''}`);
@@ -1223,7 +1375,7 @@ async function userEdit(id) {
   renderSettingsUsers();
 }
 const SEC_UR = { dashboard: 'ڈیش بورڈ', orders: 'آرڈرز', order_history: 'آرڈر ہسٹری', shops: 'دکانیں', products: 'آئٹمز',
-  categories: 'کیٹیگریز', units: 'یونٹس', vehicles: 'گاڑیاں', routes: 'روٹس', schedule: 'شیڈول', reports: 'رپورٹس', users: 'یوزرز', daily: 'روزانہ آرڈر' };
+  categories: 'کیٹیگریز', units: 'یونٹس', vehicles: 'گاڑیاں', routes: 'روٹس', schedule: 'شیڈول', reports: 'رپورٹس', users: 'یوزرز', daily: 'روزانہ آرڈر', tray_basket: '🧺 ٹرے اور باسکٹ' };
 const LVL_UR = { none: '⛔ بند', view: '👁 صرف دیکھیں', full: '✅ مکمل اختیار' };
 async function renderSettingsAccess() {
   const users = (await api('GET', '/api/users')).filter(u => u.role !== 'super_admin');

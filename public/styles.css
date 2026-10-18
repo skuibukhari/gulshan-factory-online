@@ -285,3 +285,10 @@ button[disabled]{opacity:.45}
 input[type=number]::-webkit-inner-spin-button,
 input[type=number]::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
 input[type=number] { -moz-appearance: textfield; appearance: textfield; }
+
+/* Tray & Basket module */
+tr.hot td{background:#fff3e0 !important;font-weight:bold}
+.cards{display:flex;gap:10px;margin:10px 0}
+.cards .card{flex:1;border-radius:12px;padding:14px;color:#fff;text-align:center;background:linear-gradient(135deg,#e67e00,#f90)}
+.cards .card .n{font-size:28px;font-weight:bold}
+.cards .card .l{font-size:13px;opacity:.95}
