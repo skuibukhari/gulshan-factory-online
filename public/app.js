@@ -949,15 +949,18 @@ async function renderTray() {
   const isShop = ME.role === 'shop';
   try { TRAY.items = await api('GET', '/api/tray/items'); } catch (e) { TRAY.items = []; }
   const tabs = [['dash', '📊 ڈیش بورڈ']];
-  if (full) { tabs.push(['voucher', '📝 واؤچر']); tabs.push(['opening', '🏭 اوپننگ']); }
+  if (full) { tabs.push(['sent', '📤 بھیجا']); tabs.push(['ret', '📥 واپس']); tabs.push(['opening', '🏭 اوپننگ']); }
+  tabs.push(['ledger', '🧾 کھاتہ']);
   tabs.push(['report', '🖨 رپورٹ']);
   if (!tabs.some(t => t[0] === TRAY.tab)) TRAY.tab = 'dash';
   el.innerHTML = `<h2 class="st">🧺 <span>ٹرے اور باسکٹ</span></h2>
     <div class="tabs">${tabs.map(t => `<button class="${TRAY.tab === t[0] ? 'active' : ''}" onclick="TRAY.tab='${t[0]}';renderTray()">${t[1]}</button>`).join('')}</div>
     <div id="trayBody" style="margin-top:12px"></div>`;
   if (TRAY.tab === 'dash') renderTrayDash();
-  else if (TRAY.tab === 'voucher') renderTrayVoucher();
+  else if (TRAY.tab === 'sent') renderTrayVoucher('sent');
+  else if (TRAY.tab === 'ret') renderTrayVoucher('ret');
   else if (TRAY.tab === 'opening') renderTrayOpening();
+  else if (TRAY.tab === 'ledger') renderTrayLedger();
   else renderTrayReport();
 }
 async function renderTrayDash() {
@@ -1030,40 +1033,53 @@ function trayParseShop(v) {
     : { shop_id: parseInt(v.slice(1), 10) || 0, shop_type: 'shop' };
 }
 
-async function renderTrayVoucher() {
+async function renderTrayVoucher(kind) {
+  const isSent = kind === 'sent';
   const box = $('#trayBody');
   let vehicles = [];
   try { vehicles = await api('GET', '/api/vehicles').catch(() => []); } catch (e) {}
   const shopOpts = await trayShopOptions();
-  box.innerHTML = `<h3>📝 نیا واؤچر — New Voucher</h3>
+  box.innerHTML = `<h3>${isSent ? '📤 بھیجا — Sent Voucher' : '📥 واپس — Return Voucher'}</h3>
     <div class="formgrid">
       <label>📅 تاریخ<br><input type="date" id="tvDate" value="${karachiToday()}"></label>
       <label>🏪 دکان<br><select id="tvShop">${shopOpts}</select></label>
-      <label>🚚 گاڑی (اختیاری)<br><select id="tvVeh"><option value="">—</option>${vehicles.map(v => `<option value="${v.id}">${esc(v.name)}</option>`).join('')}</select></label>
+      ${isSent ? `<label>🚚 گاڑی (اختیاری)<br><select id="tvVeh"><option value="">—</option>${vehicles.map(v => `<option value="${v.id}">${esc(v.name)}</option>`).join('')}</select></label>` : ''}
       <label>آئٹم<br><select id="tvItem">${TRAY.items.map(i => `<option value="${i.id}">${i.icon} ${i.name_ur}</option>`).join('')}</select></label>
-      <label>➡️ گئی (Sent)<br><input type="number" id="tvSent" value="0" min="0"></label>
-      <label>⬅️ واپس (Returned)<br><input type="number" id="tvRet" value="0" min="0"></label>
+      <label>${isSent ? '➡️ تعداد بھیجی' : '⬅️ تعداد واپس'}<br>
+        <div style="display:flex;gap:6px;align-items:center">
+          <button type="button" class="btn small" onclick="tvAdj(-1)">−</button>
+          <input type="number" id="tvQty" value="0" min="0" style="width:70px;text-align:center;font-size:20px;font-weight:bold">
+          <button type="button" class="btn small" onclick="tvAdj(1)">+</button>
+          <button type="button" class="btn small" onclick="tvAdj(5)">+5</button>
+        </div></label>
       <label>📝 نوٹ<br><input type="text" id="tvNote" placeholder="اختیاری"></label>
     </div>
-    <button class="btn green" onclick="saveTrayVoucher()">💾 واؤچر محفوظ کریں</button>
+    <button class="btn green" onclick="saveTrayVoucher('${kind}')">💾 ${isSent ? 'بھیجا' : 'واپس'} محفوظ کریں</button>
     <div id="tvMsg" style="margin-top:10px"></div>`;
 }
-async function saveTrayVoucher() {
+function tvAdj(n) {
+  const el = $('#tvQty');
+  el.value = Math.max(0, (Number(el.value) || 0) + n);
+}
+async function saveTrayVoucher(kind) {
+  const isSent = kind === 'sent';
   const sh = trayParseShop($('#tvShop').value);
+  const qty = Number($('#tvQty').value) || 0;
+  if (!qty) { $('#tvMsg').innerHTML = `<div class="err">❌ تعداد لکھیں</div>`; return; }
   const body = {
     date: $('#tvDate').value,
     shop_id: sh.shop_id,
     shop_type: sh.shop_type,
-    vehicle_id: $('#tvVeh').value ? Number($('#tvVeh').value) : null,
+    vehicle_id: ($('#tvVeh') && $('#tvVeh').value) ? Number($('#tvVeh').value) : null,
     item_id: Number($('#tvItem').value),
-    sent: Number($('#tvSent').value) || 0,
-    returned: Number($('#tvRet').value) || 0,
+    sent: isSent ? qty : 0,
+    returned: isSent ? 0 : qty,
     notes: $('#tvNote').value,
   };
   try {
     const r = await api('POST', '/api/tray/vouchers', body);
-    $('#tvMsg').innerHTML = `<div class="note">✅ واؤچر <b>${r.voucher_no}</b> محفوظ ہو گیا</div>`;
-    $('#tvSent').value = 0; $('#tvRet').value = 0; $('#tvNote').value = '';
+    $('#tvMsg').innerHTML = `<div class="note">✅ واؤچر <b>${r.voucher_no}</b> محفوظ ہو گیا (${isSent ? 'بھیجا' : 'واپس'}: ${qty})</div>`;
+    $('#tvQty').value = 0; $('#tvNote').value = '';
   } catch (e) { $('#tvMsg').innerHTML = `<div class="err">❌ ${e.message || 'خرابی'}</div>`; }
 }
 async function renderTrayOpening() {
@@ -1090,6 +1106,80 @@ async function saveTrayOpening() {
     renderTrayOpening();
   } catch (e) { $('#toMsg').innerHTML = `<div class="err">❌ ${e.message || 'خرابی'}</div>`; }
 }
+
+async function renderTrayLedger() {
+  const box = $('#trayBody');
+  const shopOpts = await trayShopOptions();
+  box.innerHTML = `<h3>🧾 دکان کا کھاتہ — Shop Ledger</h3>
+    <div class="formgrid">
+      <label>🏪 دکان منتخب کریں<br><select id="tlShop">${shopOpts}</select></label>
+      <label><br><button class="btn small dark" onclick="loadTrayLedger()">🔍 کھاتہ دیکھیں</button></label>
+    </div><div id="tlBody"></div>`;
+}
+async function loadTrayLedger() {
+  const val = $('#tlShop').value;
+  if (!val) return;
+  const sh = trayParseShop(val);
+  const box = $('#tlBody');
+  box.innerHTML = '<p>لوڈ ہو رہا ہے...</p>';
+  let vouchers = [], opening = [];
+  try {
+    const [v, o] = await Promise.all([
+      api('GET', '/api/tray/vouchers').catch(() => []),
+      api('GET', '/api/tray/opening').catch(() => []),
+    ]);
+    vouchers = v.filter(r => r.shop_id === sh.shop_id && r.shop_type === sh.shop_type);
+    opening = o.filter(r => r.shop_id === sh.shop_id && r.shop_type === sh.shop_type);
+  } catch (e) { box.innerHTML = '<p>لوڈ نہیں ہو سکا</p>'; return; }
+  const shopName = vouchers.length ? vouchers[0].shop_name : (opening.length ? opening[0].shop_name : 'دکان');
+  // Per-item summary
+  const items = {};
+  for (const o of opening) {
+    const k = o.item_id;
+    if (!items[k]) items[k] = { icon: o.icon, ur: o.name_ur, op: 0, s: 0, r: 0 };
+    items[k].op += o.qty;
+  }
+  for (const v of vouchers) {
+    const k = v.item_id;
+    if (!items[k]) items[k] = { icon: v.item_icon, ur: v.item_ur, op: 0, s: 0, r: 0 };
+    items[k].s += v.sent; items[k].r += v.returned;
+  }
+  const sumRows = Object.values(items).map(t =>
+    `<tr><td>${t.icon} ${t.ur}</td><td>${t.op}</td><td>${t.s}</td><td>${t.r}</td><td><b>${t.op + t.s - t.r}</b></td></tr>`).join('');
+  const tot = Object.values(items).reduce((a, t) => ({ op: a.op + t.op, s: a.s + t.s, r: a.r + t.r }), { op: 0, s: 0, r: 0 });
+  const vRows = vouchers.map(v =>
+    `<tr><td>${v.date}</td><td>${v.voucher_no}</td><td>${v.item_icon} ${v.item_ur}</td><td>${v.sent || '—'}</td><td>${v.returned || '—'}</td><td>${v.notes || ''}</td></tr>`).join('');
+  box.innerHTML = `
+    <h4 style="margin:12px 0 6px">🏪 ${esc(shopName)}</h4>
+    <h4 style="margin:8px 0 6px">📊 خلاصہ</h4>
+    <table class="tbl"><tr><th>آئٹم</th><th>اوپننگ</th><th>بھیجا</th><th>واپس</th><th>بقایا</th></tr>${sumRows}
+    <tr style="background:#fff3e0"><td><b>ٹوٹل</b></td><td><b>${tot.op}</b></td><td><b>${tot.s}</b></td><td><b>${tot.r}</b></td><td><b>${tot.op + tot.s - tot.r}</b></td></tr></table>
+    <h4 style="margin:12px 0 6px">📝 واؤچر ہسٹری (${vouchers.length})</h4>
+    <div style="overflow-x:auto"><table class="tbl"><tr><th>تاریخ</th><th>واؤچر</th><th>آئٹم</th><th>بھیجا</th><th>واپس</th><th>نوٹ</th></tr>${vRows || '<tr><td colspan="6">کوئی واؤچر نہیں</td></tr>'}</table></div>
+    <div style="margin-top:10px"><button class="btn small dark" onclick="printTrayLedger('${esc(shopName)}')">🖨 کھاتہ پرنٹ کریں</button></div>`;
+  window._tlData = { shopName, items, vouchers };
+}
+function printTrayLedger(shopName) {
+  const d = window._tlData;
+  if (!d) return;
+  const sumRows = Object.values(d.items).map(t =>
+    `<tr><td>${t.icon} ${t.ur}</td><td>${t.op}</td><td>${t.s}</td><td>${t.r}</td><td><b>${t.op + t.s - t.r}</b></td></tr>`).join('');
+  const tot = Object.values(d.items).reduce((a, t) => ({ op: a.op + t.op, s: a.s + t.s, r: a.r + t.r }), { op: 0, s: 0, r: 0 });
+  const vRows = d.vouchers.map(v =>
+    `<tr><td>${v.date}</td><td>${v.voucher_no}</td><td>${v.item_icon} ${v.item_ur}</td><td>${v.sent || '—'}</td><td>${v.returned || '—'}</td><td>${v.notes || ''}</td></tr>`).join('');
+  const html = `<h2 style="text-align:center">🧾 ٹرے باسکٹ کھاتہ — ${shopName}</h2>
+    <p style="text-align:center">گلشن فیکٹری | تاریخ: ${new Date().toISOString().slice(0, 10)}</p>
+    <h3>📊 خلاصہ</h3>
+    <table border="1" style="width:100%;border-collapse:collapse;margin-bottom:12px"><tr><th>آئٹم</th><th>اوپننگ</th><th>بھیجا</th><th>واپس</th><th>بقایا</th></tr>${sumRows}
+    <tr><td><b>ٹوٹل</b></td><td><b>${tot.op}</b></td><td><b>${tot.s}</b></td><td><b>${tot.r}</b></td><td><b>${tot.op + tot.s - tot.r}</b></td></tr></table>
+    <h3>📝 واؤچر ہسٹری (${d.vouchers.length})</h3>
+    <table border="1" style="width:100%;border-collapse:collapse"><tr><th>تاریخ</th><th>واؤچر</th><th>آئٹم</th><th>بھیجا</th><th>واپس</th><th>نوٹ</th></tr>${vRows}</table>
+    <p style="margin-top:16px">دستخط دکان: ___________________ &nbsp;&nbsp; دستخط فیکٹری: ___________________</p>`;
+  const w = window.open('', '_blank');
+  w.document.write(`<html><head><title>کھاتہ — ${shopName}</title><style>body{font-family:serif;direction:rtl;padding:20px}td,th{border:1px solid #000;padding:8px}h2,h3{margin:14px 0 8px}@media print{button{display:none}}</style></head><body>${html}<br><button onclick="window.print()" style="padding:10px 30px;font-size:16px">🖨 پرنٹ / PDF</button></body></html>`);
+  w.document.close();
+}
+
 async function renderTrayReport() {
   const box = $('#trayBody');
   const isAdmin = ME.role === 'super_admin' || ME.role === 'factory';
