@@ -966,21 +966,45 @@ async function renderTrayDash() {
   let s;
   try { s = await api('GET', '/api/tray/summary'); }
   catch (e) { box.innerHTML = '<p>لوڈ نہیں ہو سکا</p>'; return; }
-  const itemName = id => { const it = s.items.find(x => x.id === id); return it ? `${it.icon} ${it.name_ur}` : ''; };
   let html = '';
+  // 1. Factory stock cards
   if (!isShop) {
     html += `<h3>🏭 فیکٹری اسٹاک (دستیاب)</h3><div class="cards">` +
       s.factory.map(f => `<div class="card"><div class="n">${f.available}</div><div class="l">${f.icon} ${f.name_ur}<br>${f.name_en}</div></div>`).join('') + `</div>`;
+    // 2. Item-wise totals (all shops combined)
+    const itemTots = s.items.map(it => {
+      const tot = s.shops.reduce((a, sh) => a + (sh.balances.find(b => b.item_id === it.id) || { balance: 0 }).balance, 0);
+      return { ...it, total: tot };
+    });
+    const grandTot = itemTots.reduce((a, t) => a + t.total, 0);
+    html += `<h3 style="margin-top:14px">📊 آئٹم وائز ٹوٹل (تمام دکانوں کے پاس)</h3>
+      <div class="cards">` +
+      itemTots.map(t => `<div class="card"><div class="n">${t.total}</div><div class="l">${t.icon} ${t.name_ur}<br>${t.name_en}</div></div>`).join('') +
+      `<div class="card" style="background:linear-gradient(135deg,#2e7d32,#43a047)"><div class="n">${grandTot}</div><div class="l">📋 کل ٹوٹل<br>Total</div></div></div>`;
   }
-  const myShops = s.shops;
-  html += `<h3 style="margin-top:14px">${isShop ? '🏪 میرا حساب' : '🏪 دکانوں کے پاس (بقایا)'}</h3>
-    <div style="overflow-x:auto"><table class="tbl"><tr><th>دکان</th>${s.items.map(i => `<th>${i.icon}<br>${i.name_ur}</th>`).join('')}</tr>` +
-    myShops.map(sh => {
+  // 3. Shop-wise tables, separated by type
+  const supShops = s.shops.filter(sh => sh.shop_type !== 'daily');
+  const dailyShops = s.shops.filter(sh => sh.shop_type === 'daily');
+  const shopTable = (list, title) => {
+    if (!list.length) return '';
+    const colTots = s.items.map(it => list.reduce((a, sh) => a + (sh.balances.find(b => b.item_id === it.id) || { balance: 0 }).balance, 0));
+    const grand = colTots.reduce((a, t) => a + t, 0);
+    return `<h3 style="margin-top:14px">${title} (${list.length} دکان)</h3>
+    <div style="overflow-x:auto"><table class="tbl"><tr><th>دکان</th>${s.items.map(i => `<th>${i.icon}<br>${i.name_ur}</th>`).join('')}<th>ٹوٹل</th></tr>` +
+    list.map(sh => {
       const tot = sh.balances.reduce((a, b) => a + b.balance, 0);
       return `<tr class="${!isShop && tot >= 30 ? 'hot' : ''}"><td><b>${esc(sh.name)}</b>${!isShop && tot >= 30 ? ' 🔴' : ''}</td>` +
-        sh.balances.map(b => `<td><b>${b.balance}</b></td>`).join('') + `</tr>`;
-    }).join('') + `</table></div>`;
-  if (isShop) html += `<div class="note">🔒 آپ صرف اپنا حساب دیکھ سکتے ہیں — انٹری صرف سپر ایڈمن کرے گا</div>`;
+        sh.balances.map(b => `<td><b>${b.balance}</b></td>`).join('') + `<td><b>${tot}</b></td></tr>`;
+    }).join('') +
+    `<tr style="background:#fff3e0"><td><b>📊 ٹوٹل</b></td>${colTots.map(t => `<td><b>${t}</b></td>`).join('')}<td><b>${grand}</b></td></tr></table></div>`;
+  };
+  if (isShop) {
+    html += shopTable(s.shops, '🏪 میرا حساب');
+    html += `<div class="note">🔒 آپ صرف اپنا حساب دیکھ سکتے ہیں — انٹری صرف سپر ایڈمن کرے گا</div>`;
+  } else {
+    html += shopTable(supShops, '🏪 سپلائی دکانیں');
+    html += shopTable(dailyShops, '📝 روزانہ دکانیں');
+  }
   box.innerHTML = html;
 }
 

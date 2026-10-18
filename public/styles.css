@@ -290,5 +290,5 @@ input[type=number] { -moz-appearance: textfield; appearance: textfield; }
 tr.hot td{background:#fff3e0 !important;font-weight:bold}
 .cards{display:flex;gap:10px;margin:10px 0}
 .cards .card{flex:1;border-radius:12px;padding:14px;color:#fff;text-align:center;background:linear-gradient(135deg,#e67e00,#f90)}
-.cards .card .n{font-size:28px;font-weight:bold}
+.cards .card .n{font-size:32px;font-weight:800;color:#fff;text-shadow:0 2px 4px rgba(0,0,0,.45)}
 .cards .card .l{font-size:14px;font-weight:700;color:#fff;text-shadow:0 1px 3px rgba(0,0,0,.4)}
