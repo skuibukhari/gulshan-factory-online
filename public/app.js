@@ -1328,10 +1328,72 @@ async function loadTrayReport() {
     const dly = rows.filter(r => r.shop_type === 'daily');
     return mkTable(sup, '🏪 سپلائی دکانیں') + mkTable(dly, '📝 روزانہ دکانیں') + (rows.length ? '' : '<p>کوئی ریکارڈ نہیں</p>');
   })()}
-    <div style="margin-top:10px"><button class="btn small dark" onclick="printTrayReport()">🖨 پرنٹ / PDF (مکمل رپورٹ)</button></div>`;
+    <div style="margin-top:10px;display:flex;gap:8px">
+      <button class="btn small dark" onclick="printTrayReport()">🖨 پرنٹ / PDF (مکمل رپورٹ)</button>
+      <button class="btn small" style="background:#6a1b9a;color:#fff" onclick="printTraySample()">👁 نمونہ پرنٹ دیکھیں</button>
+    </div>`;
   window._trayRows = rows;
   window._traySummary = { tot, byItem };
 }
+
+function printTraySample() {
+  const html = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>نمونہ پرنٹ</title>
+  <style>
+    * { margin:0; padding:0; box-sizing:border-box; }
+    body { font-family:'Jameel Noori Nastaleeq','Noto Nastaliq Urdu',serif; direction:rtl; padding:24px; color:#222; }
+    .header { text-align:center; border-bottom:3px double #e8721c; padding-bottom:12px; margin-bottom:16px; }
+    .header h1 { color:#e8721c; font-size:28px; }
+    .header .sub { color:#666; font-size:13px; }
+    .badge { display:inline-block; background:#e8721c; color:#fff; padding:6px 24px; border-radius:20px; font-size:16px; margin:8px 0; }
+    .shop-name { font-size:20px; background:#fff3e0; display:inline-block; padding:8px 32px; border-radius:20px; margin:8px 0; border:2px solid #e8721c; }
+    table { width:100%; border-collapse:collapse; margin:12px 0; }
+    th { background:#e8721c; color:#fff; padding:12px; font-size:16px; }
+    td { padding:12px; border-bottom:1px solid #eee; font-size:15px; }
+    tr:nth-child(even) td { background:#fff8f0; }
+    .total-row td { background:#2e7d32 !important; color:#fff; font-size:18px; font-weight:bold; }
+    h3 { color:#e8721c; margin:16px 0 8px; font-size:20px; }
+    .cards { display:flex; gap:12px; margin:12px 0; }
+    .card { flex:1; background:linear-gradient(135deg,#e8721c,#f0953a); border-radius:12px; padding:16px; text-align:center; color:#fff; }
+    .card .n { font-size:32px; font-weight:800; }
+    .card .l { font-size:14px; margin-top:4px; }
+    .sign { display:flex; justify-content:space-between; margin-top:40px; }
+    .sign div { text-align:center; width:40%; border-top:2px solid #333; padding-top:8px; }
+    .watermark { text-align:center; color:#e8721c; font-size:14px; margin:8px 0; padding:8px; background:#fff8e1; border-radius:8px; border:1px dashed #e8721c; }
+    @media print { .no-print { display:none; } body { padding:0; } }
+  </style></head><body>
+    <div class="header"><h1>🧺 گلشن فیکٹری</h1><div class="sub">Gulshan Factory — Tray & Basket Report</div></div>
+    <div class="watermark">👁 یہ نمونہ ہے — اصل ڈیٹا کے ساتھ پرنٹ کریں</div>
+    <div style="text-align:center"><div class="shop-name">🏪 مثال دکان (Sample Shop)</div></div>
+    <div style="text-align:center"><div class="badge">📊 رپورٹ — 18-10-2026</div></div>
+    <h3>📊 خلاصہ</h3>
+    <div class="cards">
+      <div class="card"><div class="n">150</div><div class="l">📤 کل بھیجی<br>Sent</div></div>
+      <div class="card" style="background:linear-gradient(135deg,#2e7d32,#43a047)"><div class="n">45</div><div class="l">📥 کل واپس<br>Returned</div></div>
+      <div class="card" style="background:linear-gradient(135deg,#1565c0,#42a5f5)"><div class="n">105</div><div class="l">📋 بقایا<br>Balance</div></div>
+    </div>
+    <h3>🧺 آئٹم وائز</h3>
+    <table><tr><th>آئٹم</th><th>بھیجی</th><th>واپس</th><th>بقایا</th></tr>
+    <tr><td>🧁 سویٹس ٹرے</td><td style="text-align:center">60</td><td style="text-align:center">20</td><td style="text-align:center"><b>40</b></td></tr>
+    <tr><td>🍽️ جنرل ٹرے</td><td style="text-align:center">50</td><td style="text-align:center">15</td><td style="text-align:center"><b>35</b></td></tr>
+    <tr><td>🧺 باسکٹ</td><td style="text-align:center">40</td><td style="text-align:center">10</td><td style="text-align:center"><b>30</b></td></tr>
+    <tr class="total-row"><td><b>ٹوٹل</b></td><td style="text-align:center"><b>150</b></td><td style="text-align:center"><b>45</b></td><td style="text-align:center"><b>105</b></td></tr></table>
+    <h3>🏪 سپلائی دکانیں</h3>
+    <table><tr><th>دکان</th><th>بھیجی</th><th>واپس</th><th>بقایا</th></tr>
+    <tr><td><b>مثال دکان 1</b></td><td style="text-align:center">80</td><td style="text-align:center">25</td><td style="text-align:center"><b>55</b></td></tr>
+    <tr><td><b>مثال دکان 2</b></td><td style="text-align:center">40</td><td style="text-align:center">10</td><td style="text-align:center"><b>30</b></td></tr>
+    <tr class="total-row"><td><b>ٹوٹل</b></td><td style="text-align:center"><b>120</b></td><td style="text-align:center"><b>35</b></td><td style="text-align:center"><b>85</b></td></tr></table>
+    <h3>📝 روزانہ دکانیں</h3>
+    <table><tr><th>دکان</th><th>بھیجی</th><th>واپس</th><th>بقایا</th></tr>
+    <tr><td><b>روزانہ دکان 1 (روزانہ)</b></td><td style="text-align:center">30</td><td style="text-align:center">10</td><td style="text-align:center"><b>20</b></td></tr>
+    <tr class="total-row"><td><b>ٹوٹل</b></td><td style="text-align:center"><b>30</b></td><td style="text-align:center"><b>10</b></td><td style="text-align:center"><b>20</b></td></tr></table>
+    <div class="sign"><div>دکان کے دستخط<br><br><br></div><div>فیکٹری کے دستخط<br><br><br></div></div>
+    <div class="no-print" style="text-align:center;margin-top:16px"><button onclick="window.print()" style="padding:14px 48px;font-size:18px;background:#e8721c;color:#fff;border:none;border-radius:10px;cursor:pointer">🖨 پرنٹ / PDF</button></div>
+  </body></html>`;
+  const w = window.open('', '_blank');
+  w.document.write(html);
+  w.document.close();
+}
+
 function printTrayReport() {
   const rows = window._trayRows || [];
   const sum = window._traySummary || { tot: { s: 0, r: 0 }, byItem: {} };
