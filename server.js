@@ -319,6 +319,41 @@ CREATE TABLE IF NOT EXISTS daily_shops (
   image TEXT DEFAULT '',
   active INTEGER DEFAULT 1
 );`);
+// ---------- Tray & Basket module (separate data, shared shops/vehicles) ----------
+// shop_id = 0 means FACTORY in tray_opening
+db.exec(`CREATE TABLE IF NOT EXISTS tray_items (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  key TEXT UNIQUE NOT NULL,
+  name_ur TEXT NOT NULL,
+  name_en TEXT NOT NULL,
+  icon TEXT DEFAULT '',
+  active INTEGER NOT NULL DEFAULT 1
+);`);
+db.exec(`CREATE TABLE IF NOT EXISTS tray_opening (
+  shop_id INTEGER NOT NULL DEFAULT 0,
+  item_id INTEGER NOT NULL REFERENCES tray_items(id),
+  qty INTEGER NOT NULL DEFAULT 0,
+  updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+  PRIMARY KEY (shop_id, item_id)
+);`);
+db.exec(`CREATE TABLE IF NOT EXISTS tray_vouchers (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  voucher_no TEXT UNIQUE NOT NULL,
+  date TEXT NOT NULL,
+  shop_id INTEGER NOT NULL REFERENCES shops(id),
+  vehicle_id INTEGER REFERENCES vehicles(id) ON DELETE SET NULL,
+  item_id INTEGER NOT NULL REFERENCES tray_items(id),
+  sent INTEGER NOT NULL DEFAULT 0,
+  returned INTEGER NOT NULL DEFAULT 0,
+  notes TEXT DEFAULT '',
+  created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);`);
+// Seed the 3 item categories (sweets tray separate, general tray, basket)
+db.prepare(`INSERT OR IGNORE INTO tray_items (key, name_ur, name_en, icon) VALUES
+  ('sweet_tray', 'سویٹس ٹرے', 'Sweets Tray', '🧁'),
+  ('general_tray', 'عام ٹرے', 'General Tray', '🍽️'),
+  ('basket', 'باسکٹ', 'Basket', '🧺')`).run();
 // --- Daily system: fully separate catalog (mukamal alag data) — one-time copy ---
 // Same IDs so existing daily_orders/access rows stay valid; after this, independent.
 if (!db.prepare(`SELECT value FROM daily_settings WHERE key='catalog_split'`).get()) {
@@ -379,11 +414,11 @@ for (const [k, v] of Object.entries(printDefaults)) {
   db.prepare(`INSERT OR IGNORE INTO daily_settings (key, value) VALUES (?, ?)`).run(k, v);
 }
 
-const SECTIONS = ['dashboard','orders','order_history','shops','products','categories','units','vehicles','routes','schedule','reports','users','daily'];
+const SECTIONS = ['dashboard','orders','order_history','shops','products','categories','units','vehicles','routes','schedule','reports','users','daily','tray_basket'];
 
 const DEFAULT_PERMS = {
-  factory: { dashboard:'full', orders:'full', order_history:'full', shops:'view', products:'view', categories:'view', units:'view', vehicles:'view', routes:'view', schedule:'full', reports:'full', users:'none', daily:'full' },
-  shop:    { dashboard:'view', orders:'full', order_history:'view', shops:'none', products:'none', categories:'none', units:'none', vehicles:'none', routes:'none', schedule:'view', reports:'none', users:'none', daily:'full' },
+  factory: { dashboard:'full', orders:'full', order_history:'full', shops:'view', products:'view', categories:'view', units:'view', vehicles:'view', routes:'view', schedule:'full', reports:'full', users:'none', daily:'full', tray_basket:'view' },
+  shop:    { dashboard:'view', orders:'full', order_history:'view', shops:'none', products:'none', categories:'none', units:'none', vehicles:'none', routes:'none', schedule:'view', reports:'none', users:'none', daily:'full', tray_basket:'none' },
 };
 
 function seedPermissions(userId, role) {
@@ -396,11 +431,15 @@ function getPermissions(userId) {
   const p = {};
   for (const s of SECTIONS) p[s] = 'none';
   for (const r of rows) p[r.section] = r.level;
-  // 'daily' is new: users created before it existed have no row — fall back to role default
+  // 'daily'/'tray_basket' are new: users created before they existed have no row — fall back to role default
   // (existing saved settings are never overwritten)
   if (!rows.some(r => r.section === 'daily')) {
     const role = (db.prepare('SELECT role FROM users WHERE id=?').get(userId) || {}).role;
     p.daily = (DEFAULT_PERMS[role] || {}).daily || 'none';
+  }
+  if (!rows.some(r => r.section === 'tray_basket')) {
+    const role = (db.prepare('SELECT role FROM users WHERE id=?').get(userId) || {}).role;
+    p.tray_basket = (DEFAULT_PERMS[role] || {}).tray_basket || 'none';
   }
   return p;
 }
@@ -1706,6 +1745,109 @@ app.post('/api/products/clean-duplicates', requireLogin, requireSection('product
 app.delete('/api/products/:id', requireLogin, requireSection('products', 'full'), (req, res) => {
   db.prepare('DELETE FROM products WHERE id=?').run(req.params.id);
   res.json({ ok: true });
+});
+
+// ---------- Tray & Basket module (TOP LEVEL routes — alag voucher/dashboard/data) ----------
+function trayVoucherNo() {
+  const r = db.prepare(`SELECT voucher_no FROM tray_vouchers WHERE voucher_no LIKE 'TB-%' ORDER BY id DESC LIMIT 1`).get();
+  let n = 1;
+  if (r) { const m = /TB-(\d+)/.exec(r.voucher_no); if (m) n = parseInt(m[1], 10) + 1; }
+  return 'TB-' + String(n).padStart(4, '0');
+}
+// Shop balance per item: opening + sent - returned
+function trayShopBalance(shopId, itemId) {
+  const op = db.prepare('SELECT qty FROM tray_opening WHERE shop_id=? AND item_id=?').get(shopId, itemId);
+  const v = db.prepare('SELECT COALESCE(SUM(sent),0) s, COALESCE(SUM(returned),0) r FROM tray_vouchers WHERE shop_id=? AND item_id=?').get(shopId, itemId);
+  return (op ? op.qty : 0) + v.s - v.r;
+}
+// Factory available per item: factory opening - net outflow to shops
+function trayFactoryAvail(itemId) {
+  const op = db.prepare('SELECT qty FROM tray_opening WHERE shop_id=0 AND item_id=?').get(itemId);
+  const v = db.prepare('SELECT COALESCE(SUM(sent),0) s, COALESCE(SUM(returned),0) r FROM tray_vouchers WHERE item_id=?').get(itemId);
+  return (op ? op.qty : 0) - v.s + v.r;
+}
+app.get('/api/tray/items', requireLogin, requireSection('tray_basket', 'view'), (req, res) => {
+  res.json(db.prepare('SELECT * FROM tray_items WHERE active=1 ORDER BY id').all());
+});
+app.get('/api/tray/opening', requireLogin, requireSection('tray_basket', 'view'), (req, res) => {
+  const scope = scopedShopId(req);
+  let rows;
+  if (scope) rows = db.prepare(`SELECT o.shop_id, o.item_id, o.qty, i.key, i.name_ur, i.name_en, i.icon,
+      COALESCE(s.name,'فیکٹری') AS shop_name FROM tray_opening o
+      JOIN tray_items i ON i.id=o.item_id LEFT JOIN shops s ON s.id=o.shop_id
+      WHERE o.shop_id=? ORDER BY o.item_id`).all(scope);
+  else rows = db.prepare(`SELECT o.shop_id, o.item_id, o.qty, i.key, i.name_ur, i.name_en, i.icon,
+      COALESCE(s.name,'🏭 فیکٹری') AS shop_name FROM tray_opening o
+      JOIN tray_items i ON i.id=o.item_id LEFT JOIN shops s ON s.id=o.shop_id
+      ORDER BY o.shop_id, o.item_id`).all();
+  res.json(rows);
+});
+app.put('/api/tray/opening', requireLogin, requireSection('tray_basket', 'full'), (req, res) => {
+  const b = req.body || {};
+  const shopId = Math.max(0, parseInt(b.shop_id, 10) || 0);
+  const itemId = parseInt(b.item_id, 10) || 0;
+  const qty = Math.max(0, parseInt(b.qty, 10) || 0);
+  if (!itemId || !db.prepare('SELECT id FROM tray_items WHERE id=?').get(itemId))
+    return res.status(400).json({ error: 'bad_item' });
+  if (shopId !== 0 && !db.prepare('SELECT id FROM shops WHERE id=?').get(shopId))
+    return res.status(400).json({ error: 'bad_shop' });
+  db.prepare(`INSERT INTO tray_opening (shop_id, item_id, qty, updated_at) VALUES (?,?,?,datetime('now'))
+    ON CONFLICT(shop_id, item_id) DO UPDATE SET qty=excluded.qty, updated_at=datetime('now')`).run(shopId, itemId, qty);
+  res.json({ ok: true });
+});
+app.post('/api/tray/vouchers', requireLogin, requireSection('tray_basket', 'full'), (req, res) => {
+  const b = req.body || {};
+  const shopId = parseInt(b.shop_id, 10) || 0;
+  const itemId = parseInt(b.item_id, 10) || 0;
+  const vehicleId = b.vehicle_id ? parseInt(b.vehicle_id, 10) : null;
+  const sent = Math.max(0, parseInt(b.sent, 10) || 0);
+  const returned = Math.max(0, parseInt(b.returned, 10) || 0);
+  const date = /^\d{4}-\d{2}-\d{2}$/.test(b.date || '') ? b.date : new Date().toISOString().slice(0, 10);
+  if (!shopId || !db.prepare('SELECT id FROM shops WHERE id=?').get(shopId))
+    return res.status(400).json({ error: 'bad_shop' });
+  if (!itemId || !db.prepare('SELECT id FROM tray_items WHERE id=?').get(itemId))
+    return res.status(400).json({ error: 'bad_item' });
+  if (!sent && !returned) return res.status(400).json({ error: 'empty_voucher' });
+  const no = trayVoucherNo();
+  const r = db.prepare(`INSERT INTO tray_vouchers (voucher_no, date, shop_id, vehicle_id, item_id, sent, returned, notes, created_by)
+    VALUES (?,?,?,?,?,?,?,?,?)`).run(no, date, shopId, vehicleId, itemId, sent, returned, (b.notes || '').trim(), req.user.id);
+  res.json({ ok: true, id: r.lastInsertRowid, voucher_no: no });
+});
+app.get('/api/tray/vouchers', requireLogin, requireSection('tray_basket', 'view'), (req, res) => {
+  const scope = scopedShopId(req);
+  const q = req.query || {};
+  const cond = [], args = [];
+  if (scope) { cond.push('v.shop_id=?'); args.push(scope); }
+  else if (q.shop_id) { cond.push('v.shop_id=?'); args.push(parseInt(q.shop_id, 10)); }
+  if (q.vehicle_id) { cond.push('v.vehicle_id=?'); args.push(parseInt(q.vehicle_id, 10)); }
+  if (q.item_id) { cond.push('v.item_id=?'); args.push(parseInt(q.item_id, 10)); }
+  if (q.from) { cond.push('v.date>=?'); args.push(q.from); }
+  if (q.to) { cond.push('v.date<=?'); args.push(q.to); }
+  const where = cond.length ? 'WHERE ' + cond.join(' AND ') : '';
+  const rows = db.prepare(`SELECT v.*, s.name AS shop_name, i.key AS item_key, i.name_ur AS item_ur, i.icon AS item_icon,
+      vh.name AS vehicle_name, u.username AS created_by_name
+    FROM tray_vouchers v JOIN shops s ON s.id=v.shop_id JOIN tray_items i ON i.id=v.item_id
+    LEFT JOIN vehicles vh ON vh.id=v.vehicle_id LEFT JOIN users u ON u.id=v.created_by
+    ${where} ORDER BY v.date DESC, v.id DESC LIMIT 500`).all(...args);
+  res.json(rows);
+});
+app.delete('/api/tray/vouchers/:id', requireLogin, requireSection('tray_basket', 'full'), (req, res) => {
+  db.prepare('DELETE FROM tray_vouchers WHERE id=?').run(req.params.id);
+  res.json({ ok: true });
+});
+app.get('/api/tray/summary', requireLogin, requireSection('tray_basket', 'view'), (req, res) => {
+  const scope = scopedShopId(req);
+  const items = db.prepare('SELECT * FROM tray_items WHERE active=1 ORDER BY id').all();
+  const factory = items.map(it => ({ ...it, available: trayFactoryAvail(it.id) }));
+  let shops;
+  if (scope) {
+    const s = db.prepare('SELECT id, name FROM shops WHERE id=?').get(scope);
+    shops = s ? [{ id: s.id, name: s.name, balances: items.map(it => ({ item_id: it.id, balance: trayShopBalance(s.id, it.id) })) }] : [];
+  } else {
+    const all = db.prepare('SELECT id, name FROM shops WHERE active=1 ORDER BY name').all();
+    shops = all.map(s => ({ id: s.id, name: s.name, balances: items.map(it => ({ item_id: it.id, balance: trayShopBalance(s.id, it.id) })) }));
+  }
+  res.json({ items, factory, shops });
 });
 
 // ---------- Users & permissions (super admin) ----------
