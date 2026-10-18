@@ -983,19 +983,38 @@ async function renderTrayDash() {
   if (isShop) html += `<div class="note">🔒 آپ صرف اپنا حساب دیکھ سکتے ہیں — انٹری صرف سپر ایڈمن کرے گا</div>`;
   box.innerHTML = html;
 }
-async function renderTrayVoucher() {
-  const box = $('#trayBody');
-  let shops = [], vehicles = [];
+
+// Combined shop list: regular shops + daily shops (tray module)
+async function trayShopOptions(selected) {
+  let shops = [], dshops = [];
   try {
-    [shops, vehicles] = await Promise.all([
+    [shops, dshops] = await Promise.all([
       api('GET', '/api/shops').catch(() => []),
-      api('GET', '/api/vehicles').catch(() => []),
+      api('GET', '/api/daily-shops').catch(() => []),
     ]);
   } catch (e) {}
+  const opts = shops.filter(s => s.active !== 0).map(s =>
+    `<option value="s${s.id}"${selected === 's' + s.id ? ' selected' : ''}>${esc(s.name)}</option>`).join('');
+  const dopts = dshops.filter(s => s.active !== 0).map(s =>
+    `<option value="d${s.id}"${selected === 'd' + s.id ? ' selected' : ''}>${esc(s.name)} (روزانہ)</option>`).join('');
+  return opts + dopts;
+}
+function trayParseShop(v) {
+  if (!v) return { shop_id: 0, shop_type: 'shop' };
+  return v[0] === 'd'
+    ? { shop_id: parseInt(v.slice(1), 10) || 0, shop_type: 'daily' }
+    : { shop_id: parseInt(v.slice(1), 10) || 0, shop_type: 'shop' };
+}
+
+async function renderTrayVoucher() {
+  const box = $('#trayBody');
+  let vehicles = [];
+  try { vehicles = await api('GET', '/api/vehicles').catch(() => []); } catch (e) {}
+  const shopOpts = await trayShopOptions();
   box.innerHTML = `<h3>📝 نیا واؤچر — New Voucher</h3>
     <div class="formgrid">
       <label>📅 تاریخ<br><input type="date" id="tvDate" value="${karachiToday()}"></label>
-      <label>🏪 دکان<br><select id="tvShop">${shops.filter(s => s.active !== 0).map(s => `<option value="${s.id}">${esc(s.name)}</option>`).join('')}</select></label>
+      <label>🏪 دکان<br><select id="tvShop">${shopOpts}</select></label>
       <label>🚚 گاڑی (اختیاری)<br><select id="tvVeh"><option value="">—</option>${vehicles.map(v => `<option value="${v.id}">${esc(v.name)}</option>`).join('')}</select></label>
       <label>آئٹم<br><select id="tvItem">${TRAY.items.map(i => `<option value="${i.id}">${i.icon} ${i.name_ur}</option>`).join('')}</select></label>
       <label>➡️ گئی (Sent)<br><input type="number" id="tvSent" value="0" min="0"></label>
@@ -1006,9 +1025,11 @@ async function renderTrayVoucher() {
     <div id="tvMsg" style="margin-top:10px"></div>`;
 }
 async function saveTrayVoucher() {
+  const sh = trayParseShop($('#tvShop').value);
   const body = {
     date: $('#tvDate').value,
-    shop_id: Number($('#tvShop').value),
+    shop_id: sh.shop_id,
+    shop_type: sh.shop_type,
     vehicle_id: $('#tvVeh').value ? Number($('#tvVeh').value) : null,
     item_id: Number($('#tvItem').value),
     sent: Number($('#tvSent').value) || 0,
@@ -1023,25 +1044,24 @@ async function saveTrayVoucher() {
 }
 async function renderTrayOpening() {
   const box = $('#trayBody');
-  let shops = [];
-  try { shops = await api('GET', '/api/shops').catch(() => []); } catch (e) {}
+  const shopOpts = await trayShopOptions();
   let opening = [];
   try { opening = await api('GET', '/api/tray/opening'); } catch (e) {}
-  const oname = sid => sid === 0 ? '🏭 فیکٹری' : esc((shops.find(s => s.id === sid) || {}).name || sid);
   box.innerHTML = `<h3>🏭 اوپننگ اسٹاک — Opening Stock</h3>
     <div class="formgrid">
-      <label>جگہ<br><select id="toShop"><option value="0">🏭 فیکٹری</option>${shops.filter(s => s.active !== 0).map(s => `<option value="${s.id}">${esc(s.name)}</option>`).join('')}</select></label>
+      <label>جگہ<br><select id="toShop"><option value="s0">🏭 فیکٹری</option>${shopOpts}</select></label>
       <label>آئٹم<br><select id="toItem">${TRAY.items.map(i => `<option value="${i.id}">${i.icon} ${i.name_ur}</option>`).join('')}</select></label>
       <label>تعداد<br><input type="number" id="toQty" value="0" min="0"></label>
       <label><br><button class="btn green" onclick="saveTrayOpening()">💾 محفوظ کریں</button></label>
     </div><div id="toMsg" style="margin:8px 0"></div>
     <h3>موجودہ اوپننگ</h3>
     <table class="tbl"><tr><th>جگہ</th><th>آئٹم</th><th>تعداد</th></tr>
-    ${opening.map(o => `<tr><td>${oname(o.shop_id)}</td><td>${o.icon} ${o.name_ur}</td><td><b>${o.qty}</b></td></tr>`).join('') || '<tr><td colspan="3">کوئی اوپننگ نہیں</td></tr>'}</table>`;
+    ${opening.map(o => `<tr><td>${esc(o.shop_name || '')}</td><td>${o.icon} ${o.name_ur}</td><td><b>${o.qty}</b></td></tr>`).join('') || '<tr><td colspan="3">کوئی اوپننگ نہیں</td></tr>'}</table>`;
 }
 async function saveTrayOpening() {
   try {
-    await api('PUT', '/api/tray/opening', { shop_id: Number($('#toShop').value), item_id: Number($('#toItem').value), qty: Number($('#toQty').value) || 0 });
+    const sh = trayParseShop($('#toShop').value);
+    await api('PUT', '/api/tray/opening', { shop_id: sh.shop_id, shop_type: sh.shop_type, item_id: Number($('#toItem').value), qty: Number($('#toQty').value) || 0 });
     $('#toMsg').innerHTML = `<div class="note">✅ اوپننگ محفوظ ہو گئی</div>`;
     renderTrayOpening();
   } catch (e) { $('#toMsg').innerHTML = `<div class="err">❌ ${e.message || 'خرابی'}</div>`; }
@@ -1079,19 +1099,51 @@ async function loadTrayReport() {
   let rows = [];
   try { rows = await api('GET', '/api/tray/vouchers?' + p.toString()); } catch (e) {}
   const tot = rows.reduce((a, r) => ({ s: a.s + r.sent, r: a.r + r.returned }), { s: 0, r: 0 });
-  $('#trBody').innerHTML = `<table class="tbl"><tr><th>تاریخ</th><th>واؤچر</th><th>دکان</th><th>آئٹم</th><th>گئی</th><th>واپس</th><th>بقایا</th></tr>` +
+  const byItem = {};
+  for (const r of rows) {
+    const k = r.item_ur || ('#' + r.item_id);
+    if (!byItem[k]) byItem[k] = { icon: r.item_icon || '', s: 0, r: 0 };
+    byItem[k].s += r.sent; byItem[k].r += r.returned;
+  }
+  const itemRows = Object.entries(byItem).map(([k, v]) =>
+    `<tr><td>${v.icon} ${esc(k)}</td><td>${v.s}</td><td>${v.r}</td><td><b>${v.s - v.r}</b></td></tr>`).join('');
+  $('#trBody').innerHTML =
+    `<h4 style="margin:10px 0 6px">📊 خلاصہ</h4>
+    <div class="cards">
+      <div class="card"><div class="n">${tot.s}</div><div class="l">📤 گئی<br>Sent</div></div>
+      <div class="card"><div class="n">${tot.r}</div><div class="l">📥 واپس<br>Returned</div></div>
+      <div class="card"><div class="n">${tot.s - tot.r}</div><div class="l">📋 بقایا<br>Balance</div></div>
+    </div>
+    ${itemRows ? `<h4 style="margin:10px 0 6px">🧺 آئٹم وائز</h4><table class="tbl"><tr><th>آئٹم</th><th>گئی</th><th>واپس</th><th>بقایا</th></tr>${itemRows}</table>` : ''}
+    <h4 style="margin:14px 0 6px">📝 تفصیل</h4>
+    <table class="tbl"><tr><th>تاریخ</th><th>واؤچر</th><th>دکان</th><th>آئٹم</th><th>گئی</th><th>واپس</th><th>بقایا</th></tr>` +
     (rows.map(r => `<tr><td>${r.date}</td><td>${r.voucher_no}</td><td>${esc(r.shop_name)}</td><td>${r.item_icon} ${r.item_ur}</td><td>${r.sent}</td><td>${r.returned}</td><td><b>${r.sent - r.returned}</b></td></tr>`).join('') || '<tr><td colspan="7">کوئی ریکارڈ نہیں</td></tr>') +
-    `</table><p style="margin-top:8px"><b>ٹوٹل:</b> گئی ${tot.s} | واپس ${tot.r} | بقایا ${tot.s - tot.r}</p>
-    <button class="btn small dark" onclick="printTrayReport()">🖨 پرنٹ / PDF</button>`;
+    `</table><div style="margin-top:10px"><button class="btn small dark" onclick="printTrayReport()">🖨 پرنٹ / PDF (مکمل رپورٹ)</button></div>`;
   window._trayRows = rows;
+  window._traySummary = { tot, byItem };
 }
 function printTrayReport() {
   const rows = window._trayRows || [];
-  const html = `<h2>🧺 ٹرے اور باسکٹ رپورٹ — گلشن فیکٹری</h2><p>تاریخ: ${karachiToday()}</p>
+  const sum = window._traySummary || { tot: { s: 0, r: 0 }, byItem: {} };
+  const t = sum.tot;
+  const itemRows = Object.entries(sum.byItem).map(([k, v]) =>
+    `<tr><td>${v.icon} ${k}</td><td>${v.s}</td><td>${v.r}</td><td><b>${v.s - v.r}</b></td></tr>`).join('');
+  const f = [];
+  if ($('#trFrom') && $('#trFrom').value) f.push('سے: ' + $('#trFrom').value);
+  if ($('#trTo') && $('#trTo').value) f.push('تک: ' + $('#trTo').value);
+  const html = `<h2 style="text-align:center">🧺 ٹرے اور باسکٹ رپورٹ — گلشن فیکٹری</h2>
+    <p style="text-align:center">رپورٹ کی تاریخ: ${karachiToday()}${f.length ? ' | فلٹر: ' + f.join('، ') : ''}</p>
+    <h3>📊 خلاصہ</h3>
+    <table border="1" style="width:100%;border-collapse:collapse;margin-bottom:12px"><tr><th>کل گئی (Sent)</th><th>کل واپس (Returned)</th><th>کل بقایا (Balance)</th></tr>
+    <tr><td style="text-align:center"><b>${t.s}</b></td><td style="text-align:center"><b>${t.r}</b></td><td style="text-align:center"><b>${t.s - t.r}</b></td></tr></table>
+    ${itemRows ? `<h3>🧺 آئٹم وائز خلاصہ</h3><table border="1" style="width:100%;border-collapse:collapse;margin-bottom:12px"><tr><th>آئٹم</th><th>گئی</th><th>واپس</th><th>بقایا</th></tr>${itemRows}</table>` : ''}
+    <h3>📝 مکمل تفصیل (${rows.length} واؤچر)</h3>
     <table border="1" style="width:100%;border-collapse:collapse"><tr><th>تاریخ</th><th>واؤچر</th><th>دکان</th><th>آئٹم</th><th>گئی</th><th>واپس</th><th>بقایا</th></tr>` +
-    rows.map(r => `<tr><td>${r.date}</td><td>${r.voucher_no}</td><td>${r.shop_name}</td><td>${r.item_ur}</td><td>${r.sent}</td><td>${r.returned}</td><td>${r.sent - r.returned}</td></tr>`).join('') + `</table>`;
+    rows.map(r => `<tr><td>${r.date}</td><td>${r.voucher_no}</td><td>${r.shop_name}</td><td>${r.item_icon || ''} ${r.item_ur}</td><td>${r.sent}</td><td>${r.returned}</td><td><b>${r.sent - r.returned}</b></td></tr>`).join('') + `</table>
+    <p style="margin-top:16px">دستخط: ___________________</p>`;
   const w = window.open('', '_blank');
-  w.document.write(`<html><head><title>ٹرے رپورٹ</title><style>body{font-family:serif;direction:rtl}table{border-collapse:collapse}td,th{border:1px solid #000;padding:6px}</style></head><body>${html}<br><button onclick="window.print()">🖨 پرنٹ</button></body></html>`);
+  w.document.write(`<html><head><title>ٹرے باسکٹ رپورٹ</title><style>body{font-family:serif;direction:rtl;padding:20px}table{border-collapse:collapse}td,th{border:1px solid #000;padding:8px}h2,h3{margin:14px 0 8px}@media print{button{display:none}}</style></head><body>${html}<br><button onclick="window.print()" style="padding:10px 30px;font-size:16px">🖨 پرنٹ / PDF</button></body></html>`);
+  w.document.close();
 }
 async function loadTotals() {
   const d = $('#rpDate').value, r = $('#rpRoute').value;
