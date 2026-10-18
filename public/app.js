@@ -1039,48 +1039,55 @@ async function renderTrayVoucher(kind) {
   let vehicles = [];
   try { vehicles = await api('GET', '/api/vehicles').catch(() => []); } catch (e) {}
   const shopOpts = await trayShopOptions();
-  box.innerHTML = `<h3>${isSent ? '📤 بھیجا — Sent Voucher' : '📥 واپس — Return Voucher'}</h3>
-    <div class="formgrid">
+  const itemCards = TRAY.items.map(it => `
+    <div class="tv-item" style="background:#fff;border:2px solid #e0e0e0;border-radius:12px;padding:12px;margin:8px 0;display:flex;align-items:center;justify-content:space-between">
+      <div style="font-size:16px;font-weight:bold">${it.icon} ${it.name_ur}<br><small style="color:#888">${it.name_en}</small></div>
+      <div style="display:flex;gap:8px;align-items:center">
+        <button type="button" class="btn" style="width:44px;height:44px;font-size:22px;border-radius:50%" onclick="tvItemAdj(${it.id},-1)">−</button>
+        <input type="number" id="tvQ_${it.id}" value="0" min="0" style="width:64px;text-align:center;font-size:24px;font-weight:bold;border:2px solid #e8721c;border-radius:8px;padding:4px" onfocus="this.select()">
+        <button type="button" class="btn" style="width:44px;height:44px;font-size:22px;border-radius:50%" onclick="tvItemAdj(${it.id},1)">+</button>
+        <button type="button" class="btn small" onclick="tvItemAdj(${it.id},10)">+10</button>
+      </div>
+    </div>`).join('');
+  box.innerHTML = `<h3>${isSent ? '📤 بھیجا — Sent' : '📥 واپس — Return'}</h3>
+    <div class="formgrid" style="margin-bottom:8px">
       <label>📅 تاریخ<br><input type="date" id="tvDate" value="${karachiToday()}"></label>
-      <label>🏪 دکان<br><select id="tvShop">${shopOpts}</select></label>
-      ${isSent ? `<label>🚚 گاڑی (اختیاری)<br><select id="tvVeh"><option value="">—</option>${vehicles.map(v => `<option value="${v.id}">${esc(v.name)}</option>`).join('')}</select></label>` : ''}
-      <label>آئٹم<br><select id="tvItem">${TRAY.items.map(i => `<option value="${i.id}">${i.icon} ${i.name_ur}</option>`).join('')}</select></label>
-      <label>${isSent ? '➡️ تعداد بھیجی' : '⬅️ تعداد واپس'}<br>
-        <div style="display:flex;gap:6px;align-items:center">
-          <button type="button" class="btn small" onclick="tvAdj(-1)">−</button>
-          <input type="number" id="tvQty" value="0" min="0" style="width:70px;text-align:center;font-size:20px;font-weight:bold">
-          <button type="button" class="btn small" onclick="tvAdj(1)">+</button>
-          <button type="button" class="btn small" onclick="tvAdj(5)">+5</button>
-        </div></label>
+      <label>🏪 دکان<br><select id="tvShop" style="font-size:16px">${shopOpts}</select></label>
+      ${isSent ? `<label>🚚 گاڑی<br><select id="tvVeh"><option value="">—</option>${vehicles.map(v => `<option value="${v.id}">${esc(v.name)}</option>`).join('')}</select></label>` : ''}
       <label>📝 نوٹ<br><input type="text" id="tvNote" placeholder="اختیاری"></label>
     </div>
-    <button class="btn green" onclick="saveTrayVoucher('${kind}')">💾 ${isSent ? 'بھیجا' : 'واپس'} محفوظ کریں</button>
+    <div style="margin:12px 0 4px;font-weight:bold;color:#555">${isSent ? '➡️ کتنی بھیجی؟ (ہر آئٹم)' : '⬅️ کتنی واپس آئی؟ (ہر آئٹم)'}</div>
+    ${itemCards}
+    <button class="btn green" style="width:100%;padding:16px;font-size:20px;margin-top:12px;border-radius:12px" onclick="saveTrayVoucher('${kind}')">💾 ${isSent ? 'بھیجا' : 'واپس'} محفوظ کریں</button>
     <div id="tvMsg" style="margin-top:10px"></div>`;
 }
-function tvAdj(n) {
-  const el = $('#tvQty');
+function tvItemAdj(id, n) {
+  const el = $('#tvQ_' + id);
   el.value = Math.max(0, (Number(el.value) || 0) + n);
+  el.closest('.tv-item').style.borderColor = Number(el.value) > 0 ? '#4caf50' : '#e0e0e0';
 }
 async function saveTrayVoucher(kind) {
   const isSent = kind === 'sent';
   const sh = trayParseShop($('#tvShop').value);
-  const qty = Number($('#tvQty').value) || 0;
-  if (!qty) { $('#tvMsg').innerHTML = `<div class="err">❌ تعداد لکھیں</div>`; return; }
-  const body = {
-    date: $('#tvDate').value,
-    shop_id: sh.shop_id,
-    shop_type: sh.shop_type,
-    vehicle_id: ($('#tvVeh') && $('#tvVeh').value) ? Number($('#tvVeh').value) : null,
-    item_id: Number($('#tvItem').value),
-    sent: isSent ? qty : 0,
-    returned: isSent ? 0 : qty,
-    notes: $('#tvNote').value,
-  };
-  try {
-    const r = await api('POST', '/api/tray/vouchers', body);
-    $('#tvMsg').innerHTML = `<div class="note">✅ واؤچر <b>${r.voucher_no}</b> محفوظ ہو گیا (${isSent ? 'بھیجا' : 'واپس'}: ${qty})</div>`;
-    $('#tvQty').value = 0; $('#tvNote').value = '';
-  } catch (e) { $('#tvMsg').innerHTML = `<div class="err">❌ ${e.message || 'خرابی'}</div>`; }
+  const qtys = TRAY.items.map(it => ({ id: it.id, qty: Number($('#tvQ_' + it.id).value) || 0 })).filter(x => x.qty > 0);
+  if (!qtys.length) { $('#tvMsg').innerHTML = `<div class="err">❌ کوئی تعداد نہیں لکھی</div>`; return; }
+  $('#tvMsg').innerHTML = '<p>محفوظ ہو رہا ہے...</p>';
+  let ok = 0, vnos = [];
+  for (const q of qtys) {
+    try {
+      const r = await api('POST', '/api/tray/vouchers', {
+        date: $('#tvDate').value, shop_id: sh.shop_id, shop_type: sh.shop_type,
+        vehicle_id: ($('#tvVeh') && $('#tvVeh').value) ? Number($('#tvVeh').value) : null,
+        item_id: q.id, sent: isSent ? q.qty : 0, returned: isSent ? 0 : q.qty, notes: $('#tvNote').value,
+      });
+      ok++; vnos.push(r.voucher_no);
+    } catch (e) {}
+  }
+  $('#tvMsg').innerHTML = `<div class="note">✅ ${ok} واؤچر محفوظ! <b>${vnos.join(', ')}</b></div>
+    <div style="margin-top:8px"><button class="btn small dark" onclick="printLastTrayVouchers('${kind}')">🖨 پرنٹ کریں</button></div>`;
+  TRAY.items.forEach(it => { window['_tvPQ_' + it.id] = Number($('#tvQ_' + it.id).value) || 0; $('#tvQ_' + it.id).value = 0; $('#tvQ_' + it.id).closest('.tv-item').style.borderColor = '#e0e0e0'; });
+  $('#tvNote').value = '';
+  window._lastTrayVouchers = vnos;
 }
 async function renderTrayOpening() {
   const box = $('#trayBody');
@@ -1105,6 +1112,60 @@ async function saveTrayOpening() {
     $('#toMsg').innerHTML = `<div class="note">✅ اوپننگ محفوظ ہو گئی</div>`;
     renderTrayOpening();
   } catch (e) { $('#toMsg').innerHTML = `<div class="err">❌ ${e.message || 'خرابی'}</div>`; }
+}
+
+
+function printLastTrayVouchers(kind) {
+  const isSent = kind === 'sent';
+  const shopSel = $('#tvShop');
+  const shopName = shopSel ? shopSel.options[shopSel.selectedIndex].text : '';
+  const date = $('#tvDate') ? $('#tvDate').value : '';
+  const note = $('#tvNote') ? $('#tvNote').value : '';
+  const vnos = window._lastTrayVouchers || [];
+  const rows = TRAY.items.map(it => {
+    const q = window['_tvPQ_' + it.id] || 0;
+    return q > 0 ? `<tr><td style="text-align:center;font-size:20px">${it.icon}</td><td><b>${it.name_ur}</b><br><small>${it.name_en}</small></td><td style="text-align:center;font-size:22px"><b>${q}</b></td></tr>` : '';
+  }).join('');
+  // Re-read quantities from a snapshot saved at print time
+  const html = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>${isSent ? 'بھیجا' : 'واپس'} واؤچر</title>
+  <style>
+    * { margin:0; padding:0; box-sizing:border-box; }
+    body { font-family:'Jameel Noori Nastaleeq', 'Noto Nastaliq Urdu', serif; direction:rtl; padding:24px; color:#222; background:#fff; }
+    .header { text-align:center; border-bottom:3px double #e8721c; padding-bottom:12px; margin-bottom:16px; }
+    .header h1 { color:#e8721c; font-size:28px; margin-bottom:4px; }
+    .header .sub { color:#666; font-size:14px; }
+    .badge { display:inline-block; background:${isSent ? '#e8721c' : '#2e7d32'}; color:#fff; padding:6px 24px; border-radius:20px; font-size:18px; margin:8px 0; }
+    .info { display:flex; justify-content:space-between; margin:12px 0; font-size:15px; }
+    .info div { background:#f9f9f9; padding:8px 16px; border-radius:8px; border:1px solid #eee; }
+    table { width:100%; border-collapse:collapse; margin:12px 0; }
+    th { background:#e8721c; color:#fff; padding:12px; font-size:16px; }
+    td { padding:12px; border-bottom:1px solid #eee; font-size:15px; }
+    tr:nth-child(even) td { background:#fff8f0; }
+    .total-row td { background:#e8721c !important; color:#fff; font-size:18px; padding:14px 12px; }
+    .sign { display:flex; justify-content:space-between; margin-top:40px; }
+    .sign div { text-align:center; width:40%; border-top:2px solid #333; padding-top:8px; }
+    .footer { text-align:center; margin-top:24px; color:#999; font-size:12px; border-top:1px solid #eee; padding-top:12px; }
+    @media print { .no-print { display:none; } body { padding:0; } }
+  </style></head><body>
+    <div class="header">
+      <h1>🧺 گلشن فیکٹری</h1>
+      <div class="sub">Gulshan Factory — Tray & Basket Management</div>
+      <div class="badge">${isSent ? '📤 بھیجا واؤچر' : '📥 واپسی واؤچر'}</div>
+    </div>
+    <div class="info">
+      <div>🏪 <b>${shopName}</b></div>
+      <div>📅 ${date}</div>
+      <div>🧾 ${vnos.join(', ')}</div>
+    </div>
+    <table><tr><th style="width:60px">آئٹم</th><th>تفصیل</th><th style="width:100px">تعداد</th></tr>${rows}</table>
+    ${note ? `<div style="margin:8px 0;padding:8px;background:#fffde7;border-radius:8px">📝 نوٹ: ${note}</div>` : ''}
+    <div class="sign"><div>دکان کے دستخط<br><br><br></div><div>فیکٹری کے دستخط<br><br><br></div></div>
+    <div class="footer">Generated by Gulshan Factory App</div>
+    <div class="no-print" style="text-align:center;margin-top:16px"><button onclick="window.print()" style="padding:14px 48px;font-size:18px;background:#e8721c;color:#fff;border:none;border-radius:10px;cursor:pointer">🖨 پرنٹ / PDF</button></div>
+  </body></html>`;
+  const w = window.open('', '_blank');
+  w.document.write(html);
+  w.document.close();
 }
 
 async function renderTrayLedger() {
@@ -1163,20 +1224,39 @@ function printTrayLedger(shopName) {
   const d = window._tlData;
   if (!d) return;
   const sumRows = Object.values(d.items).map(t =>
-    `<tr><td>${t.icon} ${t.ur}</td><td>${t.op}</td><td>${t.s}</td><td>${t.r}</td><td><b>${t.op + t.s - t.r}</b></td></tr>`).join('');
+    `<tr><td style="text-align:center;font-size:20px">${t.icon}</td><td><b>${t.ur}</b></td><td style="text-align:center">${t.op}</td><td style="text-align:center">${t.s}</td><td style="text-align:center">${t.r}</td><td style="text-align:center;font-size:18px"><b>${t.op + t.s - t.r}</b></td></tr>`).join('');
   const tot = Object.values(d.items).reduce((a, t) => ({ op: a.op + t.op, s: a.s + t.s, r: a.r + t.r }), { op: 0, s: 0, r: 0 });
   const vRows = d.vouchers.map(v =>
-    `<tr><td>${v.date}</td><td>${v.voucher_no}</td><td>${v.item_icon} ${v.item_ur}</td><td>${v.sent || '—'}</td><td>${v.returned || '—'}</td><td>${v.notes || ''}</td></tr>`).join('');
-  const html = `<h2 style="text-align:center">🧾 ٹرے باسکٹ کھاتہ — ${shopName}</h2>
-    <p style="text-align:center">گلشن فیکٹری | تاریخ: ${new Date().toISOString().slice(0, 10)}</p>
+    `<tr><td>${v.date}</td><td>${v.voucher_no}</td><td>${v.item_icon} ${v.item_ur}</td><td style="text-align:center">${v.sent || '—'}</td><td style="text-align:center">${v.returned || '—'}</td><td>${v.notes || ''}</td></tr>`).join('');
+  const html = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>کھاتہ — ${shopName}</title>
+  <style>
+    * { margin:0; padding:0; box-sizing:border-box; }
+    body { font-family:'Jameel Noori Nastaleeq','Noto Nastaliq Urdu',serif; direction:rtl; padding:24px; color:#222; }
+    .header { text-align:center; border-bottom:3px double #e8721c; padding-bottom:12px; margin-bottom:16px; }
+    .header h1 { color:#e8721c; font-size:26px; }
+    .header .shop { font-size:20px; margin-top:6px; background:#fff3e0; display:inline-block; padding:6px 24px; border-radius:20px; }
+    table { width:100%; border-collapse:collapse; margin:12px 0; }
+    th { background:#e8721c; color:#fff; padding:10px; }
+    td { padding:10px; border-bottom:1px solid #eee; }
+    tr:nth-child(even) td { background:#fff8f0; }
+    .total-row td { background:#2e7d32 !important; color:#fff; font-size:17px; }
+    h3 { color:#e8721c; margin:16px 0 8px; }
+    .sign { display:flex; justify-content:space-between; margin-top:40px; }
+    .sign div { text-align:center; width:40%; border-top:2px solid #333; padding-top:8px; }
+    @media print { .no-print { display:none; } body { padding:0; } }
+  </style></head><body>
+    <div class="header"><h1>🧺 گلشن فیکٹری</h1><div class="shop">🧾 کھاتہ — ${shopName}</div>
+    <div style="color:#666;font-size:13px;margin-top:4px">تاریخ: ${new Date().toISOString().slice(0, 10)}</div></div>
     <h3>📊 خلاصہ</h3>
-    <table border="1" style="width:100%;border-collapse:collapse;margin-bottom:12px"><tr><th>آئٹم</th><th>اوپننگ</th><th>بھیجا</th><th>واپس</th><th>بقایا</th></tr>${sumRows}
-    <tr><td><b>ٹوٹل</b></td><td><b>${tot.op}</b></td><td><b>${tot.s}</b></td><td><b>${tot.r}</b></td><td><b>${tot.op + tot.s - tot.r}</b></td></tr></table>
+    <table><tr><th></th><th>آئٹم</th><th>اوپننگ</th><th>بھیجا</th><th>واپس</th><th>بقایا</th></tr>${sumRows}
+    <tr class="total-row"><td></td><td><b>ٹوٹل</b></td><td style="text-align:center"><b>${tot.op}</b></td><td style="text-align:center"><b>${tot.s}</b></td><td style="text-align:center"><b>${tot.r}</b></td><td style="text-align:center"><b>${tot.op + tot.s - tot.r}</b></td></tr></table>
     <h3>📝 واؤچر ہسٹری (${d.vouchers.length})</h3>
-    <table border="1" style="width:100%;border-collapse:collapse"><tr><th>تاریخ</th><th>واؤچر</th><th>آئٹم</th><th>بھیجا</th><th>واپس</th><th>نوٹ</th></tr>${vRows}</table>
-    <p style="margin-top:16px">دستخط دکان: ___________________ &nbsp;&nbsp; دستخط فیکٹری: ___________________</p>`;
+    <table><tr><th>تاریخ</th><th>واؤچر</th><th>آئٹم</th><th>بھیجا</th><th>واپس</th><th>نوٹ</th></tr>${vRows || '<tr><td colspan="6" style="text-align:center">کوئی واؤچر نہیں</td></tr>'}</table>
+    <div class="sign"><div>دکان کے دستخط<br><br><br></div><div>فیکٹری کے دستخط<br><br><br></div></div>
+    <div class="no-print" style="text-align:center;margin-top:16px"><button onclick="window.print()" style="padding:14px 48px;font-size:18px;background:#e8721c;color:#fff;border:none;border-radius:10px;cursor:pointer">🖨 پرنٹ / PDF</button></div>
+  </body></html>`;
   const w = window.open('', '_blank');
-  w.document.write(`<html><head><title>کھاتہ — ${shopName}</title><style>body{font-family:serif;direction:rtl;padding:20px}td,th{border:1px solid #000;padding:8px}h2,h3{margin:14px 0 8px}@media print{button{display:none}}</style></head><body>${html}<br><button onclick="window.print()" style="padding:10px 30px;font-size:16px">🖨 پرنٹ / PDF</button></body></html>`);
+  w.document.write(html);
   w.document.close();
 }
 
