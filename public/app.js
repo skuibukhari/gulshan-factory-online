@@ -1109,6 +1109,7 @@ async function renderTrayReport() {
       ${isAdmin ? `<label>🏪 دکان<br><select id="trShop"><option value="">تمام</option>${shops.filter(s => s.active !== 0).map(s => `<option value="${s.id}">${esc(s.name)}</option>`).join('')}</select></label>
       <label>🚚 گاڑی<br><select id="trVeh"><option value="">تمام</option>${vehicles.map(v => `<option value="${v.id}">${esc(v.name)}</option>`).join('')}</select></label>` : ''}
       <label>آئٹم<br><select id="trItem"><option value="">تمام</option>${TRAY.items.map(i => `<option value="${i.id}">${i.icon} ${i.name_ur}</option>`).join('')}</select></label>
+      <label>دکان کی قسم<br><select id="trShopType"><option value="">تمام</option><option value="shop">🏪 سپلائی</option><option value="daily">📝 روزانہ</option></select></label>
       <label><br><button class="btn small dark" onclick="loadTrayReport()">🔍 دیکھیں</button></label>
     </div><div id="trBody"></div>`;
   loadTrayReport();
@@ -1139,10 +1140,21 @@ async function loadTrayReport() {
       <div class="card"><div class="n">${tot.s - tot.r}</div><div class="l">📋 بقایا<br>Balance</div></div>
     </div>
     ${itemRows ? `<h4 style="margin:10px 0 6px">🧺 آئٹم وائز</h4><table class="tbl"><tr><th>آئٹم</th><th>گئی</th><th>واپس</th><th>بقایا</th></tr>${itemRows}</table>` : ''}
-    <h4 style="margin:14px 0 6px">📝 تفصیل</h4>
-    <table class="tbl"><tr><th>تاریخ</th><th>واؤچر</th><th>دکان</th><th>آئٹم</th><th>گئی</th><th>واپس</th><th>بقایا</th></tr>` +
-    (rows.map(r => `<tr><td>${r.date}</td><td>${r.voucher_no}</td><td>${esc(r.shop_name)}</td><td>${r.item_icon} ${r.item_ur}</td><td>${r.sent}</td><td>${r.returned}</td><td><b>${r.sent - r.returned}</b></td></tr>`).join('') || '<tr><td colspan="7">کوئی ریکارڈ نہیں</td></tr>') +
-    `</table><div style="margin-top:10px"><button class="btn small dark" onclick="printTrayReport()">🖨 پرنٹ / PDF (مکمل رپورٹ)</button></div>`;
+    ${(() => {
+    const typeF = $('#trShopType') ? $('#trShopType').value : '';
+    const mkTable = (list, title) => {
+      if (typeF && ((typeF === 'daily') !== (title === '📝 روزانہ دکانیں'))) return '';
+      if (!list.length) return '';
+      const t = list.reduce((a, r) => ({ s: a.s + r.sent, r: a.r + r.returned }), { s: 0, r: 0 });
+      return `<h4 style="margin:14px 0 6px">${title} (${list.length} واؤچر — بقایا: <b>${t.s - t.r}</b>)</h4>
+      <table class="tbl"><tr><th>تاریخ</th><th>واؤچر</th><th>دکان</th><th>آئٹم</th><th>گئی</th><th>واپس</th><th>بقایا</th></tr>` +
+      list.map(r => `<tr><td>${r.date}</td><td>${r.voucher_no}</td><td>${esc(r.shop_name)}</td><td>${r.item_icon} ${r.item_ur}</td><td>${r.sent}</td><td>${r.returned}</td><td><b>${r.sent - r.returned}</b></td></tr>`).join('') + `</table>`;
+    };
+    const sup = rows.filter(r => r.shop_type !== 'daily');
+    const dly = rows.filter(r => r.shop_type === 'daily');
+    return mkTable(sup, '🏪 سپلائی دکانیں') + mkTable(dly, '📝 روزانہ دکانیں') + (rows.length ? '' : '<p>کوئی ریکارڈ نہیں</p>');
+  })()}
+    <div style="margin-top:10px"><button class="btn small dark" onclick="printTrayReport()">🖨 پرنٹ / PDF (مکمل رپورٹ)</button></div>`;
   window._trayRows = rows;
   window._traySummary = { tot, byItem };
 }
@@ -1161,9 +1173,19 @@ function printTrayReport() {
     <table border="1" style="width:100%;border-collapse:collapse;margin-bottom:12px"><tr><th>کل گئی (Sent)</th><th>کل واپس (Returned)</th><th>کل بقایا (Balance)</th></tr>
     <tr><td style="text-align:center"><b>${t.s}</b></td><td style="text-align:center"><b>${t.r}</b></td><td style="text-align:center"><b>${t.s - t.r}</b></td></tr></table>
     ${itemRows ? `<h3>🧺 آئٹم وائز خلاصہ</h3><table border="1" style="width:100%;border-collapse:collapse;margin-bottom:12px"><tr><th>آئٹم</th><th>گئی</th><th>واپس</th><th>بقایا</th></tr>${itemRows}</table>` : ''}
-    <h3>📝 مکمل تفصیل (${rows.length} واؤچر)</h3>
-    <table border="1" style="width:100%;border-collapse:collapse"><tr><th>تاریخ</th><th>واؤچر</th><th>دکان</th><th>آئٹم</th><th>گئی</th><th>واپس</th><th>بقایا</th></tr>` +
-    rows.map(r => `<tr><td>${r.date}</td><td>${r.voucher_no}</td><td>${r.shop_name}</td><td>${r.item_icon || ''} ${r.item_ur}</td><td>${r.sent}</td><td>${r.returned}</td><td><b>${r.sent - r.returned}</b></td></tr>`).join('') + `</table>
+    ${(() => {
+    const typeF = ($('#trShopType') && $('#trShopType').value) || '';
+    const mkPTable = (list, title) => {
+      if (typeF && ((typeF === 'daily') !== (title === '📝 روزانہ دکانیں'))) return '';
+      if (!list.length) return '';
+      const t = list.reduce((a, r) => ({ s: a.s + r.sent, r: a.r + r.returned }), { s: 0, r: 0 });
+      return `<h3>${title} (${list.length} واؤچر)</h3>
+      <table border="1" style="width:100%;border-collapse:collapse;margin-bottom:12px"><tr><th>تاریخ</th><th>واؤچر</th><th>دکان</th><th>آئٹم</th><th>گئی</th><th>واپس</th><th>بقایا</th></tr>` +
+      list.map(r => `<tr><td>${r.date}</td><td>${r.voucher_no}</td><td>${r.shop_name}</td><td>${r.item_icon || ''} ${r.item_ur}</td><td>${r.sent}</td><td>${r.returned}</td><td><b>${r.sent - r.returned}</b></td></tr>`).join('') +
+      `<tr><td colspan="4" style="text-align:center"><b>ٹوٹل</b></td><td><b>${t.s}</b></td><td><b>${t.r}</b></td><td><b>${t.s - t.r}</b></td></tr></table>`;
+    };
+    return mkPTable(rows.filter(r => r.shop_type !== 'daily'), '🏪 سپلائی دکانیں') + mkPTable(rows.filter(r => r.shop_type === 'daily'), '📝 روزانہ دکانیں');
+  })()}
     <p style="margin-top:16px">دستخط: ___________________</p>`;
   const w = window.open('', '_blank');
   w.document.write(`<html><head><title>ٹرے باسکٹ رپورٹ</title><style>body{font-family:serif;direction:rtl;padding:20px}table{border-collapse:collapse}td,th{border:1px solid #000;padding:8px}h2,h3{margin:14px 0 8px}@media print{button{display:none}}</style></head><body>${html}<br><button onclick="window.print()" style="padding:10px 30px;font-size:16px">🖨 پرنٹ / PDF</button></body></html>`);
