@@ -1775,6 +1775,7 @@ function trayShopName(shopType, shopId) {
       const r = db.prepare('SELECT name FROM daily_shops WHERE id=?').get(shopId);
       return r ? r.name + ' (روزانہ)' : 'نامعلوم';
     }
+    if (shopId === 0) return '🚚 Arif Supply';
     const r = db.prepare('SELECT name FROM shops WHERE id=?').get(shopId);
     return r ? r.name : 'نامعلوم';
   } catch (e) { return 'نامعلوم'; }
@@ -1866,6 +1867,15 @@ app.get('/api/tray/vouchers', requireLogin, requireSection('tray_basket', 'view'
 app.delete('/api/tray/vouchers/:id', requireLogin, requireSection('tray_basket', 'full'), (req, res) => {
   db.prepare('DELETE FROM tray_vouchers WHERE id=?').run(req.params.id);
   res.json({ ok: true });
+});
+app.get('/api/tray/shop-options', requireLogin, requireSection('tray_basket', 'view'), (req, res) => {
+  const shops = [{ value: 's0', name: '🚚 Arif Supply (total)', type: 'shop' }];
+  let dshops = [];
+  try {
+    dshops = db.prepare("SELECT id, name FROM daily_shops WHERE active != 0 ORDER BY name").all()
+      .map(s => ({ value: 'd' + s.id, name: s.name + ' (روزانہ)', type: 'daily' }));
+  } catch (e) {}
+  res.json([...shops, ...dshops]);
 });
 app.get('/api/tray/summary', requireLogin, requireSection('tray_basket', 'view'), (req, res) => {
   const scope = scopedShopId(req);

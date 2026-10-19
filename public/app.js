@@ -1012,19 +1012,13 @@ async function renderTrayDash() {
 }
 
 // Combined shop list: regular shops + daily shops (tray module)
-async function trayShopOptions(selected) {
-  let shops = [], dshops = [];
-  try {
-    [shops, dshops] = await Promise.all([
-      api('GET', '/api/shops').catch(() => []),
-      api('GET', '/api/daily-shops').catch(() => []),
-    ]);
-  } catch (e) {}
-  const opts = shops.filter(s => s.active !== 0).map(s =>
-    `<option value="s${s.id}"${selected === 's' + s.id ? ' selected' : ''}>${esc(s.name)}</option>`).join('');
-  const dopts = dshops.filter(s => s.active !== 0).map(s =>
-    `<option value="d${s.id}"${selected === 'd' + s.id ? ' selected' : ''}>${esc(s.name)} (روزانہ)</option>`).join('');
-  return opts + dopts;
+async function trayShopOptions(selected, typeFilter) {
+  let opts = [];
+  try { opts = await api('GET', '/api/tray/shop-options').catch(() => []); } catch (e) {}
+  // typeFilter: 'shop' = only supply, 'daily' = only daily, undefined = all
+  return opts
+    .filter(o => !typeFilter || o.type === typeFilter)
+    .map(o => `<option value="${o.value}"${selected === o.value ? ' selected' : ''}>${esc(o.name)}</option>`).join('');
 }
 function trayParseShop(v) {
   if (!v) return { shop_id: 0, shop_type: 'shop' };
@@ -1276,7 +1270,11 @@ async function renderTrayReport() {
     <div class="formgrid">
       <label>سے<br><input type="date" id="trFrom"></label>
       <label>تک<br><input type="date" id="trTo" value="${karachiToday()}"></label>
-      ${isAdmin ? `<label>🏪 دکان<br><select id="trShop"><option value="">تمام</option>${await trayShopOptions()}</select></label>
+      ${isAdmin ? `<label>🏪 دکان<br><select id="trShop"><option value="">تمام</option>${await trayShopOptions()}</select><div style="margin-top:4px;display:flex;gap:4px">
+        <button type="button" class="btn small" onclick="trShopTypeFilter('')">تمام</button>
+        <button type="button" class="btn small" onclick="trShopTypeFilter('shop')">🏪 سپلائی</button>
+        <button type="button" class="btn small" onclick="trShopTypeFilter('daily')">📝 روزانہ</button>
+      </div></label>
       <label>🚚 گاڑی<br><select id="trVeh"><option value="">تمام</option>${vehicles.map(v => `<option value="${v.id}">${esc(v.name)}</option>`).join('')}</select></label>` : ''}
       <label>آئٹم<br><select id="trItem"><option value="">تمام</option>${TRAY.items.map(i => `<option value="${i.id}">${i.icon} ${i.name_ur}</option>`).join('')}</select></label>
       <label>دکان کی قسم<br><select id="trShopType"><option value="">تمام</option><option value="shop">🏪 سپلائی</option><option value="daily">📝 روزانہ</option></select></label>
@@ -1284,6 +1282,13 @@ async function renderTrayReport() {
     </div><div id="trBody"></div>`;
   loadTrayReport();
 }
+
+async function trShopTypeFilter(type) {
+  const sel = $('#trShop');
+  const cur = sel.value;
+  sel.innerHTML = '<option value="">تمام</option>' + await trayShopOptions(cur, type || undefined);
+}
+
 async function loadTrayReport() {
   const p = new URLSearchParams();
   if ($('#trFrom').value) p.set('from', $('#trFrom').value);
