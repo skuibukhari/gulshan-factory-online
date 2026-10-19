@@ -949,7 +949,7 @@ async function renderTray() {
   const isShop = ME.role === 'shop';
   try { TRAY.items = await api('GET', '/api/tray/items'); } catch (e) { TRAY.items = []; }
   const tabs = [['dash', '📊 ڈیش بورڈ']];
-  if (full) { tabs.push(['ret', '📥 واپسی انٹری']); tabs.push(['opening', '🏭 اوپننگ']); }
+  if (full) { tabs.push(['ret', '📥 واپسی انٹری']); }
   tabs.push(['ledger', '🧾 کھاتہ']);
   tabs.push(['report', '🖨 رپورٹ']);
   if (!tabs.some(t => t[0] === TRAY.tab)) TRAY.tab = 'dash';
@@ -1023,7 +1023,7 @@ async function renderTrayDash() {
         const k2 = (sh.id === 0 ? 'supply_0_' : sh.shop_type + '_' + sh.id + '_') + it.id;
         bal = periodData[key] || periodData[k2] || 0;
       }
-      return { ...it, bal };
+      return { ...it, bal: Math.max(0, bal) };
     }).filter(x => {
       // Show relevant items: Arif Supply gets Arif Tray, daily gets General Tray, both get others
       const nm = (x.name_ur + x.name_en).toLowerCase();
