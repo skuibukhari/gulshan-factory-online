@@ -998,7 +998,7 @@ async function saveTrayNotice() {
   const message = document.getElementById('tnMsg').value;
   const media_type = document.getElementById('tnType').value;
   const media_url = document.getElementById('tnUrl').value;
-  if (!message.trim()) { alert('پیغام لکھیں!'); return; }
+  if (!message.trim() && !media_url.trim()) { alert('پیغام یا میڈیا URL دیں!'); return; }
   try {
     await api('POST', '/api/tray/notices', { title, message, media_url, media_type });
     renderTrayDash();
