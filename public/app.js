@@ -1074,10 +1074,14 @@ async function renderTrayVoucher(kind, keepShop) {
 async function loadTrayVoucherList() {
   const box = $('#tvList');
   if (!box) return;
+  // Filter by selected shop
+  const sh = trayParseShop(window._trayShop || 's0');
+  let url = '/api/tray/vouchers?shop_id=' + sh.shop_id + '&shop_type=' + sh.shop_type;
   let rows = [];
-  try { rows = await api('GET', '/api/tray/vouchers'); } catch (e) {}
+  try { rows = await api('GET', url); } catch (e) {}
   rows = rows.slice(0, 20);
-  box.innerHTML = `<h4 style="margin:8px 0">📝 حالیہ واؤچر (${rows.length})</h4>
+  const shopName = ($('#tvShop') && $('#tvShop').selectedOptions[0]) ? $('#tvShop').selectedOptions[0].text : '';
+  box.innerHTML = `<h4 style="margin:8px 0">📝 ${esc(shopName)} — پچھلی انٹریز (${rows.length})</h4>
     <div style="overflow-x:auto"><table class="tbl"><tr><th>تاریخ</th><th>واؤچر</th><th>دکان</th><th>آئٹم</th><th>تعداد</th><th>عمل</th></tr>` +
     (rows.map(r => {
       const qty = r.sent || r.returned;
