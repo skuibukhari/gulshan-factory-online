@@ -1012,7 +1012,14 @@ async function renderTrayDash() {
   let ci = 0;
   const mkBox = (sh) => {
     const cls = colors[ci++ % colors.length];
-    const items = s.items.map(it => ({it, q: getQty(sh, it.id)}));
+    const items = s.items.filter(it => {
+      const nm = (it.name_ur + ' ' + it.name_en).toLowerCase();
+      const isArif = nm.includes('عارف') || nm.includes('arif');
+      const isGen = nm.includes('عام') || nm.includes('general');
+      if (sh.shop_type === 'daily') return !isArif;  // daily: hide Arif Tray
+      if (sh.id === 0 || sh.shop_type !== 'daily') return !isGen;  // supply: hide General Tray
+      return true;
+    }).map(it => ({it, q: getQty(sh, it.id)}));
     const total = items.reduce((a,x) => a+x.q, 0);
     const alert = total >= 30 ? ' alert' : '';
     return '<div class="shop-box '+cls+alert+'"><div class="sname">'+esc(sh.name)+'</div>' +
