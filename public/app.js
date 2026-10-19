@@ -991,7 +991,11 @@ async function renderTrayDash() {
     else if (period === 'yesterday') { const d = new Date(); d.setDate(d.getDate()-1); fromStr = d.toISOString().slice(0,10); }
     else if (period === 'custom') { fromStr = window._trayFrom || ''; }
     let toStr = (period === 'custom' && window._trayTo) ? window._trayTo : '';
-    if (period === 'yesterday') { const d = new Date(); d.setDate(d.getDate()-1); toStr = d.toISOString().slice(0,10); }
+    const todayStr = now.toISOString().slice(0,10);
+    if (period === 'today') toStr = todayStr;
+    else if (period === 'week') toStr = todayStr;
+    else if (period === 'month') toStr = todayStr;
+    else if (period === 'yesterday') { const d = new Date(); d.setDate(d.getDate()-1); toStr = d.toISOString().slice(0,10); }
     let vurl = '/api/tray/vouchers';
     if (fromStr) vurl += '?from='+fromStr;
     if (typeof toStr !== 'undefined' && toStr) vurl += (fromStr ? '&' : '?') + 'to='+toStr;
