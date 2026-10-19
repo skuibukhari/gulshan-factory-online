@@ -985,17 +985,18 @@ async function renderTrayDash() {
   try {
     let fromStr = '';
     const now = new Date();
-    if (period === 'today') fromStr = now.toISOString().slice(0,10);
-    else if (period === 'week') { const d = new Date(now); d.setDate(now.getDate()-7); fromStr = d.toISOString().slice(0,10); }
-    else if (period === 'month') { const d = new Date(now); d.setMonth(now.getMonth()-1); fromStr = d.toISOString().slice(0,10); }
-    else if (period === 'yesterday') { const d = new Date(); d.setDate(d.getDate()-1); fromStr = d.toISOString().slice(0,10); }
+    const locStr = (dt) => dt.getFullYear() + '-' + String(dt.getMonth()+1).padStart(2,'0') + '-' + String(dt.getDate()).padStart(2,'0');
+    if (period === 'today') fromStr = locStr(now);
+    else if (period === 'week') { const d = new Date(now); d.setDate(now.getDate()-7); fromStr = locStr(d); }
+    else if (period === 'month') { const d = new Date(now); d.setMonth(now.getMonth()-1); fromStr = locStr(d); }
+    else if (period === 'yesterday') { const d = new Date(); d.setDate(d.getDate()-1); fromStr = locStr(d); }
     else if (period === 'custom') { fromStr = window._trayFrom || ''; }
     let toStr = (period === 'custom' && window._trayTo) ? window._trayTo : '';
-    const todayStr = now.toISOString().slice(0,10);
-    if (period === 'today') toStr = todayStr;
-    else if (period === 'week') toStr = todayStr;
-    else if (period === 'month') toStr = todayStr;
-    else if (period === 'yesterday') { const d = new Date(); d.setDate(d.getDate()-1); toStr = d.toISOString().slice(0,10); }
+    const todayStr2 = locStr(now);
+    if (period === 'today') toStr = todayStr2;
+    else if (period === 'week') toStr = todayStr2;
+    else if (period === 'month') toStr = todayStr2;
+    else if (period === 'yesterday') { const d = new Date(); d.setDate(d.getDate()-1); toStr = locStr(d); }
     let vurl = '/api/tray/vouchers';
     if (fromStr) vurl += '?from='+fromStr;
     if (typeof toStr !== 'undefined' && toStr) vurl += (fromStr ? '&' : '?') + 'to='+toStr;
@@ -1066,7 +1067,8 @@ async function renderTrayDash() {
     '<div id="trayRange" style="margin-top:6px;color:#8a6d3b;font-weight:bold">🗓️ رپورٹ: ' + rangeTxt + '</div></div>';
   // Today's simple summary (no factory stock)
   {
-    const todayStr = new Date().toISOString().slice(0,10);
+    const _ld2 = new Date();
+    const todayStr = _ld2.getFullYear() + '-' + String(_ld2.getMonth()+1).padStart(2,'0') + '-' + String(_ld2.getDate()).padStart(2,'0');
     let todayRet = {};
     try {
       const tv = await api('GET', '/api/tray/vouchers?from='+todayStr+'&to='+todayStr);
