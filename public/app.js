@@ -1580,6 +1580,11 @@ async function loadTrayReport() {
   }
   if ($('#trVeh') && $('#trVeh').value) p.set('vehicle_id', $('#trVeh').value);
   if ($('#trItem').value) p.set('item_id', $('#trItem').value);
+  // If shop type filter is set (daily/shop), apply it even when shop=all
+  const typeF = $('#trShopType') && $('#trShopType').value;
+  if (typeF && !($('#trShop') && $('#trShop').value)) {
+    p.set('shop_type', typeF);
+  }
   let rows = [];
   try { rows = await api('GET', '/api/tray/vouchers?' + p.toString()); } catch (e) {}
   const tot = rows.reduce((a, r) => ({ s: a.s + r.sent, r: a.r + r.returned }), { s: 0, r: 0 });
@@ -1666,13 +1671,16 @@ function printTrayReport() {
   w.document.write(`<html><head><title>ٹرے باسکٹ رپورٹ</title>
     <link href="https://fonts.googleapis.com/css2?family=Noto+Nastaliq+Urdu:wght@400;600;700&display=swap" rel="stylesheet">
     <style>
-    body{font-family:'Noto Nastaliq Urdu','Jameel Noori Nastaleeq',serif;direction:rtl;padding:16px;max-width:800px;margin:0 auto;color:#333;font-size:13px;line-height:2}
-    h1{font-size:22px !important} h3{font-size:16px !important;margin:10px 0 6px !important}
-    table{font-size:12px} td,th{padding:6px !important}
+    body{font-family:'Noto Nastaliq Urdu','Jameel Noori Nastaleeq',serif;direction:rtl;padding:12px;max-width:750px;margin:0 auto;color:#333;font-size:11px;line-height:1.8}
+    h1{font-size:20px !important;margin:6px 0 !important} h3{font-size:14px !important;margin:8px 0 4px !important}
+    table{font-size:11px} td,th{padding:4px 6px !important}
     @media print{
-      button{display:none} body{padding:8px;font-size:11px}
-      h1{font-size:20px !important} h3{font-size:14px !important}
-      .no-break{break-inside:avoid}
+      button{display:none}
+      body{padding:6px;font-size:10px;max-width:100%}
+      h1{font-size:18px !important} h3{font-size:13px !important;margin:6px 0 3px !important}
+      table{page-break-inside:auto}
+      tr{page-break-inside:avoid}
+      @page{size:A4;margin:10mm}
     }
     </style></head><body>${html}<br><div style="text-align:center" class="no-break"><button onclick="window.print()" style="padding:10px 36px;font-size:15px;background:#2d2d2d;color:#fff;border:none;border-radius:10px;cursor:pointer;font-family:inherit">🖨 پرنٹ / PDF</button></div>
     <p style="margin-top:16px;text-align:center;color:#999;font-size:12px">دستخط: ___________________</p></body></html>`);
