@@ -1322,7 +1322,7 @@ function printLastTrayVouchers(kind) {
 
 async function renderTrayLedger() {
   const box = $('#trayBody');
-  const shopOpts = await trayShopOptions(prevShop);
+  const shopOpts = await trayShopOptions(window._trayShop || 's0');
   box.innerHTML = `<h3>🧾 دکان کا کھاتہ — Shop Ledger</h3>
     <div class="formgrid">
       <label>🏪 دکان منتخب کریں<br><select id="tlShop">${shopOpts}</select></label>
