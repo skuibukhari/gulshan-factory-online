@@ -1870,9 +1870,13 @@ app.post('/api/tray/vouchers', requireLogin, requireSection('tray_basket', 'full
     return res.status(400).json({ error: 'bad_item' });
   if (!sent && !returned) return res.status(400).json({ error: 'empty_voucher' });
   const no = trayVoucherNo();
-  const r = db.prepare(`INSERT INTO tray_vouchers (voucher_no, date, shop_id, shop_type, vehicle_id, item_id, sent, returned, notes, created_by)
-    VALUES (?,?,?,?,?,?,?,?,?,?)`).run(no, date, shopId, shopType, vehicleId, itemId, sent, returned, (b.notes || '').trim(), req.user.id);
-  res.json({ ok: true, id: r.lastInsertRowid, voucher_no: no });
+  try {
+    const r = db.prepare(`INSERT INTO tray_vouchers (voucher_no, date, shop_id, shop_type, vehicle_id, item_id, sent, returned, notes, created_by)
+      VALUES (?,?,?,?,?,?,?,?,?,?)`).run(no, date, shopId, shopType, vehicleId, itemId, sent, returned, (b.notes || '').trim(), req.user.id);
+    res.json({ ok: true, id: r.lastInsertRowid, voucher_no: no });
+  } catch (e) {
+    return res.status(500).json({ error: 'insert_failed', detail: e.message });
+  }
 });
 app.get('/api/tray/vouchers', requireLogin, requireSection('tray_basket', 'view'), (req, res) => {
   const scope = scopedShopId(req);
