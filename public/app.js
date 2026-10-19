@@ -963,123 +963,68 @@ async function renderTray() {
   else renderTrayReport();
 }
 async function renderTrayDash() {
-  const box = $('#trayBody');
+  const box = document.getElementById('trayBody');
   const isShop = ME.role === 'shop';
   let s;
   try { s = await api('GET', '/api/tray/summary'); }
   catch (e) { box.innerHTML = '<p>لوڈ نہیں ہو سکا</p>'; return; }
-  let html = '';
-  // Period filter
   const period = window._trayPeriod || 'all';
-  const pbtn = (v, t) => `<button class="tfbtn ${period === v ? 'on' : ''}" onclick="window._trayPeriod='${v}';renderTrayDash()">${t}</button>`;
-  html += `<div class="tray-filters"><div class="frow"><span style="font-weight:bold">📅 مدت:</span>${pbtn('today','آج')}${pbtn('week','اس ہفتہ')}${pbtn('month','اس مہینہ')}${pbtn('all','تمام')}</div></div>`;
-  // 1. Factory stock cards
-  if (!isShop) {
-    html += `<h3>🏭 فیکٹری اسٹاک (دستیاب)</h3><div class="cards">` +
-      s.factory.map(f => `<div class="card"><div class="n">${f.available}</div><div class="l">${f.icon} ${f.name_ur}<br>${f.name_en}</div></div>`).join('') + `</div>`;
-  // Period-wise data: fetch vouchers (all or filtered by date)
-  let periodData = {};
-  {
-    const today = new Date();
+  // Fetch voucher totals for period
+  let pdata = {};
+  try {
     let fromStr = '';
-    if (period === 'today') { fromStr = today.toISOString().split('T')[0]; }
-    else if (period === 'week') { const d = new Date(today); d.setDate(today.getDate() - 7); fromStr = d.toISOString().split('T')[0]; }
-    else if (period === 'month') { const d = new Date(today); d.setMonth(today.getMonth() - 1); fromStr = d.toISOString().split('T')[0]; }
-    // period='all' => fromStr='' (fetch all)
-    try {
-      const url = '/api/tray/vouchers' + (fromStr ? '?from=' + fromStr : '');
-      const pv = await api('GET', url);
-      pv.forEach(v => {
-        const key = v.shop_type + '_' + v.shop_id + '_' + v.item_id;
-        periodData[key] = (periodData[key] || 0) + (v.returned || 0);
-        // Also store with supply_0 key for Arif Supply
-        if (v.shop_id === 0 || v.shop_id === '0') {
-          const k2 = 'supply_0_' + v.item_id;
-          periodData[k2] = (periodData[k2] || 0) + (v.returned || 0);
-        }
-      });
-    } catch (e) {}
-  }
-    // 2. Item-wise totals (from voucher data, never negative)
-    const itemTots = s.items.map(it => {
-      let tot = 0;
-      Object.keys(periodData).forEach(k => {
-        if (k.endsWith('_' + it.id)) tot += periodData[k];
-      });
-      // Avoid double-counting supply_0 keys (they're already in shop keys)
-      // Just sum unique: use shop-based keys only
-      tot = 0;
-      s.shops.forEach(sh => {
-        const key = sh.shop_type + '_' + sh.id + '_' + it.id;
-        tot += periodData[key] || 0;
-      });
-      // Add Arif Supply (shop_id=0) if not in shops list
-      if (!s.shops.some(sh => sh.id === 0)) {
-        tot += periodData['supply_0_' + it.id] || 0;
-      }
-      return { ...it, total: tot };
+    const now = new Date();
+    if (period === 'today') fromStr = now.toISOString().slice(0,10);
+    else if (period === 'week') { const d = new Date(now); d.setDate(now.getDate()-7); fromStr = d.toISOString().slice(0,10); }
+    else if (period === 'month') { const d = new Date(now); d.setMonth(now.getMonth()-1); fromStr = d.toISOString().slice(0,10); }
+    const pv = await api('GET', '/api/tray/vouchers' + (fromStr ? '?from='+fromStr : ''));
+    pv.forEach(v => {
+      const k = v.shop_type + '_' + v.shop_id + '_' + v.item_id;
+      pdata[k] = (pdata[k]||0) + (v.returned||0);
     });
-    const grandTot = itemTots.reduce((a, t) => a + t.total, 0);
-    html += `<h3 style="margin-top:14px">📊 آئٹم وائز ٹوٹل (تمام دکانوں کے پاس)</h3>
-      <div class="cards">` +
-      itemTots.map(t => `<div class="card"><div class="n">${t.total}</div><div class="l">${t.icon} ${t.name_ur}<br>${t.name_en}</div></div>`).join('') +
-      `<div class="card" style="background:linear-gradient(135deg,#2e7d32,#43a047)"><div class="n">${grandTot}</div><div class="l">📋 کل ٹوٹل<br>Total</div></div></div>`;
+  } catch(e) {}
+  const getQty = (sh, itemId) => {
+    const k = sh.shop_type + '_' + sh.id + '_' + itemId;
+    return pdata[k] || 0;
+  };
+  let html = '';
+  const pb = (v,t) => '<button class="tfbtn ' + (period===v?'on':'') + '" onclick="window._trayPeriod=\''+v+'\';renderTrayDash()">'+t+'</button>';
+  html += '<div class="tray-filters"><div class="frow"><b>📅 مدت:</b>' + pb('today','آج') + pb('week','اس ہفتہ') + pb('month','اس مہینہ') + pb('all','تمام') + '</div></div>';
+  // Factory cards
+  if (!isShop && s.factory) {
+    html += '<h3>🏭 فیکٹری اسٹاک</h3><div class="cards">' +
+      s.factory.map(f => '<div class="card"><div class="n">'+f.available+'</div><div class="l">'+f.icon+' '+f.name_ur+'</div></div>').join('') + '</div>';
   }
-  // 3. Colorful shop boxes (v3)
-  const supShops = s.shops.filter(sh => sh.shop_type !== 'daily');
-  const dailyShops = s.shops.filter(sh => sh.shop_type === 'daily');
-  const shopColors = ['sb1','sb2','sb3','sb4','sb5','sb6','sb7','sb8','sb9'];
-  let colorIdx = 0;
-  // periodData moved up
-  const shopBox = (sh) => {
-    const cls = shopColors[colorIdx++ % shopColors.length];
-    const bals = s.items.map(it => {
-      // Always use voucher-based totals (period or all)
-      const key = sh.shop_type + '_' + sh.id + '_' + it.id;
-      const k2 = 'supply_0_' + it.id;
-      const bal = periodData[key] || (sh.id === 0 && periodData[k2]) || 0;
-      return { ...it, bal };
-    }).filter(x => {
-      // Show relevant items: Arif Supply gets Arif Tray, daily gets General Tray, both get others
-      const nm = (x.name_ur + x.name_en).toLowerCase();
-      const isArif = nm.includes('عارف') || nm.includes('arif');
-      const isGen = nm.includes('عام') || nm.includes('general');
-      if (sh.shop_type === 'daily') return !isArif;
-      if (sh.id === 0) return !isGen;
-      return true;
+  // Item totals
+  if (s.items && s.shops) {
+    const tots = s.items.map(it => {
+      let t = 0;
+      s.shops.forEach(sh => { t += getQty(sh, it.id); });
+      return {it, t};
     });
-    const total = bals.reduce((a, x) => a + x.bal, 0);
+    const grand = tots.reduce((a,x) => a+x.t, 0);
+    html += '<h3 style="margin-top:12px">📊 آئٹم وائز ٹوٹل</h3><div class="cards">' +
+      tots.map(x => '<div class="card"><div class="n">'+x.t+'</div><div class="l">'+x.it.icon+' '+x.it.name_ur+'</div></div>').join('') +
+      '<div class="card" style="background:linear-gradient(135deg,#2e7d32,#43a047)"><div class="n">'+grand+'</div><div class="l">📋 کل ٹوٹل</div></div></div>';
+  }
+  // Shop boxes
+  const colors = ['sb1','sb2','sb3','sb4','sb5','sb6','sb7','sb8','sb9'];
+  let ci = 0;
+  const mkBox = (sh) => {
+    const cls = colors[ci++ % colors.length];
+    const items = s.items.map(it => ({it, q: getQty(sh, it.id)}));
+    const total = items.reduce((a,x) => a+x.q, 0);
     const alert = total >= 30 ? ' alert' : '';
-    return `<div class="shop-box ${cls}${alert}" onclick="TRAY.tab='ledger';renderTray()">
-      <div class="sname">${esc(sh.name)}</div>
-      <div class="sitems">${bals.map(x => `<div class="si"><div class="e">${x.icon}</div><div class="v">${x.bal}</div></div>`).join('')}</div>
-      <div class="stotal"><div class="tv">${total}</div><div class="tl">کل</div></div>
-    </div>`;
+    return '<div class="shop-box '+cls+alert+'"><div class="sname">'+esc(sh.name)+'</div>' +
+      '<div class="sitems">' + items.map(x => '<div class="si"><div class="e">'+x.it.icon+'</div><div class="v">'+x.q+'</div></div>').join('') + '</div>' +
+      '<div class="stotal"><div class="tv">'+total+'</div><div class="tl">کل</div></div></div>';
   };
-  if (supShops.length) {
-    html += `<h3 style="margin-top:14px">🚚 سپلائی</h3><div class="shop-boxes">${supShops.map(shopBox).join('')}</div>`;
+  if (s.shops) {
+    const sup = s.shops.filter(sh => sh.shop_type !== 'daily');
+    const daily = s.shops.filter(sh => sh.shop_type === 'daily');
+    if (sup.length) html += '<h3 style="margin-top:14px">🚚 سپلائی</h3><div class="shop-boxes">' + sup.map(mkBox).join('') + '</div>';
+    if (daily.length) html += '<h3 style="margin-top:14px">📝 روزانہ دکانیں ('+daily.length+')</h3><div class="shop-boxes">' + daily.map(mkBox).join('') + '</div>';
   }
-  if (dailyShops.length) {
-    html += `<h3 style="margin-top:14px">📝 روزانہ دکانیں (${dailyShops.length})</h3><div class="shop-boxes">${dailyShops.map(shopBox).join('')}</div>`;
-  }
-  const shopTable = (list, title) => {
-    if (!list.length) return '';
-    const colTots = s.items.map(it => list.reduce((a, sh) => a + (sh.balances.find(b => b.item_id === it.id) || { balance: 0 }).balance, 0));
-    const grand = colTots.reduce((a, t) => a + t, 0);
-    return `<h3 style="margin-top:14px">${title} (${list.length} دکان)</h3>
-    <div style="overflow-x:auto"><table class="tbl"><tr><th>دکان</th>${s.items.map(i => `<th>${i.icon}<br>${i.name_ur}</th>`).join('')}<th>ٹوٹل</th></tr>` +
-    list.map(sh => {
-      const tot = sh.balances.reduce((a, b) => a + b.balance, 0);
-      return `<tr class="${!isShop && tot >= 30 ? 'hot' : ''}"><td><b>${esc(sh.name)}</b>${!isShop && tot >= 30 ? ' 🔴' : ''}</td>` +
-        sh.balances.map(b => `<td><b>${b.balance}</b></td>`).join('') + `<td><b>${tot}</b></td></tr>`;
-    }).join('') +
-    `<tr style="background:#fff3e0"><td><b>📊 ٹوٹل</b></td>${colTots.map(t => `<td><b>${t}</b></td>`).join('')}<td><b>${grand}</b></td></tr></table></div>`;
-  };
-  if (isShop) {
-    html += shopTable(s.shops, '🏪 میرا حساب');
-    html += `<div class="note">🔒 آپ صرف اپنا حساب دیکھ سکتے ہیں — انٹری صرف سپر ایڈمن کرے گا</div>`;
-  }
-  // Non-shop users see colorful boxes above (no tables needed)
   box.innerHTML = html;
 }
 
