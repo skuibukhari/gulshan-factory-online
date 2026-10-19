@@ -1122,21 +1122,26 @@ async function loadTrayVoucherList() {
     }).join('') || '<tr><td colspan="6">کوئی واؤچر نہیں</td></tr>') + `</table></div>`;
 }
 async function editTrayVoucher(id) {
-  let rows = [];
-  try { rows = await api('GET', '/api/tray/vouchers'); } catch (e) { return; }
+  // Get voucher from the already-loaded list (no extra API call)
+  const rows = window._trayVoucherRows || [];
   const v = rows.find(r => r.id === id);
-  if (!v) return;
+  if (!v) { alert('واؤچر نہیں ملا'); return; }
   // Set shop first and re-render to show correct items
   const shopVal = (v.shop_type === 'daily' ? 'd' : 's') + v.shop_id;
   window._trayShop = shopVal;
   await renderTrayVoucher('ret', shopVal);
-  $('#tvDate').value = v.date;
-  TRAY.items.forEach(it => { $('#tvQ_' + it.id).value = 0; });
-  const qid = '#tvQ_' + v.item_id;
-  if ($(qid)) $(qid).value = v.sent || v.returned;
-  $('#tvNote').value = v.notes || '';
+  // Fill form after render
+  const dEl = $('#tvDate');
+  if (dEl) dEl.value = v.date || '';
+  TRAY.items.forEach(it => {
+    const qEl = $('#tvQ_' + it.id);
+    if (qEl) qEl.value = (it.id === v.item_id) ? (v.sent || v.returned || 0) : 0;
+  });
+  const nEl = $('#tvNote');
+  if (nEl) nEl.value = v.notes || '';
   window._editingVoucher = id;
-  $('#tvMsg').innerHTML = `<div class="note">✏️ واؤچر <b>${v.voucher_no}</b> ایڈٹ ہو رہا ہے — محفوظ دبائیں</div>
+  const mEl = $('#tvMsg');
+  if (mEl) mEl.innerHTML = `<div class="note">✏️ واؤچر <b>${v.voucher_no}</b> ایڈٹ ہو رہا ہے — محفوظ دبائیں</div>
     <button class="btn small" onclick="cancelTrayEdit()">❌ منسوخ</button>`;
   window.scrollTo(0, 0);
 }
