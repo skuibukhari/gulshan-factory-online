@@ -1023,19 +1023,20 @@ async function renderTrayDash() {
   let pdata = {};
   try {
     let fromStr = '';
-    const now = new Date();
-    const locStr = (dt) => dt.getFullYear() + '-' + String(dt.getMonth()+1).padStart(2,'0') + '-' + String(dt.getDate()).padStart(2,'0');
-    if (period === 'today') fromStr = locStr(now);
-    else if (period === 'week') { const d = new Date(now); d.setDate(now.getDate()-7); fromStr = locStr(d); }
-    else if (period === 'month') { const d = new Date(now); d.setMonth(now.getMonth()-1); fromStr = locStr(d); }
-    else if (period === 'yesterday') { const d = new Date(); d.setDate(d.getDate()-1); fromStr = locStr(d); }
+    // Use Karachi date for consistent filtering (not browser local)
+    const khiToday = karachiToday();
+    const khiDate = new Date(khiToday + 'T12:00:00');
+    const khiStr = (dt) => dt.getFullYear() + '-' + String(dt.getMonth()+1).padStart(2,'0') + '-' + String(dt.getDate()).padStart(2,'0');
+    if (period === 'today') fromStr = khiToday;
+    else if (period === 'week') { const d = new Date(khiDate); d.setDate(khiDate.getDate()-7); fromStr = khiStr(d); }
+    else if (period === 'month') { const d = new Date(khiDate); d.setMonth(khiDate.getMonth()-1); fromStr = khiStr(d); }
+    else if (period === 'yesterday') { const d = new Date(khiDate); d.setDate(khiDate.getDate()-1); fromStr = khiStr(d); }
     else if (period === 'custom') { fromStr = window._trayFrom || ''; }
     let toStr = (period === 'custom' && window._trayTo) ? window._trayTo : '';
-    const todayStr2 = locStr(now);
-    if (period === 'today') toStr = todayStr2;
-    else if (period === 'week') toStr = todayStr2;
-    else if (period === 'month') toStr = todayStr2;
-    else if (period === 'yesterday') { const d = new Date(); d.setDate(d.getDate()-1); toStr = locStr(d); }
+    if (period === 'today') toStr = khiToday;
+    else if (period === 'week') toStr = khiToday;
+    else if (period === 'month') toStr = khiToday;
+    else if (period === 'yesterday') { const d = new Date(khiDate); d.setDate(khiDate.getDate()-1); toStr = khiStr(d); }
     let vurl = '/api/tray/vouchers';
     if (fromStr) vurl += '?from='+fromStr;
     if (typeof toStr !== 'undefined' && toStr) vurl += (fromStr ? '&' : '?') + 'to='+toStr;
@@ -1151,9 +1152,8 @@ async function renderTrayDash() {
       return true;
     }).map(it => ({it, q: getQty(sh, it.id)}));
     const total = items.reduce((a,x) => a+x.q, 0);
-    const alert = total >= 30 ? ' alert' : '';
     const shopVal = (sh.shop_type === 'daily' ? 'd' : 's') + sh.id;
-    return '<div class="shop-box '+cls+alert+'" onclick="TRAY.tab=\'ret\';window._trayShop=\''+shopVal+'\';renderTray()" style="cursor:pointer" title="انٹری کے لیے دبائیں"><div class="sname">'+esc(sh.name)+'</div>' +
+    return '<div class="shop-box '+cls+'" onclick="TRAY.tab=\'ret\';window._trayShop=\''+shopVal+'\';renderTray()" style="cursor:pointer" title="انٹری کے لیے دبائیں"><div class="sname">'+esc(sh.name)+'</div>' +
       '<div class="sitems">' + items.map(x => '<div class="si"><div class="e">'+x.it.icon+'</div><div class="v">'+x.q+'</div></div>').join('') + '</div>' +
       '<div class="stotal"><div class="tv">'+total+'</div><div class="tl">کل</div></div></div>';
   };
