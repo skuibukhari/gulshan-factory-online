@@ -1172,7 +1172,8 @@ async function renderTrayOpening() {
     box.innerHTML += `<h3 style="margin-top:16px">🏷️ آئٹم کے نام (Edit Items)</h3>
     <table class="tbl"><tr><th>آئیکون</th><th>اردو نام</th><th>English</th><th>عمل</th></tr>
     ${TRAY.items.map(it => `<tr><td style="font-size:20px">${it.icon}</td><td>${esc(it.name_ur)}</td><td>${esc(it.name_en)}</td>
-      <td><button class="btn small" onclick="editTrayItem(${it.id})">✏️ نام بدلیں</button></td></tr>`).join('')}</table>
+      <td style="white-space:nowrap"><button class="btn small" onclick="editTrayItem(${it.id})">✏️</button> <button class="btn small" style="background:#c62828;color:#fff" onclick="delTrayItem(${it.id})">🗑️</button></td></tr>`).join('')}</table>
+    <div style="margin-top:8px"><button class="btn green small" onclick="addTrayItem()">➕ نیا آئٹم</button></div>
     <div id="tiMsg" style="margin-top:8px"></div>`;
 }
 function editTrayOpening(shopId, shopType, itemId, qty) {
@@ -1189,6 +1190,24 @@ async function delTrayOpening(shopId, shopType, itemId) {
     await api('DELETE', '/api/tray/opening', { shop_id: shopId, shop_type: shopType, item_id: itemId });
     renderTrayOpening();
   } catch (e) { alert('Error: ' + (e.message || '')); }
+}
+
+
+function delTrayItem(id) {
+  if (!confirm('Item delete karna hai?')) return;
+  api('DELETE', '/api/tray/items/' + id)
+    .then(() => { renderTray(); })
+    .catch(e => alert('Error: ' + (e.message || '')));
+}
+function addTrayItem() {
+  const icon = prompt('آئیکون (emoji):', '📦');
+  if (icon === null) return;
+  const ur = prompt('اردو نام:');
+  if (!ur) return;
+  const en = prompt('English name:') || '';
+  api('POST', '/api/tray/items', { icon: icon, name_ur: ur, name_en: en })
+    .then(() => { renderTray(); })
+    .catch(e => alert('Error: ' + (e.message || '')));
 }
 
 function editTrayItem(id) {
