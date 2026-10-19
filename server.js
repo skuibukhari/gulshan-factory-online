@@ -1856,7 +1856,8 @@ app.post('/api/tray/vouchers', requireLogin, requireSection('tray_basket', 'full
   const date = /^\d{4}-\d{2}-\d{2}$/.test(b.date || '') ? b.date : new Date().toISOString().slice(0, 10);
   const shopType = b.shop_type === 'daily' ? 'daily' : 'shop';
   const shopTbl = shopType === 'daily' ? 'daily_shops' : 'shops';
-  if (!shopId || !db.prepare(`SELECT id FROM ${shopTbl} WHERE id=?`).get(shopId))
+  const isArif = shopType === 'shop' && shopId === 0;
+  if ((!isArif && !shopId) || (!isArif && !db.prepare(`SELECT id FROM ${shopTbl} WHERE id=?`).get(shopId)))
     return res.status(400).json({ error: 'bad_shop' });
   if (!itemId || !db.prepare('SELECT id FROM tray_items WHERE id=?').get(itemId))
     return res.status(400).json({ error: 'bad_item' });
