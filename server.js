@@ -1795,6 +1795,12 @@ function trayFactoryAvail(itemId) {
 app.get('/api/tray/items', requireLogin, requireSection('tray_basket', 'view'), (req, res) => {
   res.json(db.prepare('SELECT * FROM tray_items WHERE active=1 ORDER BY id').all());
 });
+app.put('/api/tray/items/:id', requireLogin, requireSection('tray_basket', 'full'), (req, res) => {
+  const b = req.body || {};
+  db.prepare('UPDATE tray_items SET name_ur=?, name_en=?, icon=? WHERE id=?')
+    .run(b.name_ur || '', b.name_en || '', b.icon || '', req.params.id);
+  res.json({ ok: true });
+});
 app.get('/api/tray/opening', requireLogin, requireSection('tray_basket', 'view'), (req, res) => {
   const scope = scopedShopId(req);
   let rows;
