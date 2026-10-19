@@ -969,6 +969,10 @@ async function renderTrayDash() {
   try { s = await api('GET', '/api/tray/summary'); }
   catch (e) { box.innerHTML = '<p>لوڈ نہیں ہو سکا</p>'; return; }
   let html = '';
+  // Period filter
+  const period = window._trayPeriod || 'all';
+  const pbtn = (v, t) => `<button class="tfbtn ${period === v ? 'on' : ''}" onclick="window._trayPeriod='${v}';renderTrayDash()">${t}</button>`;
+  html += `<div class="tray-filters"><div class="frow"><span style="font-weight:bold">📅 مدت:</span>${pbtn('today','آج')}${pbtn('week','اس ہفتہ')}${pbtn('month','اس مہینہ')}${pbtn('all','تمام')}</div></div>`;
   // 1. Factory stock cards
   if (!isShop) {
     html += `<h3>🏭 فیکٹری اسٹاک (دستیاب)</h3><div class="cards">` +
@@ -989,11 +993,37 @@ async function renderTrayDash() {
   const dailyShops = s.shops.filter(sh => sh.shop_type === 'daily');
   const shopColors = ['sb1','sb2','sb3','sb4','sb5','sb6','sb7','sb8','sb9'];
   let colorIdx = 0;
+  // Period-wise data: fetch vouchers for selected period
+  let periodData = {};
+  if (period !== 'all') {
+    const today = new Date();
+    let from = new Date(today);
+    if (period === 'today') { from = new Date(today); }
+    else if (period === 'week') { from.setDate(today.getDate() - 7); }
+    else if (period === 'month') { from.setMonth(today.getMonth() - 1); }
+    const fromStr = from.toISOString().split('T')[0];
+    try {
+      const pv = await api('GET', '/api/tray/vouchers?from=' + fromStr);
+      pv.forEach(v => {
+        const key = v.shop_type + '_' + v.shop_id + '_' + v.item_id;
+        periodData[key] = (periodData[key] || 0) + (v.returned || 0);
+      });
+    } catch (e) {}
+  }
   const shopBox = (sh) => {
     const cls = shopColors[colorIdx++ % shopColors.length];
     const bals = s.items.map(it => {
-      const b = sh.balances.find(x => x.item_id === it.id);
-      return { ...it, bal: b ? b.balance : 0 };
+      let bal;
+      if (period === 'all') {
+        const b = sh.balances.find(x => x.item_id === it.id);
+        bal = b ? b.balance : 0;
+      } else {
+        const key = sh.shop_type + '_' + sh.id + '_' + it.id;
+        // Arif Supply has shop_id=0, shop_type='supply'
+        const k2 = (sh.id === 0 ? 'supply_0_' : sh.shop_type + '_' + sh.id + '_') + it.id;
+        bal = periodData[key] || periodData[k2] || 0;
+      }
+      return { ...it, bal };
     }).filter(x => {
       // Show relevant items: Arif Supply gets Arif Tray, daily gets General Tray, both get others
       const nm = (x.name_ur + x.name_en).toLowerCase();
