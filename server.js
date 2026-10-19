@@ -336,6 +336,12 @@ db.exec(`CREATE TABLE IF NOT EXISTS tray_opening (
   updated_at TEXT NOT NULL DEFAULT (datetime('now')),
   PRIMARY KEY (shop_id, item_id)
 );`);
+db.exec(`CREATE TABLE IF NOT EXISTS tray_user_shops (
+  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  shop_type TEXT NOT NULL,
+  shop_id INTEGER NOT NULL,
+  PRIMARY KEY (user_id, shop_type, shop_id)
+)`);
 db.exec(`CREATE TABLE IF NOT EXISTS tray_notices (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   title TEXT DEFAULT '',
@@ -634,6 +640,12 @@ const isAdmin = (req, res, next) => {
 function scopedShopId(req) {
   if (req.user.role === 'shop') return req.user.shop_id;
   return null; // admin/factory: not scoped by default
+}
+// Get shops assigned to a user (for tray module)
+function userTrayShops(userId) {
+  try {
+    return db.prepare('SELECT shop_type, shop_id FROM tray_user_shops WHERE user_id=?').all(userId);
+  } catch(e) { return []; }
 }
 
 // ---------- Public: setup & auth ----------
@@ -1970,6 +1982,28 @@ app.delete('/api/tray/notices/:id', requireLogin, (req, res) => {
   if (req.user.role !== 'super_admin') return res.status(403).json({ error: 'super only' });
   db.prepare('DELETE FROM tray_notices WHERE id=?').run(req.params.id);
   res.json({ ok: true });
+});
+// User-shop access assignments (super_admin only)
+app.get('/api/tray/user-shops/:userId', requireLogin, (req, res) => {
+  if (req.user.role !== 'super_admin') return res.status(403).json({ error: 'super only' });
+  res.json(userTrayShops(req.params.userId));
+});
+app.post('/api/tray/user-shops', requireLogin, (req, res) => {
+  if (req.user.role !== 'super_admin') return res.status(403).json({ error: 'super only' });
+  const b = req.body || {};
+  const uid = parseInt(b.user_id, 10);
+  if (!uid) return res.status(400).json({ error: 'bad_user' });
+  // Replace all assignments for this user
+  db.prepare('DELETE FROM tray_user_shops WHERE user_id=?').run(uid);
+  const shops = b.shops || [];
+  const ins = db.prepare('INSERT INTO tray_user_shops (user_id, shop_type, shop_id) VALUES (?,?,?)');
+  shops.forEach(s => { ins.run(uid, s.shop_type, s.shop_id); });
+  res.json({ ok: true, count: shops.length });
+});
+// Get my assigned shops (for filtering dashboard)
+app.get('/api/tray/my-shops', requireLogin, (req, res) => {
+  if (req.user.role === 'super_admin' || req.user.role === 'factory') return res.json({ all: true });
+  res.json({ all: false, shops: userTrayShops(req.user.id) });
 });
 app.get('/api/tray/shop-options', requireLogin, requireSection('tray_basket', 'view'), (req, res) => {
   const shops = [{ value: 's0', name: '🚚 Arif Supply (total)', type: 'shop' }];

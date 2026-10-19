@@ -1004,6 +1004,56 @@ async function saveTrayNotice() {
     renderTrayDash();
   } catch(e) { alert('Error: ' + (e.message || '')); }
 }
+async function showTrayAccessForm() {
+  const box = document.getElementById('trayAccessForm');
+  if (!box) return;
+  let users = [];
+  try { users = await api('GET', '/api/users'); } catch(e) {}
+  const userOpts = users.filter(u => u.role !== 'super_admin').map(u => `<option value="${u.id}">${esc(u.username)} (${u.role})</option>`).join('');
+  box.innerHTML = `<div style="background:#fff;border:2px solid #5c6bc0;border-radius:12px;padding:14px;margin-bottom:12px">
+    <h4>🔐 صارف کی دکان رسائی</h4>
+    <p style="font-size:12px;color:#666">کس صارف کو کون سی دکانیں نظر آئیں گی؟ (خالی = سب نظر آئیں گی)</p>
+    <select id="taUser" style="width:100%;padding:8px;margin:6px 0;border:1px solid #ddd;border-radius:8px" onchange="loadUserShops(this.value)">
+      <option value="">صارف منتخب کریں...</option>${userOpts}
+    </select>
+    <div id="taShops" style="margin:8px 0"></div>
+    <div style="margin-top:8px">
+      <button type="button" class="btn" onclick="saveUserShops()" style="background:#2e7d32;color:#fff">💾 محفوظ کریں</button>
+      <button type="button" class="btn" onclick="document.getElementById('trayAccessForm').innerHTML=''" style="background:#999;color:#fff">❌ منسوخ</button>
+    </div>
+  </div>`;
+}
+async function loadUserShops(userId) {
+  const box = document.getElementById('taShops');
+  if (!box || !userId) { box.innerHTML = ''; return; }
+  let assigned = [];
+  try { assigned = await api('GET', '/api/tray/user-shops/' + userId); } catch(e) {}
+  const assignedSet = new Set(assigned.map(a => a.shop_type + '_' + a.shop_id));
+  let shops = [];
+  try { shops = await api('GET', '/api/tray/shop-options'); } catch(e) {}
+  box.innerHTML = '<div style="max-height:200px;overflow-y:auto;border:1px solid #ddd;border-radius:8px;padding:8px">' +
+    shops.map(s => {
+      const parts = s.value.match(/^([ds])(\d+)$/);
+      if (!parts) return '';
+      const st = parts[1] === 'd' ? 'daily' : 'shop';
+      const sid = parseInt(parts[2], 10);
+      const key = st + '_' + sid;
+      const checked = assignedSet.has(key) ? 'checked' : '';
+      return `<label style="display:block;padding:4px;cursor:pointer"><input type="checkbox" data-st="${st}" data-sid="${sid}" ${checked}> ${esc(s.name)}</label>`;
+    }).join('') + '</div>' +
+    '<p style="font-size:11px;color:#888;margin-top:4px">نوٹ: کچھ بھی منتخب نہ کریں تو صارف کو سب دکانیں نظر آئیں گی</p>';
+}
+async function saveUserShops() {
+  const userId = document.getElementById('taUser').value;
+  if (!userId) { alert('صارف منتخب کریں!'); return; }
+  const checked = document.querySelectorAll('#taShops input[type="checkbox"]:checked');
+  const shops = Array.from(checked).map(c => ({ shop_type: c.dataset.st, shop_id: parseInt(c.dataset.sid, 10) }));
+  try {
+    await api('POST', '/api/tray/user-shops', { user_id: userId, shops });
+    alert('✅ رسائی محفوظ ہو گئی!');
+    document.getElementById('trayAccessForm').innerHTML = '';
+  } catch(e) { alert('Error: ' + (e.message || '')); }
+}
 async function delTrayNotice(id) {
   if (!confirm('یہ اعلان حذف کریں؟')) return;
   try {
@@ -1163,9 +1213,12 @@ async function renderTrayDash() {
           media + delBtn + '</div>';
       }).join('') + '</div>';
     }
-    // Super admin add notice button
+    // Super admin add notice button + access management
     if (typeof ME !== 'undefined' && ME && ME.role === 'super_admin') {
-      html += '<div style="margin-bottom:12px;text-align:center"><button type="button" class="btn" onclick="showTrayNoticeForm()" style="background:#ff9800;color:#fff">📢 نیا اعلان شامل کریں</button></div><div id="trayNoticeForm"></div>';
+      html += '<div style="margin-bottom:12px;text-align:center;display:flex;gap:8px;justify-content:center;flex-wrap:wrap">' +
+        '<button type="button" class="btn" onclick="showTrayNoticeForm()" style="background:#ff9800;color:#fff">📢 نیا اعلان</button>' +
+        '<button type="button" class="btn" onclick="showTrayAccessForm()" style="background:#5c6bc0;color:#fff">🔐 رسائی سیٹ کریں</button></div>' +
+        '<div id="trayNoticeForm"></div><div id="trayAccessForm"></div>';
     }
   } catch(e) {}
   // Today's simple summary (no factory stock)
@@ -1220,9 +1273,21 @@ async function renderTrayDash() {
       '<div class="sitems">' + items.map(x => '<div class="si"><div class="e">'+x.it.icon+'</div><div class="v">'+x.q+'</div></div>').join('') + '</div>' +
       '<div class="stotal"><div class="tv">'+total+'</div><div class="tl">کل</div></div></div>';
   };
+  // Filter shops by user's assigned access (super_admin/factory see all)
+  let myShopFilter = null;
+  try {
+    const myShops = await api('GET', '/api/tray/my-shops');
+    if (!myShops.all && myShops.shops && myShops.shops.length) {
+      myShopFilter = new Set(myShops.shops.map(x => x.shop_type + '_' + x.shop_id));
+    }
+  } catch(e) {}
   if (s.shops) {
-    const sup = s.shops.filter(sh => sh.shop_type !== 'daily');
-    const daily = s.shops.filter(sh => sh.shop_type === 'daily');
+    let allShops = s.shops;
+    if (myShopFilter) {
+      allShops = allShops.filter(sh => myShopFilter.has(sh.shop_type + '_' + sh.id));
+    }
+    const sup = allShops.filter(sh => sh.shop_type !== 'daily');
+    const daily = allShops.filter(sh => sh.shop_type === 'daily');
     if (sup.length) html += '<h3 style="margin-top:14px">🚚 سپلائی</h3><div class="shop-boxes">' + sup.map(mkBox).join('') + '</div>';
     if (daily.length) html += '<h3 style="margin-top:14px">📝 روزانہ دکانیں ('+daily.length+')</h3><div class="shop-boxes">' + daily.map(mkBox).join('') + '</div>';
   }
