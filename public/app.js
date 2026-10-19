@@ -1142,7 +1142,7 @@ async function saveTrayVoucher(kind) {
         item_id: q.id, sent: isSent ? q.qty : 0, returned: isSent ? 0 : q.qty, notes: $('#tvNote').value,
       });
       ok++; vnos.push(r.voucher_no);
-    } catch (e) { lastErr = e.message || JSON.stringify(e); }
+    } catch (e) { lastErr = (e.detail ? e.detail + ' | ' : '') + (e.message || ''); }
   }
   if (!ok && lastErr) {
     $('#tvMsg').innerHTML = `<div class="err">❌ Save nahi hua: ${lastErr}</div>`;
