@@ -993,37 +993,37 @@ async function renderTrayDash() {
   const dailyShops = s.shops.filter(sh => sh.shop_type === 'daily');
   const shopColors = ['sb1','sb2','sb3','sb4','sb5','sb6','sb7','sb8','sb9'];
   let colorIdx = 0;
-  // Period-wise data: fetch vouchers for selected period
+  // Period-wise data: fetch vouchers (all or filtered by date)
   let periodData = {};
-  if (period !== 'all') {
+  {
     const today = new Date();
-    let from = new Date(today);
-    if (period === 'today') { from = new Date(today); }
-    else if (period === 'week') { from.setDate(today.getDate() - 7); }
-    else if (period === 'month') { from.setMonth(today.getMonth() - 1); }
-    const fromStr = from.toISOString().split('T')[0];
+    let fromStr = '';
+    if (period === 'today') { fromStr = today.toISOString().split('T')[0]; }
+    else if (period === 'week') { const d = new Date(today); d.setDate(today.getDate() - 7); fromStr = d.toISOString().split('T')[0]; }
+    else if (period === 'month') { const d = new Date(today); d.setMonth(today.getMonth() - 1); fromStr = d.toISOString().split('T')[0]; }
+    // period='all' => fromStr='' (fetch all)
     try {
-      const pv = await api('GET', '/api/tray/vouchers?from=' + fromStr);
+      const url = '/api/tray/vouchers' + (fromStr ? '?from=' + fromStr : '');
+      const pv = await api('GET', url);
       pv.forEach(v => {
         const key = v.shop_type + '_' + v.shop_id + '_' + v.item_id;
         periodData[key] = (periodData[key] || 0) + (v.returned || 0);
+        // Also store with supply_0 key for Arif Supply
+        if (v.shop_id === 0 || v.shop_id === '0') {
+          const k2 = 'supply_0_' + v.item_id;
+          periodData[k2] = (periodData[k2] || 0) + (v.returned || 0);
+        }
       });
     } catch (e) {}
   }
   const shopBox = (sh) => {
     const cls = shopColors[colorIdx++ % shopColors.length];
     const bals = s.items.map(it => {
-      let bal;
-      if (period === 'all') {
-        const b = sh.balances.find(x => x.item_id === it.id);
-        bal = b ? b.balance : 0;
-      } else {
-        const key = sh.shop_type + '_' + sh.id + '_' + it.id;
-        // Arif Supply has shop_id=0, shop_type='supply'
-        const k2 = (sh.id === 0 ? 'supply_0_' : sh.shop_type + '_' + sh.id + '_') + it.id;
-        bal = periodData[key] || periodData[k2] || 0;
-      }
-      return { ...it, bal: Math.max(0, bal) };
+      // Always use voucher-based totals (period or all)
+      const key = sh.shop_type + '_' + sh.id + '_' + it.id;
+      const k2 = 'supply_0_' + it.id;
+      const bal = periodData[key] || (sh.id === 0 && periodData[k2]) || 0;
+      return { ...it, bal };
     }).filter(x => {
       // Show relevant items: Arif Supply gets Arif Tray, daily gets General Tray, both get others
       const nm = (x.name_ur + x.name_en).toLowerCase();
