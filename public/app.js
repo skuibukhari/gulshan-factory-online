@@ -1018,7 +1018,7 @@ async function renderTrayDash() {
   let s;
   try { s = await api('GET', '/api/tray/summary'); }
   catch (e) { box.innerHTML = '<p>لوڈ نہیں ہو سکا</p>'; return; }
-  const period = window._trayPeriod || 'all';
+  const period = window._trayPeriod || 'today';
   // Fetch voucher totals for period
   let pdata = {};
   try {
