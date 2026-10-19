@@ -352,6 +352,34 @@ db.exec(`CREATE TABLE IF NOT EXISTS tray_vouchers (
 );`);
 // Migration: shop_type for daily shops support
 try { db.exec(`ALTER TABLE tray_vouchers ADD COLUMN shop_type TEXT NOT NULL DEFAULT 'shop'`); } catch (e) {}
+// Migration: remove shop_id FK (breaks daily shops - shop_id can be in shops OR daily_shops)
+try {
+  const fk = db.prepare(`PRAGMA foreign_key_list(tray_vouchers)`).all();
+  const hasShopFk = fk.some(f => f.from === 'shop_id' && f.table === 'shops');
+  if (hasShopFk) {
+    console.log('[migration] removing shop_id FK from tray_vouchers (breaks daily shops)');
+    db.exec(`
+      CREATE TABLE tray_vouchers_new (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        voucher_no TEXT UNIQUE NOT NULL,
+        date TEXT NOT NULL,
+        shop_id INTEGER NOT NULL,
+        shop_type TEXT NOT NULL DEFAULT 'shop',
+        vehicle_id INTEGER REFERENCES vehicles(id) ON DELETE SET NULL,
+        item_id INTEGER NOT NULL REFERENCES tray_items(id),
+        sent INTEGER NOT NULL DEFAULT 0,
+        returned INTEGER NOT NULL DEFAULT 0,
+        notes TEXT DEFAULT '',
+        created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+        created_at TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+      INSERT INTO tray_vouchers_new SELECT * FROM tray_vouchers;
+      DROP TABLE tray_vouchers;
+      ALTER TABLE tray_vouchers_new RENAME TO tray_vouchers;
+    `);
+    console.log('[migration] shop_id FK removed');
+  }
+} catch (e) { console.log('[migration] shop_id FK removal failed:', e.message); }
 try { db.exec(`ALTER TABLE tray_opening ADD COLUMN shop_type TEXT NOT NULL DEFAULT 'shop'`); } catch (e) {}
 try {
   db.exec(`CREATE TABLE IF NOT EXISTS tray_opening_new (
