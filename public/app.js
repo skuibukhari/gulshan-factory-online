@@ -1201,7 +1201,14 @@ async function renderTrayDash() {
         let media = '';
         if (n.media_url) {
           if (n.media_type === 'video') {
-            media = '<div style="margin-top:8px"><video controls style="max-width:100%;border-radius:10px;max-height:300px"><source src="' + esc(n.media_url) + '"></video></div>';
+            const url = n.media_url;
+            // Check for YouTube URL
+            const ytMatch = url.match(/(?:youtube\.com\/(?:watch\?v=|embed\/|shorts\/)|youtu\.be\/)([a-zA-Z0-9_-]{11})/);
+            if (ytMatch) {
+              media = '<div style="margin-top:8px"><iframe width="100%" height="250" src="https://www.youtube.com/embed/' + ytMatch[1] + '" frameborder="0" allowfullscreen style="border-radius:10px;max-width:100%"></iframe></div>';
+            } else {
+              media = '<div style="margin-top:8px"><video controls style="max-width:100%;border-radius:10px;max-height:300px"><source src="' + esc(url) + '"></video></div>';
+            }
           } else if (n.media_type === 'image' || n.media_type === 'gif') {
             media = '<div style="margin-top:8px"><img src="' + esc(n.media_url) + '" style="max-width:100%;border-radius:10px;max-height:300px"></div>';
           }
