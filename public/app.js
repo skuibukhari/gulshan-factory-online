@@ -1609,33 +1609,51 @@ function printTrayReport() {
   const rows = window._trayRows || [];
   const sum = window._traySummary || { tot: { s: 0, r: 0 }, byItem: {} };
   const t = sum.tot;
-  const itemRows = Object.entries(sum.byItem).map(([k, v]) =>
-    `<tr><td>${v.icon} ${k}</td><td><b>${v.r}</b></td></tr>`).join('');
+  const itemRows = Object.entries(sum.byItem).map(([k, v], i) =>
+    `<tr style="background:${i%2 ? '#fff8f0' : '#fff'}"><td style="padding:10px;border-bottom:1px solid #f0f0f0">${v.icon} <b>${k}</b></td><td style="padding:10px;border-bottom:1px solid #f0f0f0;text-align:center"><b style="font-size:18px;color:#e8721c">${v.r}</b></td></tr>`).join('');
   const f = [];
   if ($('#trFrom') && $('#trFrom').value) f.push('سے: ' + $('#trFrom').value);
   if ($('#trTo') && $('#trTo').value) f.push('تک: ' + $('#trTo').value);
-  const html = `<h2 style="text-align:center">🧺 ٹرے اور باسکٹ رپورٹ — گلشن فیکٹری</h2>
-    <p style="text-align:center">رپورٹ کی تاریخ: ${karachiToday()}${f.length ? ' | فلٹر: ' + f.join('، ') : ''}</p>
-    <h3>📊 خلاصہ</h3>
-    <table border="1" style="width:100%;border-collapse:collapse;margin-bottom:12px"><tr><th>کل واپس (Returned)</th><th>واؤچر</th></tr>
-    <tr><td style="text-align:center"><b>${t.r}</b></td><td style="text-align:center"><b>${rows.length}</b></td></tr></table>
-    ${itemRows ? `<h3>🧺 آئٹم وائز خلاصہ</h3><table border="1" style="width:100%;border-collapse:collapse;margin-bottom:12px"><tr><th>آئٹم</th><th>واپس</th></tr>${itemRows}</table>` : ''}
+  const html = `
+    <div style="background:linear-gradient(135deg,#1a1a2e,#e8721c);color:#fff;padding:24px;border-radius:16px;text-align:center;margin-bottom:20px">
+      <div style="font-size:32px;margin-bottom:8px">🧺</div>
+      <h1 style="margin:0;font-size:26px">ٹرے اور باسکٹ رپورٹ</h1>
+      <div style="font-size:16px;opacity:.9;margin-top:6px">گلشن فیکٹری • Gulshan Factory</div>
+      <div style="margin-top:12px;background:rgba(255,255,255,.2);display:inline-block;padding:8px 24px;border-radius:20px;font-weight:bold">📅 ${karachiToday()}${f.length ? ' | ' + f.join('، ') : ''}</div>
+    </div>
+    <div style="display:flex;gap:12px;margin-bottom:20px">
+      <div style="flex:1;background:linear-gradient(135deg,#ff9a3c,#e8721c);color:#fff;border-radius:12px;padding:16px;text-align:center">
+        <div style="font-size:32px;font-weight:800">${t.r}</div><div style="font-size:13px">📥 کل واپس</div>
+      </div>
+      <div style="flex:1;background:linear-gradient(135deg,#42a5f5,#1565c0);color:#fff;border-radius:12px;padding:16px;text-align:center">
+        <div style="font-size:32px;font-weight:800">${rows.length}</div><div style="font-size:13px">🧾 واؤچر</div>
+      </div>
+    </div>
+    ${itemRows ? `<h3 style="color:#e8721c;border-bottom:3px solid #e8721c;padding-bottom:6px">🧺 آئٹم وائز خلاصہ</h3>
+    <table style="width:100%;border-collapse:collapse;margin-bottom:20px;box-shadow:0 2px 8px rgba(0,0,0,.1);border-radius:8px;overflow:hidden">
+    <tr style="background:#2d2d2d;color:#fff"><th style="padding:12px">آئٹم</th><th style="padding:12px">واپس</th></tr>${itemRows}</table>` : ''}
     ${(() => {
     const typeF = ($('#trShopType') && $('#trShopType').value) || '';
     const mkPTable = (list, title) => {
       if (typeF && ((typeF === 'daily') !== (title === '📝 روزانہ دکانیں'))) return '';
       if (!list.length) return '';
       const t = list.reduce((a, r) => ({ s: a.s + r.sent, r: a.r + r.returned }), { s: 0, r: 0 });
-      return `<h3>${title} (${list.length} واؤچر)</h3>
-      <table border="1" style="width:100%;border-collapse:collapse;margin-bottom:12px"><tr><th>تاریخ</th><th>واؤچر</th><th>دکان</th><th>آئٹم</th><th>واپس</th></tr>` +
-      list.map(r => `<tr><td>${r.date}</td><td>${r.voucher_no}</td><td>${r.shop_name}</td><td>${r.item_icon || ''} ${r.item_ur}</td><td><b>${r.returned}</b></td></tr>`).join('') +
-      `<tr><td colspan="4" style="text-align:center"><b>ٹوٹل</b></td><td><b>${t.s}</b></td><td><b>${t.r}</b></td><td><b>${t.s - t.r}</b></td></tr></table>`;
+      const tcolor = title.includes('سپلائی') ? '#e8721c' : '#7b1fa2';
+      return `<h3 style="color:${tcolor};border-bottom:3px solid ${tcolor};padding-bottom:6px;margin-top:20px">${title} <span style="background:${tcolor};color:#fff;padding:2px 12px;border-radius:12px;font-size:13px">${list.length} واؤچر</span></h3>
+      <table style="width:100%;border-collapse:collapse;margin-bottom:16px;box-shadow:0 2px 8px rgba(0,0,0,.08);border-radius:8px;overflow:hidden">
+      <tr style="background:${tcolor};color:#fff"><th style="padding:10px">تاریخ</th><th style="padding:10px">واؤچر</th><th style="padding:10px">دکان</th><th style="padding:10px">آئٹم</th><th style="padding:10px">واپس</th></tr>` +
+      list.map((r, i) => `<tr style="background:${i%2 ? '#fafafa' : '#fff'}"><td style="padding:8px;border-bottom:1px solid #f0f0f0;text-align:center">${r.date}</td><td style="padding:8px;border-bottom:1px solid #f0f0f0;text-align:center"><b>${r.voucher_no}</b></td><td style="padding:8px;border-bottom:1px solid #f0f0f0">${r.shop_name}</td><td style="padding:8px;border-bottom:1px solid #f0f0f0">${r.item_icon || ''} ${r.item_ur}</td><td style="padding:8px;border-bottom:1px solid #f0f0f0;text-align:center"><b style="color:#2e7d32;font-size:16px">${r.returned}</b></td></tr>`).join('') +
+      `<tr style="background:#fff3e0"><td colspan="4" style="padding:10px;text-align:center"><b>📊 ٹوٹل</b></td><td style="padding:10px;text-align:center"><b style="font-size:18px">${t.r}</b></td></tr></table>`;
     };
     return mkPTable(rows.filter(r => r.shop_type !== 'daily'), '🏪 سپلائی دکانیں') + mkPTable(rows.filter(r => r.shop_type === 'daily'), '📝 روزانہ دکانیں');
   })()}
     <p style="margin-top:16px">دستخط: ___________________</p>`;
   const w = window.open('', '_blank');
-  w.document.write(`<html><head><title>ٹرے باسکٹ رپورٹ</title><style>body{font-family:serif;direction:rtl;padding:20px}table{border-collapse:collapse}td,th{border:1px solid #000;padding:8px}h2,h3{margin:14px 0 8px}@media print{button{display:none}}</style></head><body>${html}<br><button onclick="window.print()" style="padding:10px 30px;font-size:16px">🖨 پرنٹ / PDF</button></body></html>`);
+  w.document.write(`<html><head><title>ٹرے باسکٹ رپورٹ</title><style>
+    body{font-family:'Segoe UI',Tahoma,sans-serif;direction:rtl;padding:20px;max-width:900px;margin:0 auto;color:#333}
+    @media print{button{display:none} body{padding:10px}}
+    </style></head><body>${html}<br><div style="text-align:center"><button onclick="window.print()" style="padding:12px 40px;font-size:16px;background:#2d2d2d;color:#fff;border:none;border-radius:10px;cursor:pointer">🖨 پرنٹ / PDF</button></div>
+    <p style="margin-top:24px;text-align:center;color:#999">دستخط: ___________________</p></body></html>`);
   w.document.close();
 }
 async function loadTotals() {
