@@ -977,9 +977,23 @@ async function renderTrayDash() {
   if (!isShop) {
     html += `<h3>🏭 فیکٹری اسٹاک (دستیاب)</h3><div class="cards">` +
       s.factory.map(f => `<div class="card"><div class="n">${f.available}</div><div class="l">${f.icon} ${f.name_ur}<br>${f.name_en}</div></div>`).join('') + `</div>`;
-    // 2. Item-wise totals (all shops combined)
+    // 2. Item-wise totals (from voucher data, never negative)
     const itemTots = s.items.map(it => {
-      const tot = s.shops.reduce((a, sh) => a + (sh.balances.find(b => b.item_id === it.id) || { balance: 0 }).balance, 0);
+      let tot = 0;
+      Object.keys(periodData).forEach(k => {
+        if (k.endsWith('_' + it.id)) tot += periodData[k];
+      });
+      // Avoid double-counting supply_0 keys (they're already in shop keys)
+      // Just sum unique: use shop-based keys only
+      tot = 0;
+      s.shops.forEach(sh => {
+        const key = sh.shop_type + '_' + sh.id + '_' + it.id;
+        tot += periodData[key] || 0;
+      });
+      // Add Arif Supply (shop_id=0) if not in shops list
+      if (!s.shops.some(sh => sh.id === 0)) {
+        tot += periodData['supply_0_' + it.id] || 0;
+      }
       return { ...it, total: tot };
     });
     const grandTot = itemTots.reduce((a, t) => a + t.total, 0);
