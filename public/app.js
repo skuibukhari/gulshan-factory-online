@@ -973,6 +973,45 @@ async function renderTray() {
   else if (TRAY.tab === 'ledger') renderTrayLedger();
   else renderTrayReport();
 }
+function showTrayToast(title, subtitle) {
+  // Remove existing toast
+  const old = document.getElementById('trayToast');
+  if (old) old.remove();
+  const toast = document.createElement('div');
+  toast.id = 'trayToast';
+  toast.innerHTML = `
+    <div style="display:flex;align-items:center;gap:12px">
+      <div style="font-size:36px;animation:trayBounce 0.6s ease">✅</div>
+      <div>
+        <div style="font-weight:700;font-size:16px;color:#1b5e20">${title}</div>
+        ${subtitle ? `<div style="font-size:13px;color:#555;margin-top:2px">${subtitle}</div>` : ''}
+      </div>
+    </div>
+    <div style="margin-top:10px;height:4px;background:#e8f5e9;border-radius:2px;overflow:hidden">
+      <div id="trayToastBar" style="height:100%;width:100%;background:linear-gradient(90deg,#43a047,#2e7d32);border-radius:2px;transition:width 3s linear"></div>
+    </div>`;
+  toast.style.cssText = `
+    position:fixed;top:20px;left:50%;transform:translateX(-50%) translateY(-100px);
+    background:#fff;border:2px solid #43a047;border-radius:16px;
+    padding:16px 20px;box-shadow:0 10px 30px rgba(46,125,50,0.25);
+    z-index:9999;min-width:280px;max-width:90vw;
+    font-family:'Noto Nastaliq Urdu','Jameel Noori Nastaleeq',serif;
+    opacity:0;transition:all 0.4s cubic-bezier(0.4,0,0.2,1);`;
+  document.body.appendChild(toast);
+  // Animate in
+  requestAnimationFrame(() => {
+    toast.style.opacity = '1';
+    toast.style.transform = 'translateX(-50%) translateY(0)';
+  });
+  // Animate progress bar
+  setTimeout(() => { const bar = document.getElementById('trayToastBar'); if (bar) bar.style.width = '0%'; }, 50);
+  // Auto-hide after 3 seconds
+  setTimeout(() => {
+    toast.style.opacity = '0';
+    toast.style.transform = 'translateX(-50%) translateY(-100px)';
+    setTimeout(() => toast.remove(), 400);
+  }, 3000);
+}
 async function renderTrayDash() {
   const box = document.getElementById('trayBody');
   const isShop = ME.role === 'shop';
@@ -1306,6 +1345,7 @@ async function saveTrayVoucher(kind) {
   }
   $('#tvMsg').innerHTML = `<div class="note">✅ ${ok} واؤچر محفوظ! <b>${vnos.join(', ')}</b></div>
     <div style="margin-top:8px"><button class="btn small dark" onclick="printLastTrayVouchers('${kind}')">🖨 پرنٹ کریں</button></div>`;
+  showTrayToast(`✅ ${ok} واؤچر محفوظ!`, vnos.join(', '));
   TRAY.items.forEach(it => { window['_tvPQ_' + it.id] = Number($('#tvQ_' + it.id).value) || 0; $('#tvQ_' + it.id).value = 0; $('#tvQ_' + it.id).closest('.tv-item').style.borderColor = '#e0e0e0'; });
   $('#tvNote').value = '';
   window._lastTrayVouchers = vnos;
