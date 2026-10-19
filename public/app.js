@@ -1032,6 +1032,15 @@ async function renderTrayDash() {
     if (sup.length) html += '<h3 style="margin-top:14px">🚚 سپلائی</h3><div class="shop-boxes">' + sup.map(mkBox).join('') + '</div>';
     if (daily.length) html += '<h3 style="margin-top:14px">📝 روزانہ دکانیں ('+daily.length+')</h3><div class="shop-boxes">' + daily.map(mkBox).join('') + '</div>';
   }
+  // Item settings (admin only)
+  if (!isShop && s.items) {
+    html += '<h3 style="margin-top:16px">🏷️ آئٹم سیٹنگ</h3><div style="background:#fff;border-radius:12px;padding:12px">' +
+      s.items.map(it => '<div style="display:flex;justify-content:space-between;align-items:center;padding:8px;border-bottom:1px solid #f0f0f0">' +
+        '<span>' + it.icon + ' <b>' + esc(it.name_ur) + '</b></span>' +
+        '<span><button class="btn small" onclick="editTrayItem(' + it.id + ')">✏️</button> ' +
+        '<button class="btn small" style="background:#c62828;color:#fff" onclick="delTrayItem(' + it.id + ')">🗑️</button></span></div>').join('') +
+      '<button class="btn" style="margin-top:8px" onclick="addTrayItem()">➕ نیا آئٹم</button></div>';
+  }
   box.innerHTML = html;
 }
 
