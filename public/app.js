@@ -1108,6 +1108,7 @@ async function loadTrayVoucherList() {
   let rows = [];
   try { rows = await api('GET', url); } catch (e) {}
   rows = rows.slice(0, 20);
+  window._trayVoucherRows = rows;
   const shopName = ($('#tvShop') && $('#tvShop').selectedOptions[0]) ? $('#tvShop').selectedOptions[0].text : '';
   box.innerHTML = `<h4 style="margin:8px 0">📝 ${esc(shopName)} — پچھلی انٹریز (${rows.length})</h4>
     <div style="overflow-x:auto"><table class="tbl"><tr><th>تاریخ</th><th>واؤچر</th><th>دکان</th><th>آئٹم</th><th>تعداد</th><th>عمل</th></tr>` +
