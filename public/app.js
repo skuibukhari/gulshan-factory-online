@@ -1133,6 +1133,7 @@ async function saveTrayVoucher(kind) {
   }
   $('#tvMsg').innerHTML = '<p>محفوظ ہو رہا ہے...</p>';
   let ok = 0, vnos = [];
+  let lastErr = '';
   for (const q of qtys) {
     try {
       const r = await api('POST', '/api/tray/vouchers', {
@@ -1141,7 +1142,11 @@ async function saveTrayVoucher(kind) {
         item_id: q.id, sent: isSent ? q.qty : 0, returned: isSent ? 0 : q.qty, notes: $('#tvNote').value,
       });
       ok++; vnos.push(r.voucher_no);
-    } catch (e) {}
+    } catch (e) { lastErr = e.message || JSON.stringify(e); }
+  }
+  if (!ok && lastErr) {
+    $('#tvMsg').innerHTML = `<div class="err">❌ Save nahi hua: ${lastErr}</div>`;
+    return;
   }
   $('#tvMsg').innerHTML = `<div class="note">✅ ${ok} واؤچر محفوظ! <b>${vnos.join(', ')}</b></div>
     <div style="margin-top:8px"><button class="btn small dark" onclick="printLastTrayVouchers('${kind}')">🖨 پرنٹ کریں</button></div>`;
