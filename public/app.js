@@ -1201,7 +1201,7 @@ async function loadTrayVoucherList() {
   if (!box) return;
   // Filter by selected shop
   const sh = trayParseShop(window._trayShop || 's0');
-  let url = '/api/tray/vouchers?shop_id=' + sh.shop_id + '&shop_type=' + sh.shop_type;
+  let url = '/api/tray/vouchers?shop_id=' + sh.shop_id + '&shop_type=' + sh.shop_type + '&_t=' + Date.now();
   let rows = [];
   try { rows = await api('GET', url); } catch (e) {}
   rows = rows.slice(0, 20);
