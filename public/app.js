@@ -1403,7 +1403,7 @@ function printLastTrayVouchers(kind) {
   // Re-read quantities from a snapshot saved at print time
   const html = `
     <div style="background:linear-gradient(135deg,#1a1a2e,#e8721c);color:#fff;padding:14px 20px;border-radius:12px;text-align:center;margin-bottom:12px">
-      <h1 style="margin:0;font-size:20px">🧺 ٹرے اور باسکٹ رپورٹ — گلشن فیکٹری</h1>
+      <h1 style="margin:0;font-size:26px;font-weight:700">🧺 ٹرے اور باسکٹ رپورٹ — گلشن فیکٹری</h1>
       <div style="margin-top:6px;font-size:12px;opacity:.9">📅 ${karachiToday()}${f.length ? ' | ' + f.join('، ') : ''}</div>
     </div>
     <div style="display:flex;gap:8px;margin-bottom:12px">
@@ -1428,10 +1428,10 @@ function printLastTrayVouchers(kind) {
       return `<div style="margin-bottom:12px;break-inside:avoid">
       <div style="display:flex;align-items:center;gap:8px;margin:12px 0 6px">
         <div style="width:10px;height:10px;border-radius:50%;background:${tc}"></div>
-        <div style="font-size:16px;font-weight:700">${title}</div>
+        <div style="font-size:19px;font-weight:700">${title}</div>
         <div style="margin-right:auto;background:#f0f0f0;padding:3px 14px;border-radius:12px;font-size:12px;font-weight:700">${list.length} واؤچر</div>
       </div>
-      <table style="width:100%;border-collapse:separate;border-spacing:0;font-size:13px;border-radius:10px;overflow:hidden;box-shadow:0 2px 10px rgba(0,0,0,.08)">
+      <table style="width:100%;border-collapse:separate;border-spacing:0;font-size:15px;border-radius:10px;overflow:hidden;box-shadow:0 2px 10px rgba(0,0,0,.08)">
       <tr><th style="padding:9px 6px;background:${tc};color:#fff">#</th><th style="padding:9px 6px;background:${tc};color:#fff">تاریخ</th><th style="padding:9px 6px;background:${tc};color:#fff">واؤچر</th><th style="padding:9px 6px;background:${tc};color:#fff">دکان</th><th style="padding:9px 6px;background:${tc};color:#fff">آئٹم</th><th style="padding:9px 6px;background:${tc};color:#fff">واپس</th></tr>` +
       list.map((r, i) => `<tr><td style="padding:8px 6px;text-align:center;border-bottom:1px solid #f0f0f0;background:${i%2 ? '#fafafa' : '#fff'}"><b>${i+1}</b></td><td style="padding:8px 6px;text-align:center;border-bottom:1px solid #f0f0f0;background:${i%2 ? '#fafafa' : '#fff'}">${r.date}</td><td style="padding:8px 6px;text-align:center;border-bottom:1px solid #f0f0f0;background:${i%2 ? '#fafafa' : '#fff'}"><b>${r.voucher_no}</b></td><td style="padding:8px 6px;border-bottom:1px solid #f0f0f0;background:${i%2 ? '#fafafa' : '#fff'}">${r.shop_name}</td><td style="padding:8px 6px;border-bottom:1px solid #f0f0f0;background:${i%2 ? '#fafafa' : '#fff'}">${r.item_icon || ''} ${r.item_ur}</td><td style="padding:8px 6px;text-align:center;border-bottom:1px solid #f0f0f0;background:${i%2 ? '#fafafa' : '#fff'}"><b style="font-size:16px">${r.returned}</b></td></tr>`).join('') +
       `<tr><td colspan="5" style="padding:9px 6px;text-align:center;background:#1a1a2e;color:#fff;font-weight:700">ٹوٹل</td><td style="padding:9px 6px;text-align:center;background:#1a1a2e;color:#fff;font-weight:700;font-size:16px">${t2.r}</td></tr></table></div>`;
