@@ -1238,8 +1238,9 @@ async function renderTrayVoucher(kind, keepShop) {
 async function loadTrayVoucherList() {
   const box = $('#tvList');
   if (!box) return;
-  // Filter by selected shop
-  const sh = trayParseShop(window._trayShop || 's0');
+  // Filter by selected shop - use dropdown value directly for accuracy
+  const shopVal = ($('#tvShop') && $('#tvShop').value) ? $('#tvShop').value : (window._trayShop || 's0');
+  const sh = trayParseShop(shopVal);
   let url = '/api/tray/vouchers?shop_id=' + sh.shop_id + '&shop_type=' + sh.shop_type + '&_t=' + Date.now();
   let rows = [];
   try { rows = await api('GET', url); } catch (e) {}
@@ -1349,7 +1350,10 @@ async function saveTrayVoucher(kind) {
   TRAY.items.forEach(it => { window['_tvPQ_' + it.id] = Number($('#tvQ_' + it.id).value) || 0; $('#tvQ_' + it.id).value = 0; $('#tvQ_' + it.id).closest('.tv-item').style.borderColor = '#e0e0e0'; });
   $('#tvNote').value = '';
   window._lastTrayVouchers = vnos;
-  loadTrayVoucherList();
+  // Sync shop before reloading list
+  if ($('#tvShop')) window._trayShop = $('#tvShop').value;
+  // Small delay to ensure server has committed, then reload
+  setTimeout(() => loadTrayVoucherList(), 300);
 }
 async function renderTrayOpening() {
   const box = $('#trayBody');
