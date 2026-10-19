@@ -1857,8 +1857,15 @@ app.post('/api/tray/vouchers', requireLogin, requireSection('tray_basket', 'full
   const shopType = b.shop_type === 'daily' ? 'daily' : 'shop';
   const shopTbl = shopType === 'daily' ? 'daily_shops' : 'shops';
   const isArif = shopType === 'shop' && shopId === 0;
-  if ((!isArif && !shopId) || (!isArif && !db.prepare(`SELECT id FROM ${shopTbl} WHERE id=?`).get(shopId)))
-    return res.status(400).json({ error: 'bad_shop' });
+  if (!isArif) {
+    if (!shopId) return res.status(400).json({ error: 'bad_shop' });
+    try {
+      const exists = db.prepare(`SELECT id FROM ${shopTbl} WHERE id=?`).get(shopId);
+      if (!exists) return res.status(400).json({ error: 'bad_shop', detail: 'shop_not_found' });
+    } catch (e) {
+      return res.status(500).json({ error: 'db_error', detail: 'table_' + shopTbl + '_missing', msg: e.message });
+    }
+  }
   if (!itemId || !db.prepare('SELECT id FROM tray_items WHERE id=?').get(itemId))
     return res.status(400).json({ error: 'bad_item' });
   if (!sent && !returned) return res.status(400).json({ error: 'empty_voucher' });
@@ -1902,10 +1909,11 @@ app.delete('/api/tray/vouchers/:id', requireLogin, requireSection('tray_basket',
 app.get('/api/tray/shop-options', requireLogin, requireSection('tray_basket', 'view'), (req, res) => {
   const shops = [{ value: 's0', name: '🚚 Arif Supply (total)', type: 'shop' }];
   let dshops = [];
+  let dErr = null;
   try {
     dshops = db.prepare("SELECT id, name FROM daily_shops WHERE active != 0 ORDER BY name").all()
       .map(s => ({ value: 'd' + s.id, name: s.name + ' (روزانہ)', type: 'daily' }));
-  } catch (e) {}
+  } catch (e) { dErr = e.message; }
   res.json([...shops, ...dshops]);
 });
 app.get('/api/tray/summary', requireLogin, requireSection('tray_basket', 'view'), (req, res) => {
