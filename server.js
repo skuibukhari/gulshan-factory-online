@@ -1983,6 +1983,33 @@ app.delete('/api/tray/notices/:id', requireLogin, (req, res) => {
   db.prepare('DELETE FROM tray_notices WHERE id=?').run(req.params.id);
   res.json({ ok: true });
 });
+// Video upload for notices (super_admin only)
+const NOTICE_DIR = path.join(DATA_DIR, 'notices');
+fs.mkdirSync(NOTICE_DIR, { recursive: true });
+app.use('/notices', express.static(NOTICE_DIR));
+function videoUpload() {
+  if (!loadMulter()) return null;
+  return multerLib({
+    storage: multerLib.diskStorage({
+      destination: NOTICE_DIR,
+      filename: (req, file, cb) => cb(null, 'vid-' + Date.now() + path.extname(file.originalname).toLowerCase()),
+    }),
+    limits: { fileSize: 50 * 1024 * 1024 },
+    fileFilter: (req, file, cb) => {
+      if (/^video\//.test(file.mimetype)) cb(null, true);
+      else cb(new Error('bad_type'));
+    },
+  }).single('file');
+}
+app.post('/api/tray/notices/upload', requireLogin, (req, res) => {
+  if (req.user.role !== 'super_admin') return res.status(403).json({ error: 'super only' });
+  const up = videoUpload();
+  if (!up) return res.status(500).json({ error: 'upload_not_ready' });
+  up(req, res, (err) => {
+    if (err || !req.file) return res.status(400).json({ error: 'bad_file' });
+    res.json({ ok: true, url: '/notices/' + req.file.filename });
+  });
+});
 // User-shop access assignments (super_admin only)
 app.get('/api/tray/user-shops/:userId', requireLogin, (req, res) => {
   if (req.user.role !== 'super_admin') return res.status(403).json({ error: 'super only' });

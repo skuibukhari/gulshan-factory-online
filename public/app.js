@@ -986,7 +986,9 @@ async function showTrayNoticeForm() {
       <option value="gif">GIF اینیمیشن</option>
       <option value="video">ویڈیو</option>
     </select>
-    <input type="text" id="tnUrl" placeholder="میڈیا URL (تصویر/ویڈیو کا لنک)" style="width:100%;padding:8px;margin:6px 0;border:1px solid #ddd;border-radius:8px">
+    <input type="text" id="tnUrl" placeholder="میڈیا URL (تصویر/ویڈیو کا لنک) یا نیچے فائل اپلوڈ کریں" style="width:100%;padding:8px;margin:6px 0;border:1px solid #ddd;border-radius:8px">
+    <div style="margin:6px 0"><label style="font-size:13px">📤 یا ویڈیو/تصویر اپلوڈ کریں:<br><input type="file" id="tnFile" accept="video/*,image/*,.gif" style="margin-top:4px"></label></div>
+    <div id="tnUploadStatus" style="font-size:12px;color:#666"></div>
     <div style="margin-top:8px">
       <button type="button" class="btn" onclick="saveTrayNotice()" style="background:#2e7d32;color:#fff">💾 محفوظ کریں</button>
       <button type="button" class="btn" onclick="document.getElementById('trayNoticeForm').innerHTML=''" style="background:#999;color:#fff">❌ منسوخ</button>
@@ -997,8 +999,27 @@ async function saveTrayNotice() {
   const title = document.getElementById('tnTitle').value;
   const message = document.getElementById('tnMsg').value;
   const media_type = document.getElementById('tnType').value;
-  const media_url = document.getElementById('tnUrl').value;
-  if (!message.trim() && !media_url.trim()) { alert('پیغام یا میڈیا URL دیں!'); return; }
+  let media_url = document.getElementById('tnUrl').value;
+  const fileInput = document.getElementById('tnFile');
+  // Upload file first if selected
+  if (fileInput && fileInput.files && fileInput.files[0]) {
+    const status = document.getElementById('tnUploadStatus');
+    status.textContent = '⏳ اپلوڈ ہو رہا ہے...';
+    const fd = new FormData();
+    fd.append('file', fileInput.files[0]);
+    try {
+      const resp = await fetch('/api/tray/notices/upload', { method: 'POST', body: fd, credentials: 'same-origin' });
+      const data = await resp.json();
+      if (data.ok && data.url) {
+        media_url = data.url;
+        status.textContent = '✅ اپلوڈ ہو گیا!';
+      } else {
+        status.textContent = '❌ اپلوڈ ناکام';
+        return;
+      }
+    } catch(e) { document.getElementById('tnUploadStatus').textContent = '❌ اپلوڈ ناکام'; return; }
+  }
+  if (!message.trim() && !media_url.trim()) { alert('پیغام یا میڈیا دیں!'); return; }
   try {
     await api('POST', '/api/tray/notices', { title, message, media_url, media_type });
     renderTrayDash();
