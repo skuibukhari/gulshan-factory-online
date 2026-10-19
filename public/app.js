@@ -1202,13 +1202,19 @@ async function renderTrayDash() {
         if (n.media_url) {
           if (n.media_type === 'video') {
             const url = n.media_url;
+            const plyrId = 'plyr-' + n.id;
             // Check for YouTube URL
             const ytMatch = url.match(/(?:youtube\.com\/(?:watch\?v=|embed\/|shorts\/)|youtu\.be\/)([a-zA-Z0-9_-]{11})/);
             if (ytMatch) {
-              media = '<div style="margin-top:8px"><iframe width="100%" height="250" src="https://www.youtube.com/embed/' + ytMatch[1] + '" frameborder="0" allowfullscreen style="border-radius:10px;max-width:100%"></iframe></div>';
+              media = '<div style="margin-top:8px"><div id="' + plyrId + '" data-plyr-provider="youtube" data-plyr-embed-id="' + ytMatch[1] + '"></div></div>';
             } else {
-              media = '<div style="margin-top:8px"><video controls style="max-width:100%;border-radius:10px;max-height:300px"><source src="' + esc(url) + '"></video></div>';
+              media = '<div style="margin-top:8px"><video id="' + plyrId + '" playsinline controls><source src="' + esc(url) + '"></video></div>';
             }
+            // Initialize Plyr after render
+            setTimeout(() => {
+              const el = document.getElementById(plyrId);
+              if (el && typeof Plyr !== 'undefined') { new Plyr('#' + plyrId, { controls: ['play', 'progress', 'current-time', 'mute', 'volume', 'fullscreen'] }); }
+            }, 100);
           } else if (n.media_type === 'image' || n.media_type === 'gif') {
             media = '<div style="margin-top:8px"><img src="' + esc(n.media_url) + '" style="max-width:100%;border-radius:10px;max-height:300px"></div>';
           }
