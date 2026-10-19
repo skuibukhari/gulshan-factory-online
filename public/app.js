@@ -1045,10 +1045,24 @@ async function renderTrayDash() {
     '<b>تا:</b><input type="date" id="trayTo" value="' + ct + '" style="padding:6px;border:2px solid #e8e0d0;border-radius:8px">' +
     '<button class="tfbtn on" onclick="window._trayFrom=document.getElementById(\'trayFrom\').value;window._trayTo=document.getElementById(\'trayTo\').value;renderTrayDash()">🔍 دیکھیں</button></div>' +
     '<div id="trayRange" style="margin-top:6px;color:#8a6d3b;font-weight:bold"></div></div>';
-  // Factory cards
-  if (!isShop && s.factory) {
-    html += '<h3>🏭 فیکٹری اسٹاک</h3><div class="cards">' +
-      s.factory.map(f => '<div class="card"><div class="n">'+f.available+'</div><div class="l">'+f.icon+' '+f.name_ur+'</div></div>').join('') + '</div>';
+  // Today's simple summary (no factory stock)
+  {
+    const todayStr = new Date().toISOString().slice(0,10);
+    let todayRet = {};
+    try {
+      const tv = await api('GET', '/api/tray/vouchers?from='+todayStr+'&to='+todayStr);
+      tv.forEach(v => {
+        const k = v.item_id;
+        todayRet[k] = (todayRet[k]||0) + (v.returned||0);
+      });
+    } catch(e) {}
+    const tItems = (s.items||[]).map(it => ({it, q: todayRet[it.id]||0}));
+    const tTot = tItems.reduce((a,x) => a+x.q, 0);
+    html += '<div style="background:linear-gradient(135deg,#2e7d32,#43a047);border-radius:16px;padding:18px;color:#fff;text-align:center;margin-bottom:12px">' +
+      '<div style="font-size:18px;font-weight:bold;margin-bottom:10px">📅 آج کی واپسی</div>' +
+      '<div style="display:flex;gap:10px;justify-content:center">' +
+      tItems.map(x => '<div style="background:rgba(255,255,255,.2);border-radius:10px;padding:10px 16px"><div style="font-size:24px;font-weight:800">'+x.q+'</div><div style="font-size:12px">'+x.it.icon+' '+x.it.name_ur+'</div></div>').join('') +
+      '</div><div style="margin-top:10px;font-size:14px;opacity:.9">کل: <b style="font-size:20px">'+tTot+'</b> واپس آئے</div></div>';
   }
   // Item totals
   if (s.items && s.shops) {
