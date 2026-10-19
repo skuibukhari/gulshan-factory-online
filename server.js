@@ -1875,7 +1875,7 @@ app.post('/api/tray/vouchers', requireLogin, requireSection('tray_basket', 'full
       VALUES (?,?,?,?,?,?,?,?,?,?)`).run(no, date, shopId, shopType, vehicleId, itemId, sent, returned, (b.notes || '').trim(), req.user.id);
     res.json({ ok: true, id: r.lastInsertRowid, voucher_no: no });
   } catch (e) {
-    return res.status(500).json({ error: 'insert_failed', detail: e.message });
+    return res.status(500).json({ error: 'insert_failed', detail: e.message + ' | shop=' + shopId + '/' + shopType + ' item=' + itemId + ' user=' + req.user.id });
   }
 });
 app.get('/api/tray/vouchers', requireLogin, requireSection('tray_basket', 'view'), (req, res) => {
