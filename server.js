@@ -1828,8 +1828,8 @@ app.put('/api/tray/opening', requireLogin, requireSection('tray_basket', 'full')
   const shopId = Math.max(0, parseInt(b.shop_id, 10) || 0);
   const itemId = parseInt(b.item_id, 10) || 0;
   const qty = Math.max(0, parseInt(b.qty, 10) || 0);
-  if (!itemId || !db.prepare('SELECT id FROM tray_items WHERE id=?').get(itemId))
-    return res.status(400).json({ error: 'bad_item' });
+  if (!itemId || !db.prepare('SELECT id FROM tray_items WHERE id=? AND active=1').get(itemId))
+    return res.status(400).json({ error: 'bad_item', detail: 'item_not_found_or_inactive id=' + itemId });
   const shopType = b.shop_type === 'daily' ? 'daily' : 'shop';
   if (shopId !== 0) {
     const tbl = shopType === 'daily' ? 'daily_shops' : 'shops';
@@ -1866,8 +1866,8 @@ app.post('/api/tray/vouchers', requireLogin, requireSection('tray_basket', 'full
       return res.status(500).json({ error: 'db_error', detail: 'table_' + shopTbl + '_missing', msg: e.message });
     }
   }
-  if (!itemId || !db.prepare('SELECT id FROM tray_items WHERE id=?').get(itemId))
-    return res.status(400).json({ error: 'bad_item' });
+  if (!itemId || !db.prepare('SELECT id FROM tray_items WHERE id=? AND active=1').get(itemId))
+    return res.status(400).json({ error: 'bad_item', detail: 'item_not_found_or_inactive id=' + itemId });
   if (!sent && !returned) return res.status(400).json({ error: 'empty_voucher' });
   const no = trayVoucherNo();
   try {
