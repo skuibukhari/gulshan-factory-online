@@ -978,11 +978,33 @@ async function renderTrayDash() {
     else if (period === 'week') { const d = new Date(now); d.setDate(now.getDate()-7); fromStr = d.toISOString().slice(0,10); }
     else if (period === 'month') { const d = new Date(now); d.setMonth(now.getMonth()-1); fromStr = d.toISOString().slice(0,10); }
     const pv = await api('GET', '/api/tray/vouchers' + (fromStr ? '?from='+fromStr : ''));
+    window._trayEarliest = null;
     pv.forEach(v => {
       const k = v.shop_type + '_' + v.shop_id + '_' + v.item_id;
       pdata[k] = (pdata[k]||0) + (v.returned||0);
+      if (v.date && (!window._trayEarliest || v.date < window._trayEarliest)) {
+        window._trayEarliest = v.date;
+      }
     });
   } catch(e) {}
+  // Set date range text after pdata is loaded
+  {
+    const fmtD = (d) => d.toLocaleDateString('ur-PK', {day:'numeric', month:'short', year:'numeric'});
+    const now2 = new Date();
+    let rangeTxt = '';
+    if (period === 'today') rangeTxt = '📅 ' + fmtD(now2);
+    else if (period === 'week') { const d = new Date(now2); d.setDate(now2.getDate()-7); rangeTxt = '📅 ' + fmtD(d) + ' سے ' + fmtD(now2); }
+    else if (period === 'month') { const d = new Date(now2); d.setMonth(now2.getMonth()-1); rangeTxt = '📅 ' + fmtD(d) + ' سے ' + fmtD(now2); }
+    else {
+      const earliest = window._trayEarliest;
+      if (earliest) { const d = new Date(earliest); rangeTxt = '📅 ' + fmtD(d) + ' سے ' + fmtD(now2) + ' (تمام ریکارڈ)'; }
+      else rangeTxt = '📅 شروع سے اب تک (تمام ریکارڈ)';
+    }
+    // Update after HTML is set (use timeout to ensure DOM exists)
+    setTimeout(() => { const el = document.getElementById('trayRange'); if (el) el.innerHTML = '🗓️ رپورٹ: ' + rangeTxt; }, 0);
+    // Also store for immediate use
+    window._trayRangeTxt = '🗓️ رپورٹ: ' + rangeTxt;
+  }
   const getQty = (sh, itemId) => {
     const k = sh.shop_type + '_' + sh.id + '_' + itemId;
     return pdata[k] || 0;
@@ -997,15 +1019,7 @@ async function renderTrayDash() {
   else if (period === 'week') { const d = new Date(now2); d.setDate(now2.getDate()-7); rangeTxt = '📅 ' + fmtD(d) + ' سے ' + fmtD(now2); }
   else if (period === 'month') { const d = new Date(now2); d.setMonth(now2.getMonth()-1); rangeTxt = '📅 ' + fmtD(d) + ' سے ' + fmtD(now2); }
   else {
-    // Find earliest voucher date for 'all'
-    let earliest = null;
-    try {
-      const allV = await api('GET', '/api/tray/vouchers');
-      if (allV.length) {
-        const dates = allV.map(v => v.date).sort();
-        earliest = dates[0];
-      }
-    } catch(e) {}
+    const earliest = window._trayEarliest;
     if (earliest) {
       const d = new Date(earliest);
       rangeTxt = '📅 ' + fmtD(d) + ' سے ' + fmtD(now2) + ' (تمام ریکارڈ)';
@@ -1013,8 +1027,7 @@ async function renderTrayDash() {
       rangeTxt = '📅 شروع سے اب تک (تمام ریکارڈ)';
     }
   }
-  html += '<div class="tray-filters"><div class="frow"><b>📅 مدت:</b>' + pb('today','آج') + pb('week','اس ہفتہ') + pb('month','اس مہینہ') + pb('all','تمام') + '</div>' +
-    '<div style="margin-top:6px;color:#8a6d3b;font-weight:bold">🗓️ رپورٹ: ' + rangeTxt + '</div></div>';
+  html += '<div class="tray-filters"><div class="frow"><b>📅 مدت:</b>' + pb('today','آج') + pb('week','اس ہفتہ') + pb('month','اس مہینہ') + pb('all','تمام') + '</div><div id="trayRange" style="margin-top:6px;color:#8a6d3b;font-weight:bold"></div></div>';
   // Factory cards
   if (!isShop && s.factory) {
     html += '<h3>🏭 فیکٹری اسٹاک</h3><div class="cards">' +
