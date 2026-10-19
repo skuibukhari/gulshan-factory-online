@@ -1959,11 +1959,12 @@ app.get('/api/tray/summary', requireLogin, requireSection('tray_basket', 'view')
     const s = db.prepare('SELECT id, name FROM shops WHERE id=?').get(scope);
     shops = s ? [mkShop('shop', s)] : [];
   } else {
-    // Arif Supply: aggregate all supply shops into one
+    // Arif Supply: aggregate all supply shops into one + direct shop_id=0 entries
     const supShops = db.prepare('SELECT id FROM shops WHERE active=1').all();
     const arifBalances = items.map(it => {
       const bal = supShops.reduce((a, s) => a + trayShopBalance(s.id, it.id, 'shop'), 0);
-      return { item_id: it.id, balance: bal };
+      const direct = trayShopBalance(0, it.id, 'shop');  // vouchers saved as Arif Supply (shop_id=0)
+      return { item_id: it.id, balance: bal + direct };
     });
     const arif = { id: 0, shop_type: 'shop', name: '🚚 Arif Supply', balances: arifBalances };
     const dAll = db.prepare('SELECT id, name FROM daily_shops WHERE active=1 ORDER BY name').all().map(s => mkShop('daily', s));
