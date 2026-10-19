@@ -1938,6 +1938,12 @@ app.delete('/api/tray/vouchers/:id', requireLogin, requireSection('tray_basket',
   db.prepare('DELETE FROM tray_vouchers WHERE id=?').run(req.params.id);
   res.json({ ok: true });
 });
+// Reset all tray vouchers (super admin only)
+app.delete('/api/tray/vouchers', requireLogin, (req, res) => {
+  if (req.user.role !== 'super') return res.status(403).json({ error: 'super only' });
+  const r = db.prepare('DELETE FROM tray_vouchers').run();
+  res.json({ ok: true, deleted: r.changes });
+});
 app.get('/api/tray/shop-options', requireLogin, requireSection('tray_basket', 'view'), (req, res) => {
   const shops = [{ value: 's0', name: '🚚 Arif Supply (total)', type: 'shop' }];
   let dshops = [];

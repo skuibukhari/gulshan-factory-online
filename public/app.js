@@ -996,7 +996,23 @@ async function renderTrayDash() {
   if (period === 'today') rangeTxt = '📅 ' + fmtD(now2);
   else if (period === 'week') { const d = new Date(now2); d.setDate(now2.getDate()-7); rangeTxt = '📅 ' + fmtD(d) + ' سے ' + fmtD(now2); }
   else if (period === 'month') { const d = new Date(now2); d.setMonth(now2.getMonth()-1); rangeTxt = '📅 ' + fmtD(d) + ' سے ' + fmtD(now2); }
-  else rangeTxt = '📅 شروع سے اب تک (تمام ریکارڈ)';
+  else {
+    // Find earliest voucher date for 'all'
+    let earliest = null;
+    try {
+      const allV = await api('GET', '/api/tray/vouchers');
+      if (allV.length) {
+        const dates = allV.map(v => v.date).sort();
+        earliest = dates[0];
+      }
+    } catch(e) {}
+    if (earliest) {
+      const d = new Date(earliest);
+      rangeTxt = '📅 ' + fmtD(d) + ' سے ' + fmtD(now2) + ' (تمام ریکارڈ)';
+    } else {
+      rangeTxt = '📅 شروع سے اب تک (تمام ریکارڈ)';
+    }
+  }
   html += '<div class="tray-filters"><div class="frow"><b>📅 مدت:</b>' + pb('today','آج') + pb('week','اس ہفتہ') + pb('month','اس مہینہ') + pb('all','تمام') + '</div>' +
     '<div style="margin-top:6px;color:#8a6d3b;font-weight:bold">🗓️ رپورٹ: ' + rangeTxt + '</div></div>';
   // Factory cards
@@ -1048,7 +1064,8 @@ async function renderTrayDash() {
         '<span>' + it.icon + ' <b>' + esc(it.name_ur) + '</b></span>' +
         '<span><button class="btn small" onclick="editTrayItem(' + it.id + ')">✏️</button> ' +
         '<button class="btn small" style="background:#c62828;color:#fff" onclick="delTrayItem(' + it.id + ')">🗑️</button></span></div>').join('') +
-      '<button class="btn" style="margin-top:8px" onclick="addTrayItem()">➕ نیا آئٹم</button></div>';
+      '<button class="btn" style="margin-top:8px" onclick="addTrayItem()">➕ نیا آئٹم</button>' +
+      '<button class="btn" style="margin-top:8px;background:#c62828;color:#fff" onclick="resetTrayData()">🗑️ سارا ڈیٹا ری سیٹ</button></div>';
   }
   box.innerHTML = html;
 }
@@ -1272,6 +1289,15 @@ async function delTrayOpening(shopId, shopType, itemId) {
 }
 
 
+async function resetTrayData() {
+  if (!confirm('⚠️ کیا آپ واقعی سارا ٹرے ڈیٹا ڈیلیٹ کرنا چاہتے ہیں؟\nیہ واپس نہیں آئے گا!')) return;
+  if (!confirm('آخری وارننگ! تمام واؤچر ڈیلیٹ ہو جائیں گے۔ جاری رکھیں؟')) return;
+  try {
+    const r = await api('DELETE', '/api/tray/vouchers');
+    alert('✅ ' + (r.deleted || 0) + ' واؤچر ڈیلیٹ ہو گئے!');
+    renderTrayDash();
+  } catch(e) { alert('❌ ' + (e.message || 'Error')); }
+}
 function delTrayItem(id) {
   if (!confirm('Item delete karna hai?')) return;
   api('DELETE', '/api/tray/items/' + id)
