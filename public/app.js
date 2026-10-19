@@ -973,6 +973,44 @@ async function renderTray() {
   else if (TRAY.tab === 'ledger') renderTrayLedger();
   else renderTrayReport();
 }
+async function showTrayNoticeForm() {
+  const box = document.getElementById('trayNoticeForm');
+  if (!box) return;
+  box.innerHTML = `<div style="background:#fff;border:2px solid #ff9800;border-radius:12px;padding:14px;margin-bottom:12px">
+    <h4>📢 نیا اعلان</h4>
+    <input type="text" id="tnTitle" placeholder="عنوان (optional)" style="width:100%;padding:8px;margin:6px 0;border:1px solid #ddd;border-radius:8px">
+    <textarea id="tnMsg" placeholder="پیغام لکھیں..." style="width:100%;padding:8px;margin:6px 0;border:1px solid #ddd;border-radius:8px;min-height:60px"></textarea>
+    <select id="tnType" style="padding:8px;margin:6px 0;border:1px solid #ddd;border-radius:8px">
+      <option value="none">صرف متن</option>
+      <option value="image">تصویر</option>
+      <option value="gif">GIF اینیمیشن</option>
+      <option value="video">ویڈیو</option>
+    </select>
+    <input type="text" id="tnUrl" placeholder="میڈیا URL (تصویر/ویڈیو کا لنک)" style="width:100%;padding:8px;margin:6px 0;border:1px solid #ddd;border-radius:8px">
+    <div style="margin-top:8px">
+      <button type="button" class="btn" onclick="saveTrayNotice()" style="background:#2e7d32;color:#fff">💾 محفوظ کریں</button>
+      <button type="button" class="btn" onclick="document.getElementById('trayNoticeForm').innerHTML=''" style="background:#999;color:#fff">❌ منسوخ</button>
+    </div>
+  </div>`;
+}
+async function saveTrayNotice() {
+  const title = document.getElementById('tnTitle').value;
+  const message = document.getElementById('tnMsg').value;
+  const media_type = document.getElementById('tnType').value;
+  const media_url = document.getElementById('tnUrl').value;
+  if (!message.trim()) { alert('پیغام لکھیں!'); return; }
+  try {
+    await api('POST', '/api/tray/notices', { title, message, media_url, media_type });
+    renderTrayDash();
+  } catch(e) { alert('Error: ' + (e.message || '')); }
+}
+async function delTrayNotice(id) {
+  if (!confirm('یہ اعلان حذف کریں؟')) return;
+  try {
+    await api('DELETE', '/api/tray/notices/' + id);
+    renderTrayDash();
+  } catch(e) { alert('Error: ' + (e.message || '')); }
+}
 function showTrayToast(title, subtitle) {
   // Remove existing toast
   const old = document.getElementById('trayToast');
@@ -1105,6 +1143,31 @@ async function renderTrayDash() {
     '<b>تا:</b><input type="date" id="trayTo" value="' + ct + '" style="padding:6px;border:2px solid #e8e0d0;border-radius:8px">' +
     '<button class="tfbtn on" onclick="window._trayFrom=document.getElementById(\'trayFrom\').value;window._trayTo=document.getElementById(\'trayTo\').value;renderTrayDash()">🔍 دیکھیں</button></div>' +
     '<div id="trayRange" style="margin-top:6px;color:#8a6d3b;font-weight:bold">🗓️ رپورٹ: ' + rangeTxt + '</div></div>';
+  // Notices/announcements (super admin only to manage)
+  try {
+    const notices = await api('GET', '/api/tray/notices');
+    if (notices && notices.length) {
+      html += '<div style="margin-bottom:12px">' + notices.map(n => {
+        let media = '';
+        if (n.media_url) {
+          if (n.media_type === 'video') {
+            media = '<div style="margin-top:8px"><video controls style="max-width:100%;border-radius:10px;max-height:300px"><source src="' + esc(n.media_url) + '"></video></div>';
+          } else if (n.media_type === 'image' || n.media_type === 'gif') {
+            media = '<div style="margin-top:8px"><img src="' + esc(n.media_url) + '" style="max-width:100%;border-radius:10px;max-height:300px"></div>';
+          }
+        }
+        const delBtn = (typeof ME !== 'undefined' && ME && ME.role === 'super_admin') ? '<button type="button" class="btn small" style="background:#c62828;color:#fff;margin-top:8px" onclick="delTrayNotice(' + n.id + ')">🗑️ حذف</button>' : '';
+        return '<div style="background:linear-gradient(135deg,#fff3e0,#ffe0b2);border:2px solid #ff9800;border-radius:14px;padding:14px;margin-bottom:10px">' +
+          '<div style="font-size:16px;font-weight:bold;color:#e65100">📢 ' + esc(n.title || 'اعلان') + '</div>' +
+          '<div style="margin-top:6px;font-size:14px;color:#4e342e;white-space:pre-wrap">' + esc(n.message) + '</div>' +
+          media + delBtn + '</div>';
+      }).join('') + '</div>';
+    }
+    // Super admin add notice button
+    if (typeof ME !== 'undefined' && ME && ME.role === 'super_admin') {
+      html += '<div style="margin-bottom:12px;text-align:center"><button type="button" class="btn" onclick="showTrayNoticeForm()" style="background:#ff9800;color:#fff">📢 نیا اعلان شامل کریں</button></div><div id="trayNoticeForm"></div>';
+    }
+  } catch(e) {}
   // Today's simple summary (no factory stock)
   {
     const todayStr = karachiToday();

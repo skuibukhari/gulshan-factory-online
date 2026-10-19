@@ -336,6 +336,16 @@ db.exec(`CREATE TABLE IF NOT EXISTS tray_opening (
   updated_at TEXT NOT NULL DEFAULT (datetime('now')),
   PRIMARY KEY (shop_id, item_id)
 );`);
+db.exec(`CREATE TABLE IF NOT EXISTS tray_notices (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  title TEXT DEFAULT '',
+  message TEXT NOT NULL,
+  media_url TEXT DEFAULT '',
+  media_type TEXT DEFAULT 'none',
+  active INTEGER DEFAULT 1,
+  created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  created_at TEXT DEFAULT (datetime('now'))
+)`);
 db.exec(`CREATE TABLE IF NOT EXISTS tray_vouchers (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   voucher_no TEXT UNIQUE NOT NULL,
@@ -1943,6 +1953,23 @@ app.delete('/api/tray/vouchers', requireLogin, (req, res) => {
   if (req.user.role !== 'super_admin') return res.status(403).json({ error: 'super only' });
   const r = db.prepare('DELETE FROM tray_vouchers').run();
   res.json({ ok: true, deleted: r.changes });
+});
+// Tray notices (announcements) - view for all, manage for super_admin only
+app.get('/api/tray/notices', requireLogin, requireSection('tray_basket', 'view'), (req, res) => {
+  const rows = db.prepare('SELECT * FROM tray_notices WHERE active=1 ORDER BY id DESC LIMIT 10').all();
+  res.json(rows);
+});
+app.post('/api/tray/notices', requireLogin, (req, res) => {
+  if (req.user.role !== 'super_admin') return res.status(403).json({ error: 'super only' });
+  const b = req.body || {};
+  const r = db.prepare('INSERT INTO tray_notices (title, message, media_url, media_type, created_by) VALUES (?,?,?,?,?)')
+    .run(b.title || '', b.message || '', b.media_url || '', b.media_type || 'none', req.user.id);
+  res.json({ ok: true, id: r.lastInsertRowid });
+});
+app.delete('/api/tray/notices/:id', requireLogin, (req, res) => {
+  if (req.user.role !== 'super_admin') return res.status(403).json({ error: 'super only' });
+  db.prepare('DELETE FROM tray_notices WHERE id=?').run(req.params.id);
+  res.json({ ok: true });
 });
 app.get('/api/tray/shop-options', requireLogin, requireSection('tray_basket', 'view'), (req, res) => {
   const shops = [{ value: 's0', name: '🚚 Arif Supply (total)', type: 'shop' }];
