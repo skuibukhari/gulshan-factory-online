@@ -977,6 +977,29 @@ async function renderTrayDash() {
   if (!isShop) {
     html += `<h3>🏭 فیکٹری اسٹاک (دستیاب)</h3><div class="cards">` +
       s.factory.map(f => `<div class="card"><div class="n">${f.available}</div><div class="l">${f.icon} ${f.name_ur}<br>${f.name_en}</div></div>`).join('') + `</div>`;
+  // Period-wise data: fetch vouchers (all or filtered by date)
+  let periodData = {};
+  {
+    const today = new Date();
+    let fromStr = '';
+    if (period === 'today') { fromStr = today.toISOString().split('T')[0]; }
+    else if (period === 'week') { const d = new Date(today); d.setDate(today.getDate() - 7); fromStr = d.toISOString().split('T')[0]; }
+    else if (period === 'month') { const d = new Date(today); d.setMonth(today.getMonth() - 1); fromStr = d.toISOString().split('T')[0]; }
+    // period='all' => fromStr='' (fetch all)
+    try {
+      const url = '/api/tray/vouchers' + (fromStr ? '?from=' + fromStr : '');
+      const pv = await api('GET', url);
+      pv.forEach(v => {
+        const key = v.shop_type + '_' + v.shop_id + '_' + v.item_id;
+        periodData[key] = (periodData[key] || 0) + (v.returned || 0);
+        // Also store with supply_0 key for Arif Supply
+        if (v.shop_id === 0 || v.shop_id === '0') {
+          const k2 = 'supply_0_' + v.item_id;
+          periodData[k2] = (periodData[k2] || 0) + (v.returned || 0);
+        }
+      });
+    } catch (e) {}
+  }
     // 2. Item-wise totals (from voucher data, never negative)
     const itemTots = s.items.map(it => {
       let tot = 0;
@@ -1007,29 +1030,7 @@ async function renderTrayDash() {
   const dailyShops = s.shops.filter(sh => sh.shop_type === 'daily');
   const shopColors = ['sb1','sb2','sb3','sb4','sb5','sb6','sb7','sb8','sb9'];
   let colorIdx = 0;
-  // Period-wise data: fetch vouchers (all or filtered by date)
-  let periodData = {};
-  {
-    const today = new Date();
-    let fromStr = '';
-    if (period === 'today') { fromStr = today.toISOString().split('T')[0]; }
-    else if (period === 'week') { const d = new Date(today); d.setDate(today.getDate() - 7); fromStr = d.toISOString().split('T')[0]; }
-    else if (period === 'month') { const d = new Date(today); d.setMonth(today.getMonth() - 1); fromStr = d.toISOString().split('T')[0]; }
-    // period='all' => fromStr='' (fetch all)
-    try {
-      const url = '/api/tray/vouchers' + (fromStr ? '?from=' + fromStr : '');
-      const pv = await api('GET', url);
-      pv.forEach(v => {
-        const key = v.shop_type + '_' + v.shop_id + '_' + v.item_id;
-        periodData[key] = (periodData[key] || 0) + (v.returned || 0);
-        // Also store with supply_0 key for Arif Supply
-        if (v.shop_id === 0 || v.shop_id === '0') {
-          const k2 = 'supply_0_' + v.item_id;
-          periodData[k2] = (periodData[k2] || 0) + (v.returned || 0);
-        }
-      });
-    } catch (e) {}
-  }
+  // periodData moved up
   const shopBox = (sh) => {
     const cls = shopColors[colorIdx++ % shopColors.length];
     const bals = s.items.map(it => {
