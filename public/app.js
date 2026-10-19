@@ -1106,8 +1106,7 @@ async function renderTrayDash() {
     '<div id="trayRange" style="margin-top:6px;color:#8a6d3b;font-weight:bold">🗓️ رپورٹ: ' + rangeTxt + '</div></div>';
   // Today's simple summary (no factory stock)
   {
-    const _ld2 = new Date();
-    const todayStr = _ld2.getFullYear() + '-' + String(_ld2.getMonth()+1).padStart(2,'0') + '-' + String(_ld2.getDate()).padStart(2,'0');
+    const todayStr = karachiToday();
     let todayRet = {};
     try {
       const tv = await api('GET', '/api/tray/vouchers?from='+todayStr+'&to='+todayStr);
