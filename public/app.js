@@ -977,8 +977,10 @@ async function renderTrayDash() {
     if (period === 'today') fromStr = now.toISOString().slice(0,10);
     else if (period === 'week') { const d = new Date(now); d.setDate(now.getDate()-7); fromStr = d.toISOString().slice(0,10); }
     else if (period === 'month') { const d = new Date(now); d.setMonth(now.getMonth()-1); fromStr = d.toISOString().slice(0,10); }
+    else if (period === 'yesterday') { const d = new Date(); d.setDate(d.getDate()-1); fromStr = d.toISOString().slice(0,10); }
     else if (period === 'custom') { fromStr = window._trayFrom || ''; }
-    const toStr = (period === 'custom' && window._trayTo) ? window._trayTo : '';
+    let toStr = (period === 'custom' && window._trayTo) ? window._trayTo : '';
+    if (period === 'yesterday') { const d = new Date(); d.setDate(d.getDate()-1); toStr = d.toISOString().slice(0,10); }
     let vurl = '/api/tray/vouchers';
     if (fromStr) vurl += '?from='+fromStr;
     if (typeof toStr !== 'undefined' && toStr) vurl += (fromStr ? '&' : '?') + 'to='+toStr;
@@ -998,6 +1000,7 @@ async function renderTrayDash() {
     const now2 = new Date();
     let rangeTxt = '';
     if (period === 'today') rangeTxt = '📅 ' + fmtD(now2);
+    else if (period === 'yesterday') { const d = new Date(now2); d.setDate(now2.getDate()-1); rangeTxt = '📅 ' + fmtD(d); }
     else if (period === 'week') { const d = new Date(now2); d.setDate(now2.getDate()-7); rangeTxt = '📅 ' + fmtD(d) + ' سے ' + fmtD(now2); }
     else if (period === 'month') { const d = new Date(now2); d.setMonth(now2.getMonth()-1); rangeTxt = '📅 ' + fmtD(d) + ' سے ' + fmtD(now2); }
     else if (period === 'custom') {
@@ -1028,6 +1031,7 @@ async function renderTrayDash() {
   const now2 = new Date();
   let rangeTxt = '';
   if (period === 'today') rangeTxt = '📅 ' + fmtD(now2);
+  else if (period === 'yesterday') { const d = new Date(now2); d.setDate(now2.getDate()-1); rangeTxt = '📅 ' + fmtD(d); }
   else if (period === 'week') { const d = new Date(now2); d.setDate(now2.getDate()-7); rangeTxt = '📅 ' + fmtD(d) + ' سے ' + fmtD(now2); }
   else if (period === 'month') { const d = new Date(now2); d.setMonth(now2.getMonth()-1); rangeTxt = '📅 ' + fmtD(d) + ' سے ' + fmtD(now2); }
   else {
@@ -1040,11 +1044,11 @@ async function renderTrayDash() {
     }
   }
   const cf = window._trayFrom || '', ct = window._trayTo || '';
-  html += '<div class="tray-filters"><div class="frow"><b>📅 مدت:</b>' + pb('today','آج') + pb('week','اس ہفتہ') + pb('month','اس مہینہ') + pb('all','تمام') + pb('custom','اپنی مرضی') + '</div>' +
+  html += '<div class="tray-filters"><div class="frow"><b>📅 مدت:</b>' + pb('today','آج') + pb('yesterday','کل') + pb('week','اس ہفتہ') + pb('month','اس مہینہ') + pb('all','تمام') + pb('custom','اپنی مرضی') + '</div>' +
     '<div class="frow" ' + showCustom + '><b>از:</b><input type="date" id="trayFrom" value="' + cf + '" style="padding:6px;border:2px solid #e8e0d0;border-radius:8px">' +
     '<b>تا:</b><input type="date" id="trayTo" value="' + ct + '" style="padding:6px;border:2px solid #e8e0d0;border-radius:8px">' +
     '<button class="tfbtn on" onclick="window._trayFrom=document.getElementById(\'trayFrom\').value;window._trayTo=document.getElementById(\'trayTo\').value;renderTrayDash()">🔍 دیکھیں</button></div>' +
-    '<div id="trayRange" style="margin-top:6px;color:#8a6d3b;font-weight:bold"></div></div>';
+    '<div id="trayRange" style="margin-top:6px;color:#8a6d3b;font-weight:bold">🗓️ رپورٹ: ' + rangeTxt + '</div></div>';
   // Today's simple summary (no factory stock)
   {
     const todayStr = new Date().toISOString().slice(0,10);
