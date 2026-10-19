@@ -1117,12 +1117,14 @@ async function renderTrayDash() {
       });
     } catch(e) {}
     const tItems = (s.items||[]).map(it => ({it, q: todayRet[it.id]||0}));
-    const tTot = tItems.reduce((a,x) => a+x.q, 0);
+    const isBasket = (it) => { const nm = (it.name_ur + ' ' + it.name_en).toLowerCase(); return nm.includes('باسکٹ') || nm.includes('basket'); };
+    const trayTot = tItems.filter(x => !isBasket(x.it)).reduce((a,x) => a+x.q, 0);
+    const basketTot = tItems.filter(x => isBasket(x.it)).reduce((a,x) => a+x.q, 0);
     html += '<div style="background:linear-gradient(135deg,#2e7d32,#43a047);border-radius:16px;padding:18px;color:#fff;text-align:center;margin-bottom:12px">' +
       '<div style="font-size:18px;font-weight:bold;margin-bottom:10px">📅 آج کی واپسی</div>' +
       '<div style="display:flex;gap:10px;justify-content:center">' +
       tItems.map(x => '<div style="background:rgba(255,255,255,.2);border-radius:10px;padding:10px 16px"><div style="font-size:24px;font-weight:800">'+x.q+'</div><div style="font-size:12px">'+x.it.icon+' '+x.it.name_ur+'</div></div>').join('') +
-      '</div><div style="margin-top:10px;font-size:14px;opacity:.9">کل: <b style="font-size:20px">'+tTot+'</b> واپس آئے</div></div>';
+      '</div><div style="margin-top:10px;font-size:14px;opacity:.95">🍽️ ٹرے: <b style="font-size:20px">'+trayTot+'</b> &nbsp;&nbsp; 🧺 باسکٹ: <b style="font-size:20px">'+basketTot+'</b></div></div>';
   }
   // Item totals
   if (s.items && s.shops) {
@@ -1151,7 +1153,8 @@ async function renderTrayDash() {
     }).map(it => ({it, q: getQty(sh, it.id)}));
     const total = items.reduce((a,x) => a+x.q, 0);
     const alert = total >= 30 ? ' alert' : '';
-    return '<div class="shop-box '+cls+alert+'"><div class="sname">'+esc(sh.name)+'</div>' +
+    const shopVal = (sh.shop_type === 'daily' ? 'd' : 's') + sh.id;
+    return '<div class="shop-box '+cls+alert+'" onclick="TRAY.tab=\'ret\';window._trayShop=\''+shopVal+'\';renderTray()" style="cursor:pointer" title="انٹری کے لیے دبائیں"><div class="sname">'+esc(sh.name)+'</div>' +
       '<div class="sitems">' + items.map(x => '<div class="si"><div class="e">'+x.it.icon+'</div><div class="v">'+x.q+'</div></div>').join('') + '</div>' +
       '<div class="stotal"><div class="tv">'+total+'</div><div class="tl">کل</div></div></div>';
   };
@@ -1215,10 +1218,7 @@ async function renderTrayVoucher(kind, keepShop) {
     <div class="tv-item" style="background:#fff;border:2px solid #e0e0e0;border-radius:12px;padding:12px;margin:8px 0;display:flex;align-items:center;justify-content:space-between">
       <div style="font-size:16px;font-weight:bold">${it.icon} ${it.name_ur}<br><small style="color:#888">${it.name_en}</small></div>
       <div style="display:flex;gap:8px;align-items:center">
-        <button type="button" class="btn" style="width:44px;height:44px;font-size:22px;border-radius:50%" onclick="tvItemAdj(${it.id},-1)">−</button>
-        <input type="number" id="tvQ_${it.id}" value="0" min="0" style="width:64px;text-align:center;font-size:24px;font-weight:bold;border:2px solid #e8721c;border-radius:8px;padding:4px" onfocus="this.select()">
-        <button type="button" class="btn" style="width:44px;height:44px;font-size:22px;border-radius:50%" onclick="tvItemAdj(${it.id},1)">+</button>
-        <button type="button" class="btn small" onclick="tvItemAdj(${it.id},10)">+10</button>
+        <input type="number" id="tvQ_${it.id}" value="0" min="0" inputmode="numeric" style="width:90px;text-align:center;font-size:28px;font-weight:bold;border:2px solid #e8721c;border-radius:10px;padding:8px" onfocus="this.select()">
       </div>
     </div>`).join('');
   box.innerHTML = `<h3>${isSent ? '📤 بھیجا — Sent' : '📥 واپس — Return'}</h3>
