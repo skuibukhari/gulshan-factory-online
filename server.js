@@ -2002,8 +2002,10 @@ app.post('/api/tray/user-shops', requireLogin, (req, res) => {
 });
 // Get my assigned shops (for filtering dashboard)
 app.get('/api/tray/my-shops', requireLogin, (req, res) => {
-  if (req.user.role === 'super_admin' || req.user.role === 'factory') return res.json({ all: true });
-  res.json({ all: false, shops: userTrayShops(req.user.id) });
+  if (req.user.role === 'super_admin') return res.json({ all: true });
+  const assigned = userTrayShops(req.user.id);
+  if (!assigned.length) return res.json({ all: true }); // no assignments = see all
+  res.json({ all: false, shops: assigned });
 });
 app.get('/api/tray/shop-options', requireLogin, requireSection('tray_basket', 'view'), (req, res) => {
   const shops = [{ value: 's0', name: '🚚 Arif Supply (total)', type: 'shop' }];
