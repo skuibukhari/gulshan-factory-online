@@ -1569,6 +1569,8 @@ async function trShopTypeFilter(type) {
   const sel = $('#trShop');
   const cur = sel.value;
   sel.innerHTML = '<option value="">تمام</option>' + await trayShopOptions(cur, type || undefined);
+  const typeSel = $('#trShopType');
+  if (typeSel) typeSel.value = type || '';
 }
 
 async function loadTrayReport() {
