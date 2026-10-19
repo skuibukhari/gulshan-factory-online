@@ -305,3 +305,43 @@ tr.hot td{background:#fff3e0 !important;font-weight:bold}
   .card .n { font-size: 20px; }
   .card .l { font-size: 11px; }
 }
+
+/* Tray Dashboard v3 - Colorful Shop Boxes */
+.tray-hero { background: linear-gradient(135deg, #6a1b9a, #e8721c); border-radius: 20px; padding: 20px; text-align: center; color: #fff; margin-bottom: 12px; }
+.tray-hero h2 { font-size: 24px; margin: 0; }
+.tray-hero .sub { opacity: .85; font-size: 12px; margin-top: 4px; }
+.tray-filters { background: #fff; border-radius: 16px; padding: 12px; margin-bottom: 12px; box-shadow: 0 2px 8px rgba(0,0,0,.05); }
+.tray-filters .frow { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-bottom: 8px; }
+.tray-filters .frow:last-child { margin-bottom: 0; }
+.tfbtn { padding: 7px 16px; border: none; border-radius: 18px; font-size: 13px; font-weight: bold; cursor: pointer; background: #f0f0f0; color: #666; }
+.tfbtn.on { background: linear-gradient(135deg, #e8721c, #d35f0a); color: #fff; }
+.tray-kpis { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin-bottom: 12px; }
+.tray-kpi { border-radius: 14px; padding: 12px 8px; text-align: center; color: #fff; }
+.tray-kpi .v { font-size: 26px; font-weight: 800; }
+.tray-kpi .t { font-size: 11px; opacity: .9; }
+.tk1 { background: linear-gradient(135deg, #ff9a3c, #e8721c); }
+.tk2 { background: linear-gradient(135deg, #42a5f5, #1565c0); }
+.tk3 { background: linear-gradient(135deg, #ab47bc, #7b1fa2); }
+.tk4 { background: linear-gradient(135deg, #66bb6a, #2e7d32); }
+.shop-boxes { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
+.shop-box { border-radius: 18px; padding: 14px 10px; text-align: center; color: #fff; position: relative; overflow: hidden; border: 3px solid transparent; }
+.shop-box .sname { font-weight: 800; font-size: 16px; margin-bottom: 8px; }
+.shop-box .sitems { display: flex; justify-content: center; gap: 12px; margin: 8px 0; }
+.shop-box .si { background: rgba(255,255,255,.25); border-radius: 10px; padding: 5px 10px; min-width: 58px; }
+.shop-box .si .e { font-size: 22px; }
+.shop-box .si .v { font-size: 24px; font-weight: 800; }
+.shop-box .stotal { margin-top: 8px; padding-top: 8px; border-top: 2px solid rgba(255,255,255,.3); }
+.shop-box .stotal .tv { font-size: 28px; font-weight: 800; }
+.shop-box.alert { border-color: #ff1744; animation: tpulse 2s infinite; }
+.shop-box.alert::before { content: '🔴 30+'; position: absolute; top: 6px; left: 6px; background: #ff1744; color: #fff; font-size: 10px; font-weight: bold; padding: 2px 8px; border-radius: 10px; }
+@keyframes tpulse { 0%,100% { box-shadow: 0 4px 12px rgba(255,23,68,.2); } 50% { box-shadow: 0 4px 20px rgba(255,23,68,.5); } }
+.sb1 { background: linear-gradient(135deg, #ff9a3c, #e65100); }
+.sb2 { background: linear-gradient(135deg, #42a5f5, #1565c0); }
+.sb3 { background: linear-gradient(135deg, #ab47bc, #7b1fa2); }
+.sb4 { background: linear-gradient(135deg, #66bb6a, #2e7d32); }
+.sb5 { background: linear-gradient(135deg, #ef5350, #c62828); }
+.sb6 { background: linear-gradient(135deg, #26c6da, #00838f); }
+.sb7 { background: linear-gradient(135deg, #ffa726, #ef6c00); }
+.sb8 { background: linear-gradient(135deg, #7e57c2, #4527a0); }
+.sb9 { background: linear-gradient(135deg, #26a69a, #00695c); }
+@media (max-width: 650px) { .shop-boxes { grid-template-columns: repeat(2, 1fr); } .tray-kpis { grid-template-columns: repeat(2, 1fr); } }

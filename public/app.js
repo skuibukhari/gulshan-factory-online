@@ -984,9 +984,39 @@ async function renderTrayDash() {
       itemTots.map(t => `<div class="card"><div class="n">${t.total}</div><div class="l">${t.icon} ${t.name_ur}<br>${t.name_en}</div></div>`).join('') +
       `<div class="card" style="background:linear-gradient(135deg,#2e7d32,#43a047)"><div class="n">${grandTot}</div><div class="l">📋 کل ٹوٹل<br>Total</div></div></div>`;
   }
-  // 3. Shop-wise tables, separated by type
+  // 3. Colorful shop boxes (v3)
   const supShops = s.shops.filter(sh => sh.shop_type !== 'daily');
   const dailyShops = s.shops.filter(sh => sh.shop_type === 'daily');
+  const shopColors = ['sb1','sb2','sb3','sb4','sb5','sb6','sb7','sb8','sb9'];
+  let colorIdx = 0;
+  const shopBox = (sh) => {
+    const cls = shopColors[colorIdx++ % shopColors.length];
+    const bals = s.items.map(it => {
+      const b = sh.balances.find(x => x.item_id === it.id);
+      return { ...it, bal: b ? b.balance : 0 };
+    }).filter(x => {
+      // Show relevant items: Arif Supply gets Arif Tray, daily gets General Tray, both get others
+      const nm = (x.name_ur + x.name_en).toLowerCase();
+      const isArif = nm.includes('عارف') || nm.includes('arif');
+      const isGen = nm.includes('عام') || nm.includes('general');
+      if (sh.shop_type === 'daily') return !isArif;
+      if (sh.id === 0) return !isGen;
+      return true;
+    });
+    const total = bals.reduce((a, x) => a + x.bal, 0);
+    const alert = total >= 30 ? ' alert' : '';
+    return `<div class="shop-box ${cls}${alert}" onclick="TRAY.tab='ledger';renderTray()">
+      <div class="sname">${esc(sh.name)}</div>
+      <div class="sitems">${bals.map(x => `<div class="si"><div class="e">${x.icon}</div><div class="v">${x.bal}</div></div>`).join('')}</div>
+      <div class="stotal"><div class="tv">${total}</div><div class="tl">کل</div></div>
+    </div>`;
+  };
+  if (supShops.length) {
+    html += `<h3 style="margin-top:14px">🚚 سپلائی</h3><div class="shop-boxes">${supShops.map(shopBox).join('')}</div>`;
+  }
+  if (dailyShops.length) {
+    html += `<h3 style="margin-top:14px">📝 روزانہ دکانیں (${dailyShops.length})</h3><div class="shop-boxes">${dailyShops.map(shopBox).join('')}</div>`;
+  }
   const shopTable = (list, title) => {
     if (!list.length) return '';
     const colTots = s.items.map(it => list.reduce((a, sh) => a + (sh.balances.find(b => b.item_id === it.id) || { balance: 0 }).balance, 0));
@@ -1003,10 +1033,8 @@ async function renderTrayDash() {
   if (isShop) {
     html += shopTable(s.shops, '🏪 میرا حساب');
     html += `<div class="note">🔒 آپ صرف اپنا حساب دیکھ سکتے ہیں — انٹری صرف سپر ایڈمن کرے گا</div>`;
-  } else {
-    html += shopTable(supShops, '🏪 سپلائی دکانیں');
-    html += shopTable(dailyShops, '📝 روزانہ دکانیں');
   }
+  // Non-shop users see colorful boxes above (no tables needed)
   box.innerHTML = html;
 }
 
@@ -1098,8 +1126,11 @@ async function editTrayVoucher(id) {
   try { rows = await api('GET', '/api/tray/vouchers'); } catch (e) { return; }
   const v = rows.find(r => r.id === id);
   if (!v) return;
+  // Set shop first and re-render to show correct items
+  const shopVal = (v.shop_type === 'daily' ? 'd' : 's') + v.shop_id;
+  window._trayShop = shopVal;
+  await renderTrayVoucher('ret', shopVal);
   $('#tvDate').value = v.date;
-  $('#tvShop').value = (v.shop_type === 'daily' ? 'd' : 's') + v.shop_id;
   TRAY.items.forEach(it => { $('#tvQ_' + it.id).value = 0; });
   const qid = '#tvQ_' + v.item_id;
   if ($(qid)) $(qid).value = v.sent || v.returned;
