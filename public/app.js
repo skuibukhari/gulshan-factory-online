@@ -949,7 +949,7 @@ async function renderTray() {
   const isShop = ME.role === 'shop';
   try { TRAY.items = await api('GET', '/api/tray/items'); } catch (e) { TRAY.items = []; }
   const tabs = [['dash', '📊 ڈیش بورڈ']];
-  if (full) { tabs.push(['sent', '📤 بھیجا']); tabs.push(['ret', '📥 واپس']); tabs.push(['opening', '🏭 اوپننگ']); }
+  if (full) { tabs.push(['ret', '📥 واپسی انٹری']); tabs.push(['opening', '🏭 اوپننگ']); }
   tabs.push(['ledger', '🧾 کھاتہ']);
   tabs.push(['report', '🖨 رپورٹ']);
   if (!tabs.some(t => t[0] === TRAY.tab)) TRAY.tab = 'dash';
@@ -957,7 +957,6 @@ async function renderTray() {
     <div class="tabs">${tabs.map(t => `<button class="${TRAY.tab === t[0] ? 'active' : ''}" onclick="TRAY.tab='${t[0]}';renderTray()">${t[1]}</button>`).join('')}</div>
     <div id="trayBody" style="margin-top:12px"></div>`;
   if (TRAY.tab === 'dash') renderTrayDash();
-  else if (TRAY.tab === 'sent') renderTrayVoucher('sent');
   else if (TRAY.tab === 'ret') renderTrayVoucher('ret');
   else if (TRAY.tab === 'opening') renderTrayOpening();
   else if (TRAY.tab === 'ledger') renderTrayLedger();
@@ -1053,7 +1052,56 @@ async function renderTrayVoucher(kind) {
     <div style="margin:12px 0 4px;font-weight:bold;color:#555">${isSent ? '➡️ کتنی بھیجی؟ (ہر آئٹم)' : '⬅️ کتنی واپس آئی؟ (ہر آئٹم)'}</div>
     ${itemCards}
     <button class="btn green" style="width:100%;padding:16px;font-size:20px;margin-top:12px;border-radius:12px" onclick="saveTrayVoucher('${kind}')">💾 ${isSent ? 'بھیجا' : 'واپس'} محفوظ کریں</button>
-    <div id="tvMsg" style="margin-top:10px"></div>`;
+    <div id="tvMsg" style="margin-top:10px"></div>
+    <div id="tvList" style="margin-top:16px"></div>`;
+  loadTrayVoucherList();
+}
+async function loadTrayVoucherList() {
+  const box = $('#tvList');
+  if (!box) return;
+  let rows = [];
+  try { rows = await api('GET', '/api/tray/vouchers'); } catch (e) {}
+  rows = rows.slice(0, 20);
+  box.innerHTML = `<h4 style="margin:8px 0">📝 حالیہ واؤچر (${rows.length})</h4>
+    <div style="overflow-x:auto"><table class="tbl"><tr><th>تاریخ</th><th>واؤچر</th><th>دکان</th><th>آئٹم</th><th>تعداد</th><th>عمل</th></tr>` +
+    (rows.map(r => {
+      const qty = r.sent || r.returned;
+      const type = r.sent ? '📤' : '📥';
+      return `<tr><td>${r.date}</td><td>${r.voucher_no}</td><td>${esc(r.shop_name)}</td><td>${r.item_icon} ${r.item_ur}</td><td><b>${type} ${qty}</b></td>
+      <td style="white-space:nowrap">
+        <button class="btn small" onclick="editTrayVoucher(${r.id})">✏️</button>
+        <button class="btn small" style="background:#c62828;color:#fff" onclick="delTrayVoucher(${r.id})">🗑️</button>
+      </td></tr>`;
+    }).join('') || '<tr><td colspan="6">کوئی واؤچر نہیں</td></tr>') + `</table></div>`;
+}
+async function editTrayVoucher(id) {
+  let rows = [];
+  try { rows = await api('GET', '/api/tray/vouchers'); } catch (e) { return; }
+  const v = rows.find(r => r.id === id);
+  if (!v) return;
+  $('#tvDate').value = v.date;
+  $('#tvShop').value = (v.shop_type === 'daily' ? 'd' : 's') + v.shop_id;
+  TRAY.items.forEach(it => { $('#tvQ_' + it.id).value = 0; });
+  const qid = '#tvQ_' + v.item_id;
+  if ($(qid)) $(qid).value = v.sent || v.returned;
+  $('#tvNote').value = v.notes || '';
+  window._editingVoucher = id;
+  $('#tvMsg').innerHTML = `<div class="note">✏️ واؤچر <b>${v.voucher_no}</b> ایڈٹ ہو رہا ہے — محفوظ دبائیں</div>
+    <button class="btn small" onclick="cancelTrayEdit()">❌ منسوخ</button>`;
+  window.scrollTo(0, 0);
+}
+function cancelTrayEdit() {
+  window._editingVoucher = null;
+  TRAY.items.forEach(it => { $('#tvQ_' + it.id).value = 0; });
+  $('#tvNote').value = '';
+  $('#tvMsg').innerHTML = '';
+}
+async function delTrayVoucher(id) {
+  if (!confirm('Voucher delete karna hai?')) return;
+  try {
+    await api('DELETE', '/api/tray/vouchers/' + id);
+    loadTrayVoucherList();
+  } catch (e) { alert('Error: ' + (e.message || '')); }
 }
 function tvItemAdj(id, n) {
   const el = $('#tvQ_' + id);
@@ -1065,6 +1113,24 @@ async function saveTrayVoucher(kind) {
   const sh = trayParseShop($('#tvShop').value);
   const qtys = TRAY.items.map(it => ({ id: it.id, qty: Number($('#tvQ_' + it.id).value) || 0 })).filter(x => x.qty > 0);
   if (!qtys.length) { $('#tvMsg').innerHTML = `<div class="err">❌ کوئی تعداد نہیں لکھی</div>`; return; }
+  // Edit mode: update single voucher
+  if (window._editingVoucher) {
+    const q = qtys[0];
+    if (!q) { $('#tvMsg').innerHTML = `<div class="err">❌ تعداد لکھیں</div>`; return; }
+    try {
+      await api('PUT', '/api/tray/vouchers/' + window._editingVoucher, {
+        date: $('#tvDate').value, shop_id: sh.shop_id, shop_type: sh.shop_type,
+        vehicle_id: ($('#tvVeh') && $('#tvVeh').value) ? Number($('#tvVeh').value) : null,
+        item_id: q.id, sent: isSent ? q.qty : 0, returned: isSent ? 0 : q.qty, notes: $('#tvNote').value,
+      });
+      $('#tvMsg').innerHTML = `<div class="note">✅ واؤچر اپڈیٹ ہو گیا!</div>`;
+      window._editingVoucher = null;
+      TRAY.items.forEach(it => { $('#tvQ_' + it.id).value = 0; });
+      $('#tvNote').value = '';
+      loadTrayVoucherList();
+    } catch (e) { $('#tvMsg').innerHTML = `<div class="err">❌ ${e.message || 'خرابی'}</div>`; }
+    return;
+  }
   $('#tvMsg').innerHTML = '<p>محفوظ ہو رہا ہے...</p>';
   let ok = 0, vnos = [];
   for (const q of qtys) {
@@ -1082,6 +1148,7 @@ async function saveTrayVoucher(kind) {
   TRAY.items.forEach(it => { window['_tvPQ_' + it.id] = Number($('#tvQ_' + it.id).value) || 0; $('#tvQ_' + it.id).value = 0; $('#tvQ_' + it.id).closest('.tv-item').style.borderColor = '#e0e0e0'; });
   $('#tvNote').value = '';
   window._lastTrayVouchers = vnos;
+  loadTrayVoucherList();
 }
 async function renderTrayOpening() {
   const box = $('#trayBody');
@@ -1096,8 +1163,27 @@ async function renderTrayOpening() {
       <label><br><button class="btn green" onclick="saveTrayOpening()">💾 محفوظ کریں</button></label>
     </div><div id="toMsg" style="margin:8px 0"></div>
     <h3>موجودہ اوپننگ</h3>
-    <table class="tbl"><tr><th>جگہ</th><th>آئٹم</th><th>تعداد</th></tr>
-    ${opening.map(o => `<tr><td>${esc(o.shop_name || '')}</td><td>${o.icon} ${o.name_ur}</td><td><b>${o.qty}</b></td></tr>`).join('') || '<tr><td colspan="3">کوئی اوپننگ نہیں</td></tr>'}</table>`;
+    <table class="tbl"><tr><th>جگہ</th><th>آئٹم</th><th>تعداد</th><th>عمل</th></tr>
+    ${opening.map(o => `<tr><td>${esc(o.shop_name || '')}</td><td>${o.icon} ${o.name_ur}</td><td><b>${o.qty}</b></td>
+      <td style="white-space:nowrap">
+        <button class="btn small" onclick="editTrayOpening(${o.shop_id},'${o.shop_type}',${o.item_id},${o.qty})">✏️</button>
+        <button class="btn small" style="background:#c62828;color:#fff" onclick="delTrayOpening(${o.shop_id},'${o.shop_type}',${o.item_id})">🗑️</button>
+      </td></tr>`).join('') || '<tr><td colspan="4">کوئی اوپننگ نہیں</td></tr>'}</table>`;
+}
+function editTrayOpening(shopId, shopType, itemId, qty) {
+  $('#toShop').value = (shopType === 'daily' ? 'd' : 's') + shopId;
+  $('#toItem').value = itemId;
+  $('#toQty').value = qty;
+  $('#toQty').focus();
+  $('#toMsg').innerHTML = '<div class="note">✏️ ایڈٹ کریں اور محفوظ دبائیں</div>';
+  window.scrollTo(0, 0);
+}
+async function delTrayOpening(shopId, shopType, itemId) {
+  if (!confirm('Delete karna hai?')) return;
+  try {
+    await api('DELETE', '/api/tray/opening', { shop_id: shopId, shop_type: shopType, item_id: itemId });
+    renderTrayOpening();
+  } catch (e) { alert('Error: ' + (e.message || '')); }
 }
 async function saveTrayOpening() {
   try {

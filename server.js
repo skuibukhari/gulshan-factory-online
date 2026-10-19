@@ -1824,6 +1824,12 @@ app.put('/api/tray/opening', requireLogin, requireSection('tray_basket', 'full')
     ON CONFLICT(shop_id, shop_type, item_id) DO UPDATE SET qty=excluded.qty, updated_at=datetime('now')`).run(shopId, shopType, itemId, qty);
   res.json({ ok: true });
 });
+app.delete('/api/tray/opening', requireLogin, requireSection('tray_basket', 'full'), (req, res) => {
+  const b = req.body || {};
+  db.prepare('DELETE FROM tray_opening WHERE shop_id=? AND shop_type=? AND item_id=?')
+    .run(b.shop_id || 0, b.shop_type || 'shop', b.item_id);
+  res.json({ ok: true });
+});
 app.post('/api/tray/vouchers', requireLogin, requireSection('tray_basket', 'full'), (req, res) => {
   const b = req.body || {};
   const shopId = parseInt(b.shop_id, 10) || 0;
@@ -1863,6 +1869,14 @@ app.get('/api/tray/vouchers', requireLogin, requireSection('tray_basket', 'view'
     ${where} ORDER BY v.date DESC, v.id DESC LIMIT 500`).all(...args);
   rows.forEach(r => { r.shop_name = trayShopName(r.shop_type, r.shop_id); });
   res.json(rows);
+});
+app.put('/api/tray/vouchers/:id', requireLogin, requireSection('tray_basket', 'full'), (req, res) => {
+  const b = req.body || {};
+  const v = db.prepare('SELECT id FROM tray_vouchers WHERE id=?').get(req.params.id);
+  if (!v) return res.status(404).json({ error: 'not_found' });
+  db.prepare(`UPDATE tray_vouchers SET date=?, shop_id=?, shop_type=?, vehicle_id=?, item_id=?, sent=?, returned=?, notes=? WHERE id=?`)
+    .run(b.date, b.shop_id, b.shop_type || 'shop', b.vehicle_id || null, b.item_id, b.sent || 0, b.returned || 0, b.notes || '', req.params.id);
+  res.json({ ok: true });
 });
 app.delete('/api/tray/vouchers/:id', requireLogin, requireSection('tray_basket', 'full'), (req, res) => {
   db.prepare('DELETE FROM tray_vouchers WHERE id=?').run(req.params.id);
