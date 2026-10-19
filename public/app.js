@@ -989,7 +989,16 @@ async function renderTrayDash() {
   };
   let html = '';
   const pb = (v,t) => '<button class="tfbtn ' + (period===v?'on':'') + '" onclick="window._trayPeriod=\''+v+'\';renderTrayDash()">'+t+'</button>';
-  html += '<div class="tray-filters"><div class="frow"><b>📅 مدت:</b>' + pb('today','آج') + pb('week','اس ہفتہ') + pb('month','اس مہینہ') + pb('all','تمام') + '</div></div>';
+  // Date range label
+  const fmtD = (d) => d.toLocaleDateString('ur-PK', {day:'numeric', month:'short', year:'numeric'});
+  const now2 = new Date();
+  let rangeTxt = '';
+  if (period === 'today') rangeTxt = '📅 ' + fmtD(now2);
+  else if (period === 'week') { const d = new Date(now2); d.setDate(now2.getDate()-7); rangeTxt = '📅 ' + fmtD(d) + ' سے ' + fmtD(now2); }
+  else if (period === 'month') { const d = new Date(now2); d.setMonth(now2.getMonth()-1); rangeTxt = '📅 ' + fmtD(d) + ' سے ' + fmtD(now2); }
+  else rangeTxt = '📅 شروع سے اب تک (تمام ریکارڈ)';
+  html += '<div class="tray-filters"><div class="frow"><b>📅 مدت:</b>' + pb('today','آج') + pb('week','اس ہفتہ') + pb('month','اس مہینہ') + pb('all','تمام') + '</div>' +
+    '<div style="margin-top:6px;color:#8a6d3b;font-weight:bold">🗓️ رپورٹ: ' + rangeTxt + '</div></div>';
   // Factory cards
   if (!isShop && s.factory) {
     html += '<h3>🏭 فیکٹری اسٹاک</h3><div class="cards">' +
