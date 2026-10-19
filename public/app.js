@@ -1026,15 +1026,17 @@ function trayParseShop(v) {
     : { shop_id: parseInt(v.slice(1), 10) || 0, shop_type: 'shop' };
 }
 
-async function renderTrayVoucher(kind) {
+async function renderTrayVoucher(kind, keepShop) {
   const isSent = kind === 'sent';
   const box = $('#trayBody');
+  // Preserve selected shop across re-renders
+  const prevShop = keepShop || (window._trayShop || 's0');
   let vehicles = [];
   try { vehicles = await api('GET', '/api/vehicles').catch(() => []); } catch (e) {}
-  const shopOpts = await trayShopOptions();
+  const shopOpts = await trayShopOptions(prevShop);
   // Filter items by shop type: Arif Supply gets Arif Tray, daily gets General Tray, both get Basket
   const filterItems = () => {
-    const sh = trayParseShop(($('#tvShop') && $('#tvShop').value) || 's0');
+    const sh = trayParseShop(prevShop || 's0');
     return TRAY.items.filter(it => {
       const key = (it.key || '').toLowerCase();
       const ur = (it.name_ur || '');
@@ -1058,7 +1060,7 @@ async function renderTrayVoucher(kind) {
   box.innerHTML = `<h3>${isSent ? '📤 بھیجا — Sent' : '📥 واپس — Return'}</h3>
     <div class="formgrid" style="margin-bottom:8px">
       <label>📅 تاریخ<br><input type="date" id="tvDate" value="${karachiToday()}"></label>
-      <label>🏪 دکان<br><select id="tvShop" style="font-size:16px" onchange="renderTrayVoucher('ret')">${shopOpts}</select></label>
+      <label>🏪 دکان<br><select id="tvShop" style="font-size:16px" onchange="window._trayShop=this.value;renderTrayVoucher('ret',this.value)">${shopOpts}</select></label>
       ${isSent ? `<label>🚚 گاڑی<br><select id="tvVeh"><option value="">—</option>${vehicles.map(v => `<option value="${v.id}">${esc(v.name)}</option>`).join('')}</select></label>` : ''}
       <label>📝 نوٹ<br><input type="text" id="tvNote" placeholder="اختیاری"></label>
     </div>
@@ -1173,7 +1175,7 @@ async function saveTrayVoucher(kind) {
 }
 async function renderTrayOpening() {
   const box = $('#trayBody');
-  const shopOpts = await trayShopOptions();
+  const shopOpts = await trayShopOptions(prevShop);
   let opening = [];
   try { opening = await api('GET', '/api/tray/opening'); } catch (e) {}
   box.innerHTML = `<h3>🏭 اوپننگ اسٹاک — Opening Stock</h3>
@@ -1316,7 +1318,7 @@ function printLastTrayVouchers(kind) {
 
 async function renderTrayLedger() {
   const box = $('#trayBody');
-  const shopOpts = await trayShopOptions();
+  const shopOpts = await trayShopOptions(prevShop);
   box.innerHTML = `<h3>🧾 دکان کا کھاتہ — Shop Ledger</h3>
     <div class="formgrid">
       <label>🏪 دکان منتخب کریں<br><select id="tlShop">${shopOpts}</select></label>
