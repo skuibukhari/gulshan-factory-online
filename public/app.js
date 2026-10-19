@@ -1663,11 +1663,19 @@ function printTrayReport() {
   })()}
     <p style="margin-top:16px">دستخط: ___________________</p>`;
   const w = window.open('', '_blank');
-  w.document.write(`<html><head><title>ٹرے باسکٹ رپورٹ</title><style>
-    body{font-family:'Segoe UI',Tahoma,sans-serif;direction:rtl;padding:20px;max-width:900px;margin:0 auto;color:#333}
-    @media print{button{display:none} body{padding:10px}}
-    </style></head><body>${html}<br><div style="text-align:center"><button onclick="window.print()" style="padding:12px 40px;font-size:16px;background:#2d2d2d;color:#fff;border:none;border-radius:10px;cursor:pointer">🖨 پرنٹ / PDF</button></div>
-    <p style="margin-top:24px;text-align:center;color:#999">دستخط: ___________________</p></body></html>`);
+  w.document.write(`<html><head><title>ٹرے باسکٹ رپورٹ</title>
+    <link href="https://fonts.googleapis.com/css2?family=Noto+Nastaliq+Urdu:wght@400;600;700&display=swap" rel="stylesheet">
+    <style>
+    body{font-family:'Noto Nastaliq Urdu','Jameel Noori Nastaleeq',serif;direction:rtl;padding:16px;max-width:800px;margin:0 auto;color:#333;font-size:13px;line-height:2}
+    h1{font-size:22px !important} h3{font-size:16px !important;margin:10px 0 6px !important}
+    table{font-size:12px} td,th{padding:6px !important}
+    @media print{
+      button{display:none} body{padding:8px;font-size:11px}
+      h1{font-size:20px !important} h3{font-size:14px !important}
+      .no-break{break-inside:avoid}
+    }
+    </style></head><body>${html}<br><div style="text-align:center" class="no-break"><button onclick="window.print()" style="padding:10px 36px;font-size:15px;background:#2d2d2d;color:#fff;border:none;border-radius:10px;cursor:pointer;font-family:inherit">🖨 پرنٹ / PDF</button></div>
+    <p style="margin-top:16px;text-align:center;color:#999;font-size:12px">دستخط: ___________________</p></body></html>`);
   w.document.close();
 }
 async function loadTotals() {
