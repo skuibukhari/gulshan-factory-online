@@ -953,9 +953,20 @@ async function renderTray() {
   tabs.push(['ledger', '🧾 کھاتہ']);
   tabs.push(['report', '🖨 رپورٹ']);
   if (!tabs.some(t => t[0] === TRAY.tab)) TRAY.tab = 'dash';
+  const tabNames = {dash:'📊 ڈیش بورڈ', ret:'📥 واپسی انٹری', ledger:'🧾 کھاتہ', report:'🖨 رپورٹ'};
+  const curTabName = tabNames[TRAY.tab] || tabNames.dash;
   el.innerHTML = `<h2 class="st">🧺 <span>ٹرے اور باسکٹ</span></h2>
-    <div class="tabs">${tabs.map(t => `<button class="${TRAY.tab === t[0] ? 'active' : ''}" onclick="TRAY.tab='${t[0]}';renderTray()">${t[1]}</button>`).join('')}</div>
-    <div id="trayBody" style="margin-top:12px"></div>`;
+    <div class="tray-dropdown-wrap" id="trayDD">
+      <button class="tray-dropdown-btn" onclick="document.getElementById('trayDD').classList.toggle('open')">
+        <span style="font-weight:700">${curTabName}</span>
+        <span class="tray-dd-arrow">▼</span>
+      </button>
+      <div class="tray-dropdown-menu">
+        ${tabs.map(t => `<button class="${TRAY.tab === t[0] ? 'active' : ''}" onclick="TRAY.tab='${t[0]}';renderTray()"><span style="font-size:20px">${t[1].split(' ')[0]}</span><span style="font-weight:700">${t[1].split(' ').slice(1).join(' ')}</span>${TRAY.tab === t[0] ? '<span style="margin-right:auto;color:#2e7d32;font-weight:bold">✓</span>' : ''}</button>`).join('')}
+      </div>
+    </div>
+    <div id="trayBody" style="margin-top:12px"></div>
+    <script>setTimeout(() => { document.addEventListener('click', function _tdd(e) { const dd = document.getElementById('trayDD'); if (dd && !dd.contains(e.target)) dd.classList.remove('open'); }); }, 100);</script>`;
   if (TRAY.tab === 'dash') renderTrayDash();
   else if (TRAY.tab === 'ret') renderTrayVoucher('ret');
   else if (TRAY.tab === 'opening') renderTrayOpening();

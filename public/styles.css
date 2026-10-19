@@ -345,3 +345,33 @@ tr.hot td{background:#fff3e0 !important;font-weight:bold}
 .sb8 { background: linear-gradient(135deg, #7e57c2, #4527a0); }
 .sb9 { background: linear-gradient(135deg, #26a69a, #00695c); }
 @media (max-width: 650px) { .shop-boxes { grid-template-columns: repeat(2, 1fr); } .tray-kpis { grid-template-columns: repeat(2, 1fr); } }
+
+/* Premium Tray Dropdown - Nastaleeq Bold */
+.tray-dropdown-wrap { position: relative; margin: 12px 0; }
+.tray-dropdown-btn {
+  width: 100%; display: flex; align-items: center; justify-content: space-between;
+  padding: 14px 20px; background: linear-gradient(135deg, #1a1a2e, #2d2d44);
+  color: #fff; border: 2px solid #d4af37; border-radius: 16px;
+  font-family: 'Noto Nastaliq Urdu', 'Jameel Noori Nastaleeq', serif;
+  font-size: 17px; font-weight: 700; line-height: 2.2;
+  cursor: pointer; box-shadow: 0 4px 15px rgba(0,0,0,0.2); transition: all 0.3s;
+}
+.tray-dropdown-btn:hover { box-shadow: 0 6px 20px rgba(212,175,55,0.3); }
+.tray-dd-arrow { font-size: 18px; color: #d4af37; transition: transform 0.3s; }
+.tray-dropdown-wrap.open .tray-dd-arrow { transform: rotate(180deg); }
+.tray-dropdown-menu {
+  position: absolute; top: 100%; left: 0; right: 0; margin-top: 8px;
+  background: #fff; border-radius: 16px; box-shadow: 0 10px 30px rgba(0,0,0,0.15);
+  overflow: hidden; opacity: 0; transform: translateY(-10px); pointer-events: none;
+  transition: all 0.3s; z-index: 100;
+}
+.tray-dropdown-wrap.open .tray-dropdown-menu { opacity: 1; transform: translateY(0); pointer-events: auto; }
+.tray-dropdown-menu button {
+  width: 100%; display: flex; align-items: center; gap: 12px;
+  padding: 16px 20px; border: none; background: none;
+  font-family: 'Noto Nastaliq Urdu', 'Jameel Noori Nastaleeq', serif;
+  font-size: 16px; font-weight: 700; line-height: 2.2; color: #333;
+  cursor: pointer; transition: background 0.2s; text-align: right;
+}
+.tray-dropdown-menu button:hover { background: #fff8f0; }
+.tray-dropdown-menu button.active { background: linear-gradient(135deg, #fff8f0, #ffecd2); color: #e8721c; }
