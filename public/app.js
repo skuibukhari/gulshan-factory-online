@@ -1220,7 +1220,7 @@ async function renderTrayVoucher(kind, keepShop) {
         <input type="number" id="tvQ_${it.id}" value="0" min="0" inputmode="numeric" style="width:90px;text-align:center;font-size:28px;font-weight:bold;border:2px solid #e8721c;border-radius:10px;padding:8px" onfocus="this.select()">
       </div>
     </div>`).join('');
-  box.innerHTML = `<div style="margin-bottom:10px"><button class="btn" onclick="TRAY.tab='dash';renderTray()" style="background:#616161;color:#fff">⬅️ ڈیش بورڈ واپس</button></div>
+  box.innerHTML = `<div style="margin-bottom:10px"><button type="button" class="btn" onclick="TRAY.tab='dash';renderTray()" style="background:#616161;color:#fff">⬅️ ڈیش بورڈ واپس</button></div>
     <h3>${isSent ? '📤 بھیجا — Sent' : '📥 واپس — Return'}</h3>
     <div class="formgrid" style="margin-bottom:8px">
       <label>📅 تاریخ<br><input type="date" id="tvDate" value="${karachiToday()}"></label>
