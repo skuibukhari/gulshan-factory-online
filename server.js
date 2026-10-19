@@ -1908,9 +1908,15 @@ app.get('/api/tray/summary', requireLogin, requireSection('tray_basket', 'view')
     const s = db.prepare('SELECT id, name FROM shops WHERE id=?').get(scope);
     shops = s ? [mkShop('shop', s)] : [];
   } else {
-    const all = db.prepare('SELECT id, name FROM shops WHERE active=1 ORDER BY name').all().map(s => mkShop('shop', s));
+    // Arif Supply: aggregate all supply shops into one
+    const supShops = db.prepare('SELECT id FROM shops WHERE active=1').all();
+    const arifBalances = items.map(it => {
+      const bal = supShops.reduce((a, s) => a + trayShopBalance(s.id, it.id, 'shop'), 0);
+      return { item_id: it.id, balance: bal };
+    });
+    const arif = { id: 0, shop_type: 'shop', name: '🚚 Arif Supply', balances: arifBalances };
     const dAll = db.prepare('SELECT id, name FROM daily_shops WHERE active=1 ORDER BY name').all().map(s => mkShop('daily', s));
-    shops = [...all, ...dAll];
+    shops = [arif, ...dAll];
   }
   res.json({ items, factory, shops });
 });
