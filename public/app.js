@@ -1219,28 +1219,31 @@ async function renderTrayDash() {
     const notices = await api('GET', '/api/tray/notices');
     if (notices && notices.length) {
       html += '<div style="margin-bottom:12px">' + notices.map(n => {
+        const isVideoOnly = n.media_type === 'video' && !n.message.trim() && !n.title.trim();
         let media = '';
         if (n.media_url) {
           if (n.media_type === 'video') {
             const url = n.media_url;
             const plyrId = 'plyr-' + n.id;
-            // Check for YouTube URL
             const ytMatch = url.match(/(?:youtube\.com\/(?:watch\?v=|embed\/|shorts\/)|youtu\.be\/)([a-zA-Z0-9_-]{11})/);
             if (ytMatch) {
-              media = '<div style="margin-top:8px"><div id="' + plyrId + '" data-plyr-provider="youtube" data-plyr-embed-id="' + ytMatch[1] + '"></div></div>';
+              media = '<div id="' + plyrId + '" data-plyr-provider="youtube" data-plyr-embed-id="' + ytMatch[1] + '"></div>';
             } else {
-              media = '<div style="margin-top:8px"><video id="' + plyrId + '" playsinline controls><source src="' + esc(url) + '"></video></div>';
+              media = '<video id="' + plyrId + '" playsinline autoplay muted loop controls style="width:100%;border-radius:12px"><source src="' + esc(url) + '"></video>';
             }
-            // Initialize Plyr after render
             setTimeout(() => {
               const el = document.getElementById(plyrId);
-              if (el && typeof Plyr !== 'undefined') { new Plyr('#' + plyrId, { controls: ['play', 'progress', 'current-time', 'mute', 'volume', 'fullscreen'] }); }
+              if (el && typeof Plyr !== 'undefined') { new Plyr('#' + plyrId, { autoplay: true, muted: true, controls: ['play', 'progress', 'current-time', 'mute', 'volume', 'fullscreen'] }); }
             }, 100);
           } else if (n.media_type === 'image' || n.media_type === 'gif') {
             media = '<div style="margin-top:8px"><img src="' + esc(n.media_url) + '" style="max-width:100%;border-radius:10px;max-height:300px"></div>';
           }
         }
-        const delBtn = (typeof ME !== 'undefined' && ME && ME.role === 'super_admin') ? '<button type="button" class="btn small" style="background:#c62828;color:#fff;margin-top:8px" onclick="delTrayNotice(' + n.id + ')">🗑️ حذف</button>' : '';
+        const delBtn = (typeof ME !== 'undefined' && ME && ME.role === 'super_admin') ? '<div style="text-align:center;padding:8px"><button type="button" class="btn small" style="background:#c62828;color:#fff" onclick="delTrayNotice(' + n.id + ')">🗑️ حذف</button></div>' : '';
+        // Video-only: no yellow box, just the video
+        if (isVideoOnly) {
+          return '<div style="margin-bottom:10px;border-radius:12px;overflow:hidden">' + media + delBtn + '</div>';
+        }
         return '<div style="background:linear-gradient(135deg,#fff3e0,#ffe0b2);border:2px solid #ff9800;border-radius:14px;padding:14px;margin-bottom:10px">' +
           '<div style="font-size:16px;font-weight:bold;color:#e65100">📢 ' + esc(n.title || 'اعلان') + '</div>' +
           '<div style="margin-top:6px;font-size:14px;color:#4e342e;white-space:pre-wrap">' + esc(n.message) + '</div>' +
