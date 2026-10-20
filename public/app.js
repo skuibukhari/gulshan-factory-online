@@ -879,8 +879,8 @@ async function routeEdit(id) {
   renderRoutes();
 }
 // products
-async function renderProducts() {
-  await refreshCache();
+async function renderProducts(skipCache) {
+  if (!skipCache) await refreshCache();
   // Category-wise group karo
   const byCat = {};
   CACHE.products.forEach(p => {
@@ -897,7 +897,7 @@ async function renderProducts() {
       <label>کیٹیگری<br><select id="pf-cat">${CACHE.cats.map(c => `<option value="${c.id}">${esc(c.name)}</option>`).join('')}</select></label>
       <label>آئٹم کا نام<br><input id="pf-name" placeholder="مثلاً Milky Bread Small"></label>
       <label>یونٹ<br><select id="pf-unit">${CACHE.units.map(u => `<option value="${u.id}">${esc(u.name)}</option>`).join('')}</select></label>
-      <label><br><button class="btn small green" onclick="prodAdd()">➕ شامل کریں</button></label>
+      <label><br><button class="btn small green" onclick="prodAdd(this)">➕ شامل کریں</button></label>
     </div>` : '';
   const isSuper = typeof ME !== 'undefined' && ME && ME.role === 'super_admin';
   $('#v-products').innerHTML = `<h2 class="st">🍞 <span>آئٹمز</span></h2>` + `
@@ -1101,9 +1101,23 @@ async function delRateList(id) {
     renderProducts();
   } catch(e) { alert('Error: ' + (e.message || '')); }
 }
-async function prodAdd() {
-  await api('POST', '/api/products', { name: $('#pf-name').value, category_id: Number($('#pf-cat').value) || null, unit_id: Number($('#pf-unit').value) || null });
-  renderProducts();
+async function prodAdd(btn) {
+  const name = ($('#pf-name').value || '').trim();
+  if (!name) { alert('⚠️ پہلے آئٹم کا نام لکھیں!'); return; }
+  if (btn) { btn.disabled = true; btn.textContent = '⏳ محفوظ ہو رہا ہے...'; }
+  try {
+    await api('POST', '/api/products', { name, category_id: Number($('#pf-cat').value) || null, unit_id: Number($('#pf-unit').value) || null });
+    // Fast refresh: sirf products dubara lo (baqi cache pehle se hai)
+    try { CACHE.products = await api('GET', '/api/products'); } catch(e) {}
+    await renderProducts(true);
+    showTrayToast('✅ آئٹم شامل ہو گیا!', name);
+  } catch(e) {
+    const msg = (e && e.message) || '';
+    if (msg.includes('duplicate') || msg.includes('پہلے سے')) alert('❌ یہ آئٹم اسی کیٹیگری میں پہلے سے موجود ہے!');
+    else alert('❌ آئٹم شامل نہیں ہوا: ' + msg);
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = '➕ شامل کریں'; }
+  }
 }
 async function prodDel(id) { if (!confirm('حذف کریں؟')) return; await api('DELETE', '/api/products/' + id); renderProducts(); }
 async function moveProduct(id, dir) {
