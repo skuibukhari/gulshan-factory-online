@@ -227,7 +227,7 @@ const MENU = [
   ['units', '⚖ یونٹس'], ['products', '🍞 آئٹمز'], ['ratelists', '💰 ریٹ لسٹس'], ['shops', '🏪 دکانیں'],
 ];
 const VIEW_SEC = { dashboard: 'dashboard', supply: 'routes', order: 'orders', orders: 'orders', daily: 'daily', tray: 'tray_basket', order_history: 'order_history', reports: 'reports',
-  vehicles: 'vehicles', routes: 'routes', cats: 'categories', units: 'units', products: 'products', ratelists: 'products', shops: 'shops' };
+  vehicles: 'vehicles', routes: 'routes', cats: 'categories', units: 'units', products: 'products', ratelists: 'rate_lists', shops: 'shops' };
 function viewAllowed(key) {
   const sec = VIEW_SEC[key];
   if (!sec) return true;
@@ -2377,7 +2377,7 @@ async function userEdit(id) {
   renderSettingsUsers();
 }
 const SEC_UR = { dashboard: 'ڈیش بورڈ', orders: 'آرڈرز', order_history: 'آرڈر ہسٹری', shops: 'دکانیں', products: 'آئٹمز',
-  categories: 'کیٹیگریز', units: 'یونٹس', vehicles: 'گاڑیاں', routes: 'روٹس', schedule: 'شیڈول', reports: 'رپورٹس', users: 'یوزرز', daily: 'روزانہ آرڈر', tray_basket: '🧺 ٹرے اور باسکٹ' };
+  categories: 'کیٹیگریز', units: 'یونٹس', vehicles: 'گاڑیاں', routes: 'روٹس', schedule: 'شیڈول', reports: 'رپورٹس', users: 'یوزرز', daily: 'روزانہ آرڈر', tray_basket: '🧺 ٹرے اور باسکٹ', rate_lists: '💰 ریٹ لسٹس' };
 const LVL_UR = { none: '⛔ بند', view: '👁 صرف دیکھیں', full: '✅ مکمل اختیار' };
 async function renderSettingsAccess() {
   const users = (await api('GET', '/api/users')).filter(u => u.role !== 'super_admin');

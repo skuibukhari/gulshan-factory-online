@@ -496,7 +496,7 @@ for (const [k, v] of Object.entries(printDefaults)) {
   db.prepare(`INSERT OR IGNORE INTO daily_settings (key, value) VALUES (?, ?)`).run(k, v);
 }
 
-const SECTIONS = ['dashboard','orders','order_history','shops','products','categories','units','vehicles','routes','schedule','reports','users','daily','tray_basket'];
+const SECTIONS = ['dashboard','orders','order_history','shops','products','categories','units','vehicles','routes','schedule','reports','users','daily','tray_basket','rate_lists'];
 
 const DEFAULT_PERMS = {
   factory: { dashboard:'full', orders:'full', order_history:'full', shops:'view', products:'view', categories:'view', units:'view', vehicles:'view', routes:'view', schedule:'full', reports:'full', users:'none', daily:'full', tray_basket:'view' },
@@ -2136,7 +2136,7 @@ app.get('/api/tray/summary', requireLogin, requireSection('tray_basket', 'view')
 });
 
 // ---------- Rate Lists (multiple price lists) ----------
-app.get('/api/rate-lists', requireLogin, (req, res) => {
+app.get('/api/rate-lists', requireLogin, requireSection('rate_lists', 'view'), (req, res) => {
   const lists = db.prepare('SELECT * FROM rate_lists ORDER BY id').all();
   res.json(lists);
 });
@@ -2199,7 +2199,7 @@ try {
   });
 } catch(e) { console.error('rate_list_items seed:', e.message); }
 
-app.get('/api/rate-lists/:id/items', requireLogin, (req, res) => {
+app.get('/api/rate-lists/:id/items', requireLogin, requireSection('rate_lists', 'view'), (req, res) => {
   const items = db.prepare('SELECT * FROM rate_list_items WHERE rate_list_id=? ORDER BY category_name, sort_order, name').all(req.params.id);
   res.json(items);
 });
