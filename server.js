@@ -604,13 +604,43 @@ app.post('/api/deploy', express.raw({ type: 'application/json', limit: '1mb' }),
 app.use(express.json({ limit: '1mb' }));
 app.set('trust proxy', 1);
 const sessSecret = process.env.SESSION_SECRET || 'gulshan-factory-dev-secret-change-me';
+// Persistent session store (survives server restarts)
+db.exec(`CREATE TABLE IF NOT EXISTS sessions (
+  sid TEXT PRIMARY KEY,
+  sess TEXT NOT NULL,
+  expire INTEGER NOT NULL
+)`);
+db.exec(`CREATE INDEX IF NOT EXISTS idx_sessions_expire ON sessions(expire)`);
+class SQLiteStore extends require('express-session').Store {
+  get(sid, cb) {
+    try {
+      const r = db.prepare('SELECT sess FROM sessions WHERE sid=? AND expire>?').get(sid, Date.now());
+      cb(null, r ? JSON.parse(r.sess) : null);
+    } catch(e) { cb(e); }
+  }
+  set(sid, sess, cb) {
+    try {
+      const expire = Date.now() + (sess.cookie && sess.cookie.maxAge ? sess.cookie.maxAge : 86400000);
+      db.prepare('INSERT OR REPLACE INTO sessions (sid, sess, expire) VALUES (?,?,?)').run(sid, JSON.stringify(sess), expire);
+      cb(null);
+    } catch(e) { cb(e); }
+  }
+  destroy(sid, cb) {
+    try { db.prepare('DELETE FROM sessions WHERE sid=?').run(sid); cb(null); }
+    catch(e) { cb(e); }
+  }
+  touch(sid, sess, cb) { this.set(sid, sess, cb); }
+}
+// Clean expired sessions every hour
+setInterval(() => { try { db.prepare('DELETE FROM sessions WHERE expire<?').run(Date.now()); } catch(e) {} }, 3600000);
 if (!process.env.SESSION_SECRET) console.warn('[warn] SESSION_SECRET not set — using dev default. Set it in production!');
 app.use(session({
   name: 'gf.sid',
   secret: sessSecret,
   resave: false,
   saveUninitialized: false,
-  cookie: { httpOnly: true, sameSite: 'lax', secure: process.env.COOKIE_SECURE === '1', maxAge: 1000 * 60 * 60 * 24 * 7 },
+  store: new SQLiteStore(),
+  cookie: { httpOnly: true, sameSite: 'lax', secure: process.env.COOKIE_SECURE === '1', maxAge: 1000 * 60 * 60 * 24 * 365 },
 }));
 
 function requireLogin(req, res, next) {
@@ -2075,6 +2105,24 @@ app.get('/api/users', requireLogin, isAdmin, (req, res) => {
       COALESCE(s.name, ds.name) AS shop_name
     FROM users u LEFT JOIN shops s ON s.id=u.shop_id LEFT JOIN daily_shops ds ON ds.id=u.daily_shop_id ORDER BY u.id`).all();
   res.json(users.map(u => ({ ...u, permissions: u.role === 'super_admin' ? Object.fromEntries(SECTIONS.map(s => [s, 'full'])) : getPermissions(u.id) })));
+});
+// Super admin: force logout a specific user
+app.post('/api/admin/logout-user/:id', requireLogin, (req, res) => {
+  if (req.user.role !== 'super_admin') return res.status(403).json({ error: 'super only' });
+  const uid = parseInt(req.params.id, 10);
+  // Find all sessions for this user and delete them
+  const rows = db.prepare('SELECT sid, sess FROM sessions').all();
+  let count = 0;
+  rows.forEach(r => {
+    try {
+      const sess = JSON.parse(r.sess);
+      if (sess.userId === uid) {
+        db.prepare('DELETE FROM sessions WHERE sid=?').run(r.sid);
+        count++;
+      }
+    } catch(e) {}
+  });
+  res.json({ ok: true, sessions_cleared: count });
 });
 // Public app version — clients detect updates against this.
 app.get('/api/version', (req, res) => res.json({ version: require('./package.json').version }));
