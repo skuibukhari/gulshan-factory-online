@@ -2128,11 +2128,11 @@ app.delete('/api/rate-lists/:id', requireLogin, (req, res) => {
   res.json({ ok: true });
 });
 app.get('/api/rate-lists/:id/prices', requireLogin, (req, res) => {
-  const prices = db.prepare(`SELECT p.id as product_id, p.name as product_name, c.name as category_name, p.category_id,
+  const prices = db.prepare(`SELECT p.id as product_id, p.name as product_name, c.name as category_name, p.category_id, p.sort_order,
     COALESCE(rlp.price, 0) as price
     FROM products p LEFT JOIN categories c ON c.id=p.category_id
     LEFT JOIN rate_list_prices rlp ON rlp.product_id=p.id AND rlp.rate_list_id=?
-    WHERE p.active=1 ORDER BY c.name, p.name`).all(req.params.id);
+    WHERE p.active=1 ORDER BY c.name, p.sort_order, p.name`).all(req.params.id);
   res.json(prices);
 });
 app.post('/api/rate-lists/:id/prices', requireLogin, (req, res) => {
@@ -2143,6 +2143,20 @@ app.post('/api/rate-lists/:id/prices', requireLogin, (req, res) => {
   Object.entries(prices).forEach(([pid, price]) => {
     upsert.run(req.params.id, parseInt(pid, 10), parseFloat(price) || 0);
   });
+  res.json({ ok: true });
+});
+// Product edit/delete/reorder (super_admin only)
+app.put('/api/products/:id', requireLogin, (req, res) => {
+  if (req.user.role !== 'super_admin') return res.status(403).json({ error: 'super only' });
+  const b = req.body || {};
+  if (b.name) db.prepare('UPDATE products SET name=? WHERE id=?').run(b.name.trim(), req.params.id);
+  if (b.sort_order !== undefined) db.prepare('UPDATE products SET sort_order=? WHERE id=?').run(parseInt(b.sort_order, 10) || 0, req.params.id);
+  res.json({ ok: true });
+});
+app.delete('/api/products/:id', requireLogin, (req, res) => {
+  if (req.user.role !== 'super_admin') return res.status(403).json({ error: 'super only' });
+  db.prepare('DELETE FROM products WHERE id=?').run(req.params.id);
+  db.prepare('DELETE FROM rate_list_prices WHERE product_id=?').run(req.params.id);
   res.json({ ok: true });
 });
 // ---------- Users & permissions (super admin) ----------

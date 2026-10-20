@@ -952,8 +952,13 @@ async function showRateList(id, name) {
         ${isSuper && catId ? `<button type="button" class="btn small" style="background:#fff;color:#1a237e;padding:2px 10px" onclick="addProductToCat(${catId},${id})" title="اس کیٹیگری میں آئٹم شامل کریں">➕</button>` : ''}
       </div>`;
       html += '<table><tr><th>آئٹم</th><th>ریٹ (Rs)</th></tr>';
-      cats[cat].forEach(p => {
-        html += `<tr><td>${esc(p.product_name)}</td><td>` +
+      cats[cat].forEach((p, idx) => {
+        html += `<tr><td>${esc(p.product_name)}` +
+          (isSuper ? ` <button type="button" class="btn small ghost" onclick="editProduct(${p.product_id},'${esc(p.product_name)}',${id})" title="نام بدلیں" style="padding:2px 6px">✏️</button>
+          <button type="button" class="btn small" onclick="moveProduct(${p.product_id},-1,${id})" title="اوپر" style="padding:2px 6px">⬆️</button>
+          <button type="button" class="btn small" onclick="moveProduct(${p.product_id},1,${id})" title="نیچے" style="padding:2px 6px">⬇️</button>
+          <button type="button" class="btn small danger" onclick="delProduct(${p.product_id},${id})" title="حذف کریں" style="padding:2px 6px">🗑️</button>` : '') +
+          `</td><td>` +
           (isSuper ? `<input type="number" id="rlp-${id}-${p.product_id}" value="${p.price}" min="0" step="0.5" style="width:90px;padding:4px;border:1px solid #ddd;border-radius:6px">`
                    : `<b>${p.price}</b>`) + '</td></tr>';
       });
@@ -1002,6 +1007,41 @@ async function addProductToCat(catId, rateListId) {
   try {
     await api('POST', '/api/products', { name: name.trim(), category_id: catId });
     showRateList(rateListId, document.querySelector('#rateListDetail h4')?.textContent?.replace('📋','').replace('— ریٹ لسٹ','').trim() || '');
+  } catch(e) { alert('Error: ' + (e.message || '')); }
+}
+async function editProduct(pid, oldName, rateListId) {
+  const name = prompt('نیا نام:', oldName);
+  if (!name || !name.trim() || name.trim() === oldName) return;
+  try {
+    await api('PUT', '/api/products/' + pid, { name: name.trim() });
+    showRateList(rateListId, document.querySelector('#rateListDetail h4')?.textContent?.replace(/📋|— ریٹ لسٹ/g,'').trim() || '');
+  } catch(e) { alert('Error: ' + (e.message || '')); }
+}
+async function delProduct(pid, rateListId) {
+  if (!confirm('یہ آئٹم تمام ریٹ لسٹس سے حذف ہو جائے گا! جاری رکھیں؟')) return;
+  try {
+    await api('DELETE', '/api/products/' + pid);
+    showRateList(rateListId, document.querySelector('#rateListDetail h4')?.textContent?.replace(/📋|— ریٹ لسٹ/g,'').trim() || '');
+  } catch(e) { alert('Error: ' + (e.message || '')); }
+}
+async function moveProduct(pid, dir, rateListId) {
+  try {
+    // Get current sort orders and swap
+    const prices = await api('GET', '/api/rate-lists/' + rateListId + '/prices');
+    const sorted = prices.filter(p => p.category_id === prices.find(x => x.product_id === pid)?.category_id)
+      .sort((a,b) => (a.sort_order||0) - (b.sort_order||0));
+    const idx = sorted.findIndex(p => p.product_id === pid);
+    const swapIdx = idx + dir;
+    if (swapIdx < 0 || swapIdx >= sorted.length) return;
+    const a = sorted[idx], b = sorted[swapIdx];
+    await api('PUT', '/api/products/' + a.product_id, { sort_order: b.sort_order || 0 });
+    await api('PUT', '/api/products/' + b.product_id, { sort_order: a.sort_order || 0 });
+    // If equal, set explicit orders
+    if ((a.sort_order||0) === (b.sort_order||0)) {
+      await api('PUT', '/api/products/' + a.product_id, { sort_order: idx + dir });
+      await api('PUT', '/api/products/' + b.product_id, { sort_order: idx });
+    }
+    showRateList(rateListId, document.querySelector('#rateListDetail h4')?.textContent?.replace(/📋|— ریٹ لسٹ/g,'').trim() || '');
   } catch(e) { alert('Error: ' + (e.message || '')); }
 }
 async function delRateList(id) {
