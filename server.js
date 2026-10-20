@@ -204,6 +204,11 @@ CREATE TABLE IF NOT EXISTS rate_list_prices (
   visible INTEGER NOT NULL DEFAULT 1,
   PRIMARY KEY (rate_list_id, product_id)
 );
+CREATE TABLE IF NOT EXISTS rl_user_cats (
+  user_id INTEGER NOT NULL,
+  category_name TEXT NOT NULL,
+  PRIMARY KEY (user_id, category_name)
+);
 CREATE TABLE IF NOT EXISTS rate_list_items (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   rate_list_id INTEGER NOT NULL REFERENCES rate_lists(id) ON DELETE CASCADE,
@@ -2200,8 +2205,33 @@ try {
 } catch(e) { console.error('rate_list_items seed:', e.message); }
 
 app.get('/api/rate-lists/:id/items', requireLogin, requireSection('rate_lists', 'view'), (req, res) => {
-  const items = db.prepare('SELECT * FROM rate_list_items WHERE rate_list_id=? ORDER BY category_name, sort_order, name').all(req.params.id);
+  let items = db.prepare('SELECT * FROM rate_list_items WHERE rate_list_id=? ORDER BY category_name, sort_order, name').all(req.params.id);
+  // Category access: non-super users with assignments see only their categories
+  if (req.user.role !== 'super_admin') {
+    const allowed = db.prepare('SELECT category_name FROM rl_user_cats WHERE user_id=?').all(req.user.id).map(r => r.category_name);
+    if (allowed.length) items = items.filter(it => allowed.includes(it.category_name || ''));
+  }
   res.json(items);
+});
+// Category access control (super admin)
+app.get('/api/rate-lists/user-cats', requireLogin, (req, res) => {
+  if (req.user.role !== 'super_admin') return res.status(403).json({ error: 'super only' });
+  const rows = db.prepare('SELECT * FROM rl_user_cats').all();
+  res.json(rows);
+});
+app.post('/api/rate-lists/user-cats', requireLogin, (req, res) => {
+  if (req.user.role !== 'super_admin') return res.status(403).json({ error: 'super only' });
+  const b = req.body || {};
+  const uid = parseInt(b.user_id, 10);
+  const cats = Array.isArray(b.categories) ? b.categories : [];
+  db.prepare('DELETE FROM rl_user_cats WHERE user_id=?').run(uid);
+  const ins = db.prepare('INSERT INTO rl_user_cats (user_id, category_name) VALUES (?,?)');
+  cats.forEach(c => ins.run(uid, c));
+  res.json({ ok: true });
+});
+app.get('/api/rate-lists/categories', requireLogin, requireSection('rate_lists', 'view'), (req, res) => {
+  const cats = db.prepare('SELECT DISTINCT category_name FROM rate_list_items ORDER BY category_name').all().map(r => r.category_name || '');
+  res.json(cats);
 });
 app.post('/api/rate-lists/:id/items', requireLogin, (req, res) => {
   if (req.user.role !== 'super_admin') return res.status(403).json({ error: 'super only' });

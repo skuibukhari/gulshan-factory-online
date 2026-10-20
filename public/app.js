@@ -924,9 +924,45 @@ async function renderRateLists() {
         <div style="font-size:17px;font-weight:bold;margin-top:6px">نئی لسٹ بنائیں</div>
       </div>` : ''}
     </div>
+    ${isSuper ? '<div style="margin-bottom:10px"><button type="button" class="btn" style="background:#6a1b9a;color:#fff" onclick="showRateAccess()">🔐 کیٹیگری رسائی سیٹ کریں</button> <span id="rlAccessBox"></span></div>' : ''}
     <div id="rateListDetail"></div>`;
   // By default pehli list (Wholesale) khuli rakho
   if (rateLists.length) showRateList(rateLists[0].id, rateLists[0].name);
+}
+async function showRateAccess() {
+  const box = document.getElementById('rlAccessBox');
+  const users = await api('GET', '/api/users');
+  const cats = await api('GET', '/api/rate-lists/categories');
+  const assignments = await api('GET', '/api/rate-lists/user-cats');
+  const byUser = {};
+  assignments.forEach(a => { (byUser[a.user_id] = byUser[a.user_id] || []).push(a.category_name); });
+  box.innerHTML = `<div style="margin-top:10px;padding:12px;background:#f3e5f5;border-radius:10px">
+    <b>🔐 کس یوزر کو کونسی کیٹیگری نظر آئے؟</b>
+    <div style="margin:8px 0">یوزر: <select id="rlAccUser" onchange="rlAccFill()">
+      ${users.filter(u => u.role !== 'super_admin').map(u => `<option value="${u.id}">${esc(u.username)}</option>`).join('')}
+    </select></div>
+    <div id="rlAccCats" style="display:flex;gap:10px;flex-wrap:wrap"></div>
+    <button type="button" class="btn small green" style="margin-top:8px" onclick="saveRateAccess()">💾 محفوظ کریں</button>
+    <div style="font-size:12px;color:#666;margin-top:4px">نوٹ: جس یوزر کی کوئی کیٹیگری منتخب نہ ہو، اسے سب نظر آئے گا۔</div>
+  </div>`;
+  window._rlCats = cats;
+  window._rlByUser = byUser;
+  rlAccFill();
+}
+function rlAccFill() {
+  const uid = document.getElementById('rlAccUser')?.value;
+  const assigned = (window._rlByUser || {})[uid] || [];
+  document.getElementById('rlAccCats').innerHTML = (window._rlCats || []).map(c =>
+    `<label style="background:#fff;padding:5px 10px;border-radius:8px;border:1px solid #ccc"><input type="checkbox" class="rlAccCat" value="${esc(c)}" ${assigned.includes(c) ? 'checked' : ''}> ${esc(c) || 'دیگر'}</label>`).join('');
+}
+async function saveRateAccess() {
+  const uid = document.getElementById('rlAccUser')?.value;
+  const cats = [...document.querySelectorAll('.rlAccCat:checked')].map(x => x.value);
+  try {
+    await api('POST', '/api/rate-lists/user-cats', { user_id: parseInt(uid, 10), categories: cats });
+    alert('✅ رسائی محفوظ ہو گئی!');
+    showRateAccess();
+  } catch(e) { alert('Error: ' + (e.message || '')); }
 }
 async function addRateList() {
   const name = prompt('ریٹ لسٹ کا نام (مثلاً: Wholesale, Distributor):');
