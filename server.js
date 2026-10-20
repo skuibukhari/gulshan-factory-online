@@ -2940,22 +2940,24 @@ ${newPrintHead('catalog', req.user.username)}
     const blocks = order.map(cn => {
       const trs = cats[cn].map((r,i) =>
         `<tr><td class="n">${i+1}</td><td>${esc(r.name)}</td><td class="t" style="font-weight:bold">${r.price ? 'Rs ' + r.price : '—'}</td></tr>`).join('');
-      return `<div class="rl-card"><div class="rl-cardhead"><span>📂 ${esc(cn)} (${cats[cn].length})</span></div><table><tr><th>#</th><th>آئٹم</th><th>ریٹ</th></tr>${trs}</table></div>`;
+      return `<div class="rl-card"><div class="rl-cardhead"><span>📂 ${esc(cn)}</span><span class="cnt">${cats[cn].length} آئٹم</span></div><table><tr><th>#</th><th>آئٹم</th><th style="text-align:left">ریٹ</th></tr>${trs}</table></div>`;
     }).join('');
     const rlCss = `<style>
-      .rl-grid{margin:0;padding:0}
-      .rl-card{border:2px solid #e8721c;border-radius:8px;overflow:hidden;break-inside:avoid;margin-bottom:8px}
-      .rl-cardhead{background:#1a1a1a;color:#fff;padding:6px 12px;font-size:20px;font-weight:900}
+      @page{size:A4;margin:7mm}
+      .rl-grid{column-count:2;column-gap:6px;margin:0;padding:0}
+      .rl-card{border:2px solid #e8721c;border-radius:8px;overflow:hidden;break-inside:avoid;margin-bottom:6px;display:inline-block;width:100%}
+      .rl-cardhead{background:#1a1a1a;color:#fff;padding:4px 10px;font-size:17px;font-weight:900;display:flex;justify-content:space-between;align-items:center}
+      .rl-cardhead .cnt{background:#e8721c;border-radius:10px;padding:0 8px;font-size:12px}
       .rl-card table{width:100%;border-collapse:collapse}
-      .rl-card th{background:#fff3e6;color:#e8721c;font-size:15px;padding:5px;border-bottom:2px solid #e8721c;font-weight:900}
-      .rl-card td{padding:3px 8px;font-size:20px;font-weight:800;border-bottom:1px solid #f0e0cc;line-height:1.4}
+      .rl-card th{background:#fff3e6;color:#b3540e;font-size:12px;padding:2px 6px;border-bottom:2px solid #e8721c;text-align:right;font-weight:900}
+      .rl-card td{padding:1px 6px;font-size:16px;font-weight:800;border-bottom:1px solid #f3ddc4;line-height:1.45}
       .rl-card tr:nth-child(even) td{background:#fdf6ec}
-      .rl-card td.n{text-align:center;width:36px;color:#e8721c;font-size:16px}
-      .rl-card td.t{text-align:left;width:120px;color:#1a237e}
+      .rl-card td.n{text-align:center;width:28px;color:#e8721c;font-size:12px}
+      .rl-card td.t{text-align:left;width:88px;color:#1a237e}
     </style>`;
     return res.send(`<!DOCTYPE html><html lang="ur" dir="rtl"><head><meta charset="utf-8"><title>${esc(list.name)} — ریٹ لسٹ</title>${newPrintCss()}${rlCss}</head><body>
 ${newPrintHead('catalog', req.user.username)}
-<h2 style="text-align:center;color:#e8721c;margin:4px 0 12px">💰 ${esc(list.name)} — ریٹ لسٹ</h2>
+<div style="text-align:center;background:linear-gradient(135deg,#1a237e,#283593);color:#fff;font-size:21px;font-weight:bold;padding:5px;border-radius:8px;margin:4px 0 8px">💰 ${esc(list.name)} — ریٹ لسٹ</div>
 <div class="rl-grid">${blocks}</div><button class="np-btn" onclick="window.print()">🖨 پرنٹ</button></body></html>`);
   }
   if (type === 'daily_all') {
