@@ -1813,7 +1813,8 @@ app.post('/api/products/:id/move', requireLogin, requireSection('products', 'ful
 app.get('/api/products', requireLogin, requireSection('products', 'view'), (req, res) => {
   res.json(db.prepare(`SELECT p.*, c.name AS category_name, u.name AS unit_name
     FROM products p LEFT JOIN categories c ON c.id=p.category_id LEFT JOIN units u ON u.id=p.unit_id
-    ORDER BY c.sort, c.id, p.name`).all());
+    WHERE p.active=1
+    ORDER BY c.sort, c.id, p.sort_order, p.name`).all());
 });
 // میٹرکس آرڈر شیٹ کے لیے: دکانیں + کیٹیگری وائز آئٹمز (پرنٹ کے لیے، vehicle بھی access کر سکتا ہے)
 app.get('/api/matrix-data', requireLogin, (req, res) => {
