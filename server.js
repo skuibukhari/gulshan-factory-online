@@ -2926,6 +2926,27 @@ ${newPrintHead(ddate, req.user.username)}
 ${newPrintHead('catalog', req.user.username)}
 <div class="np-grid">${blocks}</div><button class="np-btn" onclick="window.print()">🖨 پرنٹ</button></body></html>`);
   }
+  if (type === 'rate_list') {
+    const listId = parseInt(req.query.list_id, 10);
+    const list = db.prepare('SELECT * FROM rate_lists WHERE id=?').get(listId);
+    if (!list) return res.status(404).send('Rate list not found');
+    const items = db.prepare('SELECT * FROM rate_list_items WHERE rate_list_id=? AND visible=1 ORDER BY category_name, sort_order, name').all(listId);
+    const cats = {}, order = [];
+    items.forEach(r => {
+      const k = r.category_name || 'متفرق';
+      if (!cats[k]) { cats[k] = []; order.push(k); }
+      cats[k].push(r);
+    });
+    const blocks = order.map(cn => {
+      const trs = cats[cn].map((r,i) =>
+        `<tr><td class="n">${i+1}</td><td>${esc(r.name)}</td><td class="t" style="font-weight:bold">${r.price ? 'Rs ' + r.price : '—'}</td></tr>`).join('');
+      return `<div class="np-card"><div class="np-cardhead"><span>📂 ${esc(cn)} (${cats[cn].length})</span></div><table><tr><th>#</th><th>آئٹم</th><th>ریٹ</th></tr>${trs}</table></div>`;
+    }).join('');
+    return res.send(`<!DOCTYPE html><html lang="ur" dir="rtl"><head><meta charset="utf-8"><title>${esc(list.name)} — ریٹ لسٹ</title>${newPrintCss()}</head><body>
+${newPrintHead('catalog', req.user.username)}
+<h2 style="text-align:center;color:#e8721c;margin:4px 0 12px">💰 ${esc(list.name)} — ریٹ لسٹ</h2>
+<div class="np-grid">${blocks}</div><button class="np-btn" onclick="window.print()">🖨 پرنٹ</button></body></html>`);
+  }
   if (type === 'daily_all') {
     if (!can(req.user, 'daily', 'view')) return res.status(403).send('forbidden');
     const sc = dailyScope(req);

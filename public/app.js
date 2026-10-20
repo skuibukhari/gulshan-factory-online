@@ -913,9 +913,16 @@ async function renderRateLists() {
   let rateLists = [];
   try { rateLists = await api('GET', '/api/rate-lists'); } catch(e) {}
   $('#v-ratelists').innerHTML = `<h2 class="st">💰 <span>ریٹ لسٹس</span></h2>
-    <div style="display:flex;gap:8px;flex-wrap:wrap;margin:12px 0">
-      ${rateLists.map(rl => `<button type="button" class="btn" style="background:#1a237e;color:#fff;padding:10px 18px" onclick="showRateList(${rl.id},'${esc(rl.name)}')">📋 ${esc(rl.name)}</button>`).join('')}
-      ${isSuper ? '<button type="button" class="btn" style="background:#2e7d32;color:#fff;padding:10px 18px" onclick="addRateList()">➕ نئی لسٹ</button>' : ''}
+    <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:14px;margin:16px 0">
+      ${rateLists.map(rl => `<div onclick="showRateList(${rl.id},'${esc(rl.name)}')" style="background:linear-gradient(135deg,#1a237e,#283593);color:#fff;border-radius:16px;padding:20px;cursor:pointer;box-shadow:0 4px 12px rgba(26,35,126,0.3);text-align:center;transition:transform 0.2s" onmouseover="this.style.transform='scale(1.03)'" onmouseout="this.style.transform='scale(1)'">
+        <div style="font-size:36px">📋</div>
+        <div style="font-size:19px;font-weight:bold;margin-top:6px">${esc(rl.name)}</div>
+        <div style="font-size:12px;opacity:0.8;margin-top:4px">کھولنے کے لیے کلک کریں</div>
+      </div>`).join('')}
+      ${isSuper ? `<div onclick="addRateList()" style="background:#fff;border:3px dashed #2e7d32;color:#2e7d32;border-radius:16px;padding:20px;cursor:pointer;text-align:center">
+        <div style="font-size:36px">➕</div>
+        <div style="font-size:17px;font-weight:bold;margin-top:6px">نئی لسٹ بنائیں</div>
+      </div>` : ''}
     </div>
     <div id="rateListDetail"></div>`;
 }
@@ -987,19 +994,7 @@ async function saveRateListPrices(id) {
   } catch(e) { alert('Error: ' + (e.message || '')); }
 }
 function printRateList(id, name) {
-  const box = document.getElementById('rateListDetail');
-  if (!box) return;
-  const rows = box.querySelectorAll('table');
-  let tablesHtml = '';
-  rows.forEach(t => { tablesHtml += t.outerHTML.replace(/<input[^>]*value="([^"]*)"[^>]*>/g, '<b>$1</b>'); });
-  // Remove buttons/inputs from print
-  tablesHtml = tablesHtml.replace(/<button[^>]*>.*?<\/button>/g, '').replace(/<input[^>]*>/g, '');
-  const w = window.open('', '_blank');
-  w.document.write(`<html><head><title>${esc(name)} — ریٹ لسٹ</title>
-    <style>body{font-family:'Jameel Noori Nastaleeq',serif;direction:rtl} h2{text-align:center} table{width:100%;border-collapse:collapse;margin-bottom:16px} td,th{border:1px solid #333;padding:6px} </style></head>
-    <body><h2>🏭 گلشن فیکٹری — ${esc(name)} ریٹ لسٹ</h2>${tablesHtml}</body></html>`);
-  w.document.close();
-  w.print();
+  window.open('/print?type=rate_list&list_id=' + id + '&cb=' + Date.now(), '_blank');
 }
 async function addItemToRateList(catName, rateListId) {
   const name = prompt('نیا آئٹم کا نام (' + catName + ' category me):');
