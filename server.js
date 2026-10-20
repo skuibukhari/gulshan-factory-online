@@ -1856,7 +1856,9 @@ app.post('/api/products/clean-duplicates', requireLogin, requireSection('product
   res.json({ ok: true, cleaned });
 });
 app.delete('/api/products/:id', requireLogin, requireSection('products', 'full'), (req, res) => {
-  db.prepare('DELETE FROM products WHERE id=?').run(req.params.id);
+  // Soft delete: keeps order history intact, hides from lists
+  db.prepare('UPDATE products SET active=0 WHERE id=?').run(req.params.id);
+  db.prepare('DELETE FROM rate_list_prices WHERE product_id=?').run(req.params.id);
   res.json({ ok: true });
 });
 
