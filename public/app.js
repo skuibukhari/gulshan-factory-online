@@ -2151,7 +2151,8 @@ async function renderSettingsUsers() {
   const rows = users.map(u => `<tr><td>${esc(u.username)}</td><td>${acctLabel(u)}</td>
     <td>${esc(u.shop_name || '—')}</td><td dir="ltr">${esc(u.phone || '—')}</td><td>${u.active ? '<span class="badge">فعال</span>' : '<span class="badge off">بند</span>'}</td>
     <td><button class="btn small ghost" onclick="userEdit(${u.id})">✏</button>
-    ${u.id !== ME.id ? `<button class="btn small danger" onclick="userDel(${u.id})">🗑</button>` : ''}</td></tr>`).join('');
+    ${u.id !== ME.id ? `<button class="btn small" style="background:#ff9800;color:#fff" onclick="userLogout(${u.id},'${esc(u.username)}')" title="لاگ آؤٹ کریں">🚪</button>
+    <button class="btn small danger" onclick="userDel(${u.id})">🗑</button>` : ''}</td></tr>`).join('');
   $('#setUsers').innerHTML = `<h3>👥 یوزرز / اکاؤنٹس</h3>
     <table><tr><th>یوزر نام</th><th>اکاؤنٹ کی قسم</th><th>دکان</th><th>موبائل</th><th>حالت</th><th></th></tr>${rows}</table>
     <h3>➕ نیا اکاؤنٹ</h3>
@@ -2191,6 +2192,13 @@ async function userAdd() {
   renderSettingsUsers();
 }
 async function userDel(id) { if (!confirm('یوزر حذف کریں؟')) return; await api('DELETE', '/api/users/' + id); renderSettingsUsers(); }
+async function userLogout(id, name) {
+  if (!confirm('کیا ' + name + ' کو لاگ آؤٹ کرنا ہے؟')) return;
+  try {
+    const r = await api('POST', '/api/admin/logout-user/' + id);
+    alert('✅ ' + (r.sessions_cleared || 0) + ' sessions ختم — user لاگ آؤٹ ہو گیا!');
+  } catch(e) { alert('Error: ' + (e.message || '')); }
+}
 async function userEdit(id) {
   const users = await api('GET', '/api/users');
   const u = users.find(x => x.id === id); if (!u) return;
