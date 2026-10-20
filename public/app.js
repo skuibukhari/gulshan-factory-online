@@ -930,144 +930,123 @@ async function addRateList() {
 async function showRateList(id, name) {
   const box = document.getElementById('rateListDetail');
   if (!box) return;
-  box.innerHTML = '<p>لوڈ ہو رہا ہے...</p>';
-  try {
-    const prices = await api('GET', '/api/rate-lists/' + id + '/prices');
-    const isSuper = typeof ME !== 'undefined' && ME && ME.role === 'super_admin';
-    let html = `<div id="rlPrint-${id}"><h4>📋 ${esc(name)} — ریٹ لسٹ</h4>`;
-    // Group by category
-    const cats = {};
-    prices.forEach(p => {
-      const cat = p.category_name || 'دیگر';
-      if (!cats[cat]) cats[cat] = [];
-      cats[cat].push(p);
-    });
-    Object.keys(cats).sort().forEach(cat => {
-      const catId = cats[cat][0] ? cats[cat][0].category_id : null;
-      html += `<div style="margin-top:10px;background:#1a237e;color:#fff;padding:6px 12px;border-radius:8px;font-weight:bold;display:flex;justify-content:space-between;align-items:center">
-        <span>📁 ${esc(cat)}</span>
-        ${isSuper && catId ? `<button type="button" class="btn small" style="background:#fff;color:#1a237e;padding:2px 10px" onclick="addProductToCat(${catId},${id})" title="اس کیٹیگری میں آئٹم شامل کریں">➕</button>` : ''}
-      </div>`;
-      html += '<table><tr><th>آئٹم</th><th>ریٹ (Rs)</th></tr>';
-      cats[cat].forEach((p, idx) => {
-        const isHidden = p.visible === 0;
-        if (!isSuper && isHidden) return;
-        const iconBtn = 'width:30px;height:30px;border:none;border-radius:50%;cursor:pointer;font-size:14px;display:inline-flex;align-items:center;justify-content:center;box-shadow:0 1px 3px rgba(0,0,0,0.2);transition:transform 0.15s';
-        html += `<tr style="${isHidden ? 'opacity:0.5;background:#f5f5f5' : ''}"><td style="padding:8px">` +
-          `<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">` +
-          (isSuper ? `<input type="number" value="${idx + 1}" min="1" style="width:46px;padding:5px;border:2px solid #1a237e;border-radius:8px;text-align:center;font-weight:bold;color:#1a237e" onchange="setSerial(${p.product_id},this.value,${id})" title="نمبر بدلیں">`
-                   : `<span style="background:#1a237e;color:#fff;border-radius:50%;width:26px;height:26px;display:inline-flex;align-items:center;justify-content:center;font-weight:bold;font-size:13px">${idx + 1}</span>`) +
-          `<span style="font-size:15px;font-weight:600">${esc(p.product_name)}</span>` +
-          (isSuper ? `<span style="display:inline-flex;gap:5px;margin-right:auto">
-            <button type="button" style="${iconBtn};background:#e3f2fd" onclick="editProduct(${p.product_id},'${esc(p.product_name)}',${id})" title="نام بدلیں">✏️</button>
-            <button type="button" style="${iconBtn};background:${isHidden ? '#f3e5f5' : '#e8f5e9'}" onclick="toggleVisible(${p.product_id},${isHidden ? 1 : 0},${id})" title="${isHidden ? 'دکھائیں' : 'چھپائیں'}">${isHidden ? '🚫' : '👁️'}</button>
-            <button type="button" style="${iconBtn};background:#ffebee" onclick="delProduct(${p.product_id},${id})" title="حذف کریں">🗑️</button>
-          </span>` : '') +
-          `</div></td><td>` +
-          (isSuper ? `<input type="number" id="rlp-${id}-${p.product_id}" value="${p.price}" min="0" step="0.5" style="width:90px;padding:6px;border:2px solid #43a047;border-radius:8px;text-align:center;font-weight:bold">`
-                   : `<b>${p.price}</b>`) + '</td></tr>';
-      });
-      html += '</table>';
-    });
-    html += '</div>';
-    html += `<div style="margin-top:10px;display:flex;gap:8px">
-      <button type="button" class="btn" style="background:#1a237e;color:#fff" onclick="printRateList(${id},'${esc(name)}')">🖨 پرنٹ کریں</button>
-      ${isSuper ? `<button type="button" class="btn" style="background:#2e7d32;color:#fff" onclick="saveRateList(${id})">💾 ریٹ محفوظ کریں</button>
-      <button type="button" class="btn small danger" onclick="delRateList(${id})">🗑 لسٹ حذف</button>` : ''}
+  const isSuper = typeof ME !== 'undefined' && ME && ME.role === 'super_admin';
+  const items = await api('GET', '/api/rate-lists/' + id + '/items');
+  // Group by category
+  const cats = {};
+  items.forEach(it => {
+    const cn = it.category_name || 'دیگر';
+    (cats[cn] = cats[cn] || []).push(it);
+  });
+  const catNames = Object.keys(cats).sort();
+  let html = `<div style="margin-top:12px;padding:12px;background:#fff;border:2px solid #1a237e;border-radius:12px">
+    <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">
+      <h4 style="margin:0">📋 ${esc(name)} — ریٹ لسٹ</h4>
+      <span>
+        <button type="button" class="btn small" style="background:#6a1b9a;color:#fff" onclick="printRateList(${id},'${esc(name)}')">🖨 پرنٹ</button>
+        ${isSuper ? `<button type="button" class="btn small green" onclick="saveRateListPrices(${id})">💾 ریٹس محفوظ کریں</button>
+        <button type="button" class="btn small danger" onclick="delRateList(${id})">🗑️ لسٹ حذف</button>` : ''}
+      </span>
     </div>`;
-    box.innerHTML = html;
-  } catch(e) { box.innerHTML = '<p>Error loading</p>'; }
+  catNames.forEach(cat => {
+    html += `<div style="margin-top:12px"><div style="background:#1a237e;color:#fff;padding:8px 12px;border-radius:8px;font-weight:bold;display:flex;justify-content:space-between;align-items:center">
+      <span>📁 ${esc(cat)}</span>
+      ${isSuper ? `<button type="button" class="btn small" style="background:#2e7d32;color:#fff" onclick="addItemToRateList('${esc(cat)}',${id})">➕ آئٹم شامل کریں</button>` : ''}
+    </div><table style="width:100%">`;
+    cats[cat].forEach((it, idx) => {
+      const isHidden = it.visible === 0;
+      if (!isSuper && isHidden) return;
+      const iconBtn = 'width:30px;height:30px;border:none;border-radius:50%;cursor:pointer;font-size:14px;display:inline-flex;align-items:center;justify-content:center;box-shadow:0 1px 3px rgba(0,0,0,0.2)';
+      html += `<tr style="${isHidden ? 'opacity:0.5;background:#f5f5f5' : ''}"><td style="padding:8px">` +
+        `<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">` +
+        (isSuper ? `<input type="number" value="${idx + 1}" min="1" style="width:46px;padding:5px;border:2px solid #1a237e;border-radius:8px;text-align:center;font-weight:bold;color:#1a237e" onchange="setSerial(${it.id},this.value,${id})" title="نمبر بدلیں">`
+                 : `<span style="background:#1a237e;color:#fff;border-radius:50%;width:26px;height:26px;display:inline-flex;align-items:center;justify-content:center;font-weight:bold;font-size:13px">${idx + 1}</span>`) +
+        `<span style="font-size:15px;font-weight:600">${esc(it.name)}</span>` +
+        (isSuper ? `<span style="display:inline-flex;gap:5px;margin-right:auto">
+          <button type="button" style="${iconBtn};background:#e3f2fd" onclick="editRateItem(${it.id},'${esc(it.name)}',${id})" title="نام بدلیں">✏️</button>
+          <button type="button" style="${iconBtn};background:${isHidden ? '#f3e5f5' : '#e8f5e9'}" onclick="toggleVisible(${it.id},${isHidden ? 1 : 0},${id})" title="${isHidden ? 'دکھائیں' : 'چھپائیں'}">${isHidden ? '🚫' : '👁️'}</button>
+          <button type="button" style="${iconBtn};background:#ffebee" onclick="delRateItem(${it.id},${id})" title="حذف کریں">🗑️</button>
+        </span>` : '') +
+        `</div></td><td>` +
+        (isSuper ? `<input type="number" id="rli-${id}-${it.id}" value="${it.price}" min="0" step="0.5" style="width:90px;padding:6px;border:2px solid #43a047;border-radius:8px;text-align:center;font-weight:bold">`
+                 : `<b>${it.price}</b>`) + '</td></tr>';
+    });
+    html += '</table></div>';
+  });
+  html += '</div>';
+  box.innerHTML = html;
+}
+async function saveRateListPrices(id) {
+  try {
+    const items = await api('GET', '/api/rate-lists/' + id + '/items');
+    for (const it of items) {
+      const inp = document.getElementById('rli-' + id + '-' + it.id);
+      if (inp) await api('PUT', '/api/rate-list-items/' + it.id, { price: parseFloat(inp.value) || 0 });
+    }
+    alert('✅ ریٹس محفوظ ہو گئے!');
+  } catch(e) { alert('Error: ' + (e.message || '')); }
 }
 function printRateList(id, name) {
-  const el = document.getElementById('rlPrint-' + id);
-  if (!el) return;
+  const box = document.getElementById('rateListDetail');
+  if (!box) return;
+  const rows = box.querySelectorAll('table');
+  let tablesHtml = '';
+  rows.forEach(t => { tablesHtml += t.outerHTML.replace(/<input[^>]*value="([^"]*)"[^>]*>/g, '<b>$1</b>'); });
+  // Remove buttons/inputs from print
+  tablesHtml = tablesHtml.replace(/<button[^>]*>.*?<\/button>/g, '').replace(/<input[^>]*>/g, '');
   const w = window.open('', '_blank');
-  w.document.write('<html><head><title>' + name + ' — Rate List</title><style>' +
-    'body{font-family:"Noto Nastaliq Urdu",serif;direction:rtl;padding:20px}' +
-    'table{width:100%;border-collapse:collapse;margin-bottom:12px}' +
-    'th,td{border:1px solid #333;padding:8px;text-align:right}' +
-    'th{background:#eee}h4{text-align:center;font-size:20px}' +
-    'input{border:none;font-weight:bold;width:60px}' +
-    '</style></head><body><h4>🏭 گلشن فیکٹری — ' + name + ' ریٹ لسٹ</h4>' + el.innerHTML.replace(/<h4>.*?<\/h4>/, '') +
-    '<p style="text-align:center;color:#888;font-size:12px">Printed: ' + new Date().toLocaleDateString('ur-PK') + '</p></body></html>');
+  w.document.write(`<html><head><title>${esc(name)} — ریٹ لسٹ</title>
+    <style>body{font-family:'Jameel Noori Nastaleeq',serif;direction:rtl} h2{text-align:center} table{width:100%;border-collapse:collapse;margin-bottom:16px} td,th{border:1px solid #333;padding:6px} </style></head>
+    <body><h2>🏭 گلشن فیکٹری — ${esc(name)} ریٹ لسٹ</h2>${tablesHtml}</body></html>`);
   w.document.close();
-  w.focus();
-  setTimeout(() => w.print(), 500);
+  w.print();
 }
-async function saveRateList(id) {
-  const inputs = document.querySelectorAll(`[id^="rlp-${id}-"]`);
-  const prices = {};
-  inputs.forEach(inp => {
-    const pid = inp.id.replace(`rlp-${id}-`, '');
-    prices[pid] = parseFloat(inp.value) || 0;
-  });
-  try {
-    await api('POST', '/api/rate-lists/' + id + '/prices', { prices });
-    alert('✅ ریٹ محفوظ ہو گئے!');
-  } catch(e) { alert('Error: ' + (e.message || '')); }
-}
-async function addProductToCat(catId, rateListId) {
-  const name = prompt('نئے آئٹم کا نام:');
+async function addItemToRateList(catName, rateListId) {
+  const name = prompt('نیا آئٹم کا نام (' + catName + ' category me):');
   if (!name || !name.trim()) return;
   try {
-    await api('POST', '/api/products', { name: name.trim(), category_id: catId });
-    showRateList(rateListId, document.querySelector('#rateListDetail h4')?.textContent?.replace('📋','').replace('— ریٹ لسٹ','').trim() || '');
+    await api('POST', '/api/rate-lists/' + rateListId + '/items', { name: name.trim(), category_name: catName === 'دیگر' ? '' : catName });
+    showRateList(rateListId, document.querySelector('#rateListDetail h4')?.textContent?.replace(/📋|— ریٹ لسٹ/g,'').trim() || '');
   } catch(e) { alert('Error: ' + (e.message || '')); }
 }
-async function editProduct(pid, oldName, rateListId) {
+async function editRateItem(itemId, oldName, rateListId) {
   const name = prompt('نیا نام:', oldName);
   if (!name || !name.trim() || name.trim() === oldName) return;
   try {
-    await api('PUT', '/api/products/' + pid, { name: name.trim() });
+    await api('PUT', '/api/rate-list-items/' + itemId, { name: name.trim() });
     showRateList(rateListId, document.querySelector('#rateListDetail h4')?.textContent?.replace(/📋|— ریٹ لسٹ/g,'').trim() || '');
   } catch(e) { alert('Error: ' + (e.message || '')); }
 }
-async function delProduct(pid, rateListId) {
-  if (!confirm('یہ آئٹم تمام ریٹ لسٹس سے حذف ہو جائے گا! جاری رکھیں؟')) return;
+async function delRateItem(itemId, rateListId) {
+  if (!confirm('یہ آئٹم صرف اس ریٹ لسٹ سے حذف ہوگا۔ جاری رکھیں؟')) return;
   try {
-    await api('DELETE', '/api/products/' + pid);
+    await api('DELETE', '/api/rate-list-items/' + itemId);
     showRateList(rateListId, document.querySelector('#rateListDetail h4')?.textContent?.replace(/📋|— ریٹ لسٹ/g,'').trim() || '');
   } catch(e) { alert('Error: ' + (e.message || '')); }
 }
-async function setSerial(pid, newPos, rateListId) {
+async function setSerial(itemId, newPos, rateListId) {
+  newPos = parseInt(newPos, 10);
+  if (!newPos || newPos < 1) return;
   try {
-    const prices = await api('GET', '/api/rate-lists/' + rateListId + '/prices');
-    const catId = prices.find(x => x.product_id === pid)?.category_id;
-    const sorted = prices.filter(p => p.category_id === catId).sort((a,b) => (a.sort_order||0) - (b.sort_order||0));
-    const newIdx = Math.max(0, Math.min(sorted.length - 1, parseInt(newPos, 10) - 1));
-    const item = sorted.find(p => p.product_id === pid);
-    sorted.splice(sorted.indexOf(item), 1);
-    sorted.splice(newIdx, 0, item);
-    // Rewrite sort orders sequentially
-    for (let i = 0; i < sorted.length; i++) {
-      await api('PUT', '/api/products/' + sorted[i].product_id, { sort_order: (i + 1) * 10 });
-    }
-    showRateList(rateListId, document.querySelector('#rateListDetail h4')?.textContent?.replace(/📋|— ریٹ لسٹ/g,'').trim() || '');
-  } catch(e) { alert('Error: ' + (e.message || '')); }
-}
-async function toggleVisible(pid, visible, rateListId) {
-  try {
-    await api('POST', '/api/rate-lists/' + rateListId + '/visibility', { product_id: pid, visible: !!visible });
-    showRateList(rateListId, document.querySelector('#rateListDetail h4')?.textContent?.replace(/📋|— ریٹ لسٹ/g,'').trim() || '');
-  } catch(e) { alert('Error: ' + (e.message || '')); }
-}
-async function moveProduct(pid, dir, rateListId) {
-  try {
-    // Get current sort orders and swap
-    const prices = await api('GET', '/api/rate-lists/' + rateListId + '/prices');
-    const sorted = prices.filter(p => p.category_id === prices.find(x => x.product_id === pid)?.category_id)
+    const items = await api('GET', '/api/rate-lists/' + rateListId + '/items');
+    const cur = items.find(x => x.id === itemId);
+    if (!cur) return;
+    const catItems = items.filter(x => (x.category_name || '') === (cur.category_name || ''))
       .sort((a,b) => (a.sort_order||0) - (b.sort_order||0));
-    const idx = sorted.findIndex(p => p.product_id === pid);
-    const swapIdx = idx + dir;
-    if (swapIdx < 0 || swapIdx >= sorted.length) return;
-    const a = sorted[idx], b = sorted[swapIdx];
-    await api('PUT', '/api/products/' + a.product_id, { sort_order: b.sort_order || 0 });
-    await api('PUT', '/api/products/' + b.product_id, { sort_order: a.sort_order || 0 });
-    // If equal, set explicit orders
-    if ((a.sort_order||0) === (b.sort_order||0)) {
-      await api('PUT', '/api/products/' + a.product_id, { sort_order: idx + dir });
-      await api('PUT', '/api/products/' + b.product_id, { sort_order: idx });
+    const curIdx = catItems.findIndex(x => x.id === itemId);
+    const targetIdx = Math.min(newPos - 1, catItems.length - 1);
+    if (curIdx === targetIdx) return;
+    catItems.splice(curIdx, 1);
+    catItems.splice(targetIdx, 0, cur);
+    for (let i = 0; i < catItems.length; i++) {
+      await api('PUT', '/api/rate-list-items/' + catItems[i].id, { sort_order: (i + 1) * 10 });
     }
+    showRateList(rateListId, document.querySelector('#rateListDetail h4')?.textContent?.replace(/📋|— ریٹ لسٹ/g,'').trim() || '');
+  } catch(e) { alert('Error: ' + (e.message || '')); }
+}
+async function toggleVisible(itemId, visible, rateListId) {
+  try {
+    await api('PUT', '/api/rate-list-items/' + itemId, { visible: visible ? 1 : 0 });
     showRateList(rateListId, document.querySelector('#rateListDetail h4')?.textContent?.replace(/📋|— ریٹ لسٹ/g,'').trim() || '');
   } catch(e) { alert('Error: ' + (e.message || '')); }
 }

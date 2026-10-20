@@ -204,6 +204,16 @@ CREATE TABLE IF NOT EXISTS rate_list_prices (
   visible INTEGER NOT NULL DEFAULT 1,
   PRIMARY KEY (rate_list_id, product_id)
 );
+CREATE TABLE IF NOT EXISTS rate_list_items (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  rate_list_id INTEGER NOT NULL REFERENCES rate_lists(id) ON DELETE CASCADE,
+  name TEXT NOT NULL,
+  category_name TEXT DEFAULT '',
+  price REAL NOT NULL DEFAULT 0,
+  sort_order INTEGER NOT NULL DEFAULT 0,
+  visible INTEGER NOT NULL DEFAULT 1,
+  created_at TEXT DEFAULT (datetime('now'))
+);
 CREATE TABLE IF NOT EXISTS products (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   name TEXT NOT NULL,
@@ -2167,6 +2177,57 @@ app.post('/api/rate-lists/:id/prices', requireLogin, (req, res) => {
   Object.entries(prices).forEach(([pid, price]) => {
     upsert.run(req.params.id, parseInt(pid, 10), parseFloat(price) || 0);
   });
+  res.json({ ok: true });
+});
+
+// ---------- Rate List Items (INDEPENDENT from products) ----------
+// One-time migration: seed items from products+prices for lists that have none
+try {
+  const lists = db.prepare('SELECT id FROM rate_lists').all();
+  const seed = db.prepare('INSERT INTO rate_list_items (rate_list_id, name, category_name, price, sort_order, visible) VALUES (?,?,?,?,?,?)');
+  lists.forEach(l => {
+    const cnt = db.prepare('SELECT COUNT(*) as c FROM rate_list_items WHERE rate_list_id=?').get(l.id).c;
+    if (cnt === 0) {
+      const rows = db.prepare(`SELECT p.name, c.name as category_name, p.sort_order,
+        COALESCE(rlp.price, 0) as price, COALESCE(rlp.visible, 1) as visible
+        FROM products p LEFT JOIN categories c ON c.id=p.category_id
+        LEFT JOIN rate_list_prices rlp ON rlp.product_id=p.id AND rlp.rate_list_id=?
+        WHERE p.active=1 ORDER BY c.name, p.sort_order, p.name`).all(l.id);
+      rows.forEach(r => seed.run(l.id, r.name, r.category_name || '', r.price, r.sort_order || 0, r.visible));
+    }
+  });
+} catch(e) { console.error('rate_list_items seed:', e.message); }
+
+app.get('/api/rate-lists/:id/items', requireLogin, (req, res) => {
+  const items = db.prepare('SELECT * FROM rate_list_items WHERE rate_list_id=? ORDER BY category_name, sort_order, name').all(req.params.id);
+  res.json(items);
+});
+app.post('/api/rate-lists/:id/items', requireLogin, (req, res) => {
+  if (req.user.role !== 'super_admin') return res.status(403).json({ error: 'super only' });
+  const b = req.body || {};
+  if (!b.name || !b.name.trim()) return res.status(400).json({ error: 'name required' });
+  const maxSort = db.prepare('SELECT COALESCE(MAX(sort_order),0) as m FROM rate_list_items WHERE rate_list_id=? AND category_name=?').get(req.params.id, b.category_name || '').m;
+  const r = db.prepare('INSERT INTO rate_list_items (rate_list_id, name, category_name, price, sort_order) VALUES (?,?,?,?,?)')
+    .run(req.params.id, b.name.trim(), b.category_name || '', parseFloat(b.price) || 0, maxSort + 10);
+  res.json({ ok: true, id: r.lastInsertRowid });
+});
+app.put('/api/rate-list-items/:id', requireLogin, (req, res) => {
+  if (req.user.role !== 'super_admin') return res.status(403).json({ error: 'super only' });
+  const b = req.body || {};
+  const cur = db.prepare('SELECT * FROM rate_list_items WHERE id=?').get(req.params.id);
+  if (!cur) return res.status(404).json({ error: 'not found' });
+  db.prepare('UPDATE rate_list_items SET name=?, category_name=?, price=?, sort_order=?, visible=? WHERE id=?')
+    .run(b.name !== undefined ? b.name : cur.name,
+         b.category_name !== undefined ? b.category_name : cur.category_name,
+         b.price !== undefined ? (parseFloat(b.price) || 0) : cur.price,
+         b.sort_order !== undefined ? (parseInt(b.sort_order, 10) || 0) : cur.sort_order,
+         b.visible !== undefined ? (b.visible ? 1 : 0) : cur.visible,
+         req.params.id);
+  res.json({ ok: true });
+});
+app.delete('/api/rate-list-items/:id', requireLogin, (req, res) => {
+  if (req.user.role !== 'super_admin') return res.status(403).json({ error: 'super only' });
+  db.prepare('DELETE FROM rate_list_items WHERE id=?').run(req.params.id);
   res.json({ ok: true });
 });
 // ---------- Users & permissions (super admin) ----------
