@@ -946,7 +946,11 @@ async function showRateList(id, name) {
       cats[cat].push(p);
     });
     Object.keys(cats).sort().forEach(cat => {
-      html += `<div style="margin-top:10px;background:#1a237e;color:#fff;padding:6px 12px;border-radius:8px;font-weight:bold">📁 ${esc(cat)}</div>`;
+      const catId = cats[cat][0] ? cats[cat][0].category_id : null;
+      html += `<div style="margin-top:10px;background:#1a237e;color:#fff;padding:6px 12px;border-radius:8px;font-weight:bold;display:flex;justify-content:space-between;align-items:center">
+        <span>📁 ${esc(cat)}</span>
+        ${isSuper && catId ? `<button type="button" class="btn small" style="background:#fff;color:#1a237e;padding:2px 10px" onclick="addProductToCat(${catId},${id})" title="اس کیٹیگری میں آئٹم شامل کریں">➕</button>` : ''}
+      </div>`;
       html += '<table><tr><th>آئٹم</th><th>ریٹ (Rs)</th></tr>';
       cats[cat].forEach(p => {
         html += `<tr><td>${esc(p.product_name)}</td><td>` +
@@ -990,6 +994,14 @@ async function saveRateList(id) {
   try {
     await api('POST', '/api/rate-lists/' + id + '/prices', { prices });
     alert('✅ ریٹ محفوظ ہو گئے!');
+  } catch(e) { alert('Error: ' + (e.message || '')); }
+}
+async function addProductToCat(catId, rateListId) {
+  const name = prompt('نئے آئٹم کا نام:');
+  if (!name || !name.trim()) return;
+  try {
+    await api('POST', '/api/products', { name: name.trim(), category_id: catId });
+    showRateList(rateListId, document.querySelector('#rateListDetail h4')?.textContent?.replace('📋','').replace('— ریٹ لسٹ','').trim() || '');
   } catch(e) { alert('Error: ' + (e.message || '')); }
 }
 async function delRateList(id) {

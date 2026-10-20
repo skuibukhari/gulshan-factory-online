@@ -2128,7 +2128,7 @@ app.delete('/api/rate-lists/:id', requireLogin, (req, res) => {
   res.json({ ok: true });
 });
 app.get('/api/rate-lists/:id/prices', requireLogin, (req, res) => {
-  const prices = db.prepare(`SELECT p.id as product_id, p.name as product_name, c.name as category_name,
+  const prices = db.prepare(`SELECT p.id as product_id, p.name as product_name, c.name as category_name, p.category_id,
     COALESCE(rlp.price, 0) as price
     FROM products p LEFT JOIN categories c ON c.id=p.category_id
     LEFT JOIN rate_list_prices rlp ON rlp.product_id=p.id AND rlp.rate_list_id=?
