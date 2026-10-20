@@ -889,9 +889,8 @@ async function renderProducts() {
   });
   const rows = Object.entries(byCat).map(([cn, items]) => `
     <tr><td colspan="4" style="background:#111;color:#fff;font-weight:bold;text-align:center;padding:8px">📂 ${esc(cn)} (${items.length} آئٹم)</td></tr>
-    ${items.map(p => `<tr><td>${esc(p.category_name || '—')}</td><td><b>${esc(p.name)}</b></td><td>${esc(p.unit_name || '—')}</td>
-    <td>${can('products', 'full') ? `<button class="btn small ghost" onclick="moveProduct(${p.id},'up')">↑</button><button class="btn small ghost" onclick="moveProduct(${p.id},'down')">↓</button>
-    <button class="btn small ghost" onclick="prodEdit(${p.id})">✏</button>
+    ${items.map((p, idx) => `<tr><td>${esc(p.category_name || '—')}</td><td>${can('products', 'full') ? `<input type="number" value="${idx + 1}" min="1" style="width:44px;padding:3px;border:1px solid #bbb;border-radius:6px;text-align:center" onchange="setItemSerial(${p.id},this.value)" title="نمبر بدلیں">` : `<b>${idx + 1}.</b>`} <b>${esc(p.name)}</b></td><td>${esc(p.unit_name || '—')}</td>
+    <td>${can('products', 'full') ? `<button class="btn small ghost" onclick="prodEdit(${p.id})">✏</button>
     <button class="btn small danger" onclick="prodDel(${p.id})">🗑</button>` : ''}</td></tr>`).join('')}`).join('');
   const form = can('products', 'full') ? `
     <div class="formgrid">
@@ -1087,6 +1086,25 @@ async function prodDel(id) { if (!confirm('حذف کریں؟')) return; await ap
 async function moveProduct(id, dir) {
   await api('POST', `/api/products/${id}/move`, { dir });
   renderProducts();
+}
+async function setItemSerial(pid, newPos) {
+  newPos = parseInt(newPos, 10);
+  const p = CACHE.products.find(x => x.id === pid);
+  if (!p || !newPos || newPos < 1) return;
+  // Group by category, sort by current order
+  const catItems = CACHE.products.filter(x => (x.category_id || 0) === (p.category_id || 0))
+    .sort((a, b) => (a.sort_order || 0) - (b.sort_order || 0));
+  const curIdx = catItems.findIndex(x => x.id === pid);
+  const targetIdx = Math.min(newPos - 1, catItems.length - 1);
+  if (curIdx === targetIdx) return;
+  catItems.splice(curIdx, 1);
+  catItems.splice(targetIdx, 0, p);
+  try {
+    for (let i = 0; i < catItems.length; i++) {
+      await api('PUT', '/api/products/' + catItems[i].id, { sort_order: (i + 1) * 10 });
+    }
+    renderProducts();
+  } catch(e) { alert('Error: ' + (e.message || '')); }
 }
 async function cleanDuplicates() {
   if (!confirm('ڈپلیکیٹ آئٹمز صاف کریں؟ (پہلا رکھا جائے گا، باقی بند ہوں گے)')) return;
