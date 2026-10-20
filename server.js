@@ -1836,10 +1836,14 @@ app.put('/api/products/:id', requireLogin, requireSection('products', 'full'), (
   }
   const nm = (b.name || '').trim();
   if (!nm) return res.status(400).json({ error: 'name_required' });
-  const dup = db.prepare('SELECT id FROM products WHERE TRIM(name)=? AND category_id IS ? AND id != ?').get(nm, b.category_id || null, req.params.id);
+  // Preserve existing category/unit when not provided
+  const cur = db.prepare('SELECT category_id, unit_id FROM products WHERE id=?').get(req.params.id) || {};
+  const newCat = b.category_id !== undefined ? b.category_id : cur.category_id;
+  const newUnit = b.unit_id !== undefined ? b.unit_id : cur.unit_id;
+  const dup = db.prepare('SELECT id FROM products WHERE TRIM(name)=? AND category_id IS ? AND id != ?').get(nm, newCat, req.params.id);
   if (dup) return res.status(400).json({ error: 'duplicate', message: 'Ye item pehle se hai!' });
   db.prepare('UPDATE products SET name=?, category_id=?, unit_id=?' + (b.sort_order !== undefined ? ', sort_order=' + (parseInt(b.sort_order, 10) || 0) : '') + ' WHERE id=?')
-    .run(nm, b.category_id ?? null, b.unit_id ?? null, req.params.id);
+    .run(nm, newCat, newUnit, req.params.id);
   res.json({ ok: true });
 });
 app.post('/api/products/clean-duplicates', requireLogin, requireSection('products', 'full'), (req, res) => {
