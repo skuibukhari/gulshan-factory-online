@@ -933,33 +933,44 @@ async function showRateAccess() {
   const box = document.getElementById('rlAccessBox');
   const users = await api('GET', '/api/users');
   const cats = await api('GET', '/api/rate-lists/categories');
-  const assignments = await api('GET', '/api/rate-lists/user-cats');
-  const byUser = {};
-  assignments.forEach(a => { (byUser[a.user_id] = byUser[a.user_id] || []).push(a.category_name); });
+  const allLists = await api('GET', '/api/rate-lists');
+  const data = await api('GET', '/api/rate-lists/user-cats');
+  const byUser = {}, byUserLists = {};
+  (data.cats || []).forEach(a => { (byUser[a.user_id] = byUser[a.user_id] || []).push(a.category_name); });
+  (data.lists || []).forEach(a => { (byUserLists[a.user_id] = byUserLists[a.user_id] || []).push(a.rate_list_id); });
   box.innerHTML = `<div style="margin-top:10px;padding:12px;background:#f3e5f5;border-radius:10px">
-    <b>🔐 کس یوزر کو کونسی کیٹیگری نظر آئے؟</b>
+    <b>🔐 کس یوزر کو کونسی لسٹ اور کیٹیگری نظر آئے؟</b>
     <div style="margin:8px 0">یوزر: <select id="rlAccUser" onchange="rlAccFill()">
       ${users.filter(u => u.role !== 'super_admin').map(u => `<option value="${u.id}">${esc(u.username)}</option>`).join('')}
     </select></div>
-    <div id="rlAccCats" style="display:flex;gap:10px;flex-wrap:wrap"></div>
+    <div style="font-weight:bold;margin-top:6px">📋 ریٹ لسٹس:</div>
+    <div id="rlAccLists" style="display:flex;gap:10px;flex-wrap:wrap;margin:4px 0"></div>
+    <div style="font-weight:bold;margin-top:8px">📂 کیٹیگریز:</div>
+    <div id="rlAccCats" style="display:flex;gap:10px;flex-wrap:wrap;margin:4px 0"></div>
     <button type="button" class="btn small green" style="margin-top:8px" onclick="saveRateAccess()">💾 محفوظ کریں</button>
-    <div style="font-size:12px;color:#666;margin-top:4px">نوٹ: جس یوزر کی کوئی کیٹیگری منتخب نہ ہو، اسے سب نظر آئے گا۔</div>
+    <div style="font-size:12px;color:#666;margin-top:4px">نوٹ: جس یوزر کی کوئی لسٹ/کیٹیگری منتخب نہ ہو، اسے سب نظر آئے گا۔</div>
   </div>`;
   window._rlCats = cats;
+  window._rlLists = allLists;
   window._rlByUser = byUser;
+  window._rlByUserLists = byUserLists;
   rlAccFill();
 }
 function rlAccFill() {
   const uid = document.getElementById('rlAccUser')?.value;
   const assigned = (window._rlByUser || {})[uid] || [];
+  const assignedLists = (window._rlByUserLists || {})[uid] || [];
+  document.getElementById('rlAccLists').innerHTML = (window._rlLists || []).map(l =>
+    `<label style="background:#fff;padding:5px 10px;border-radius:8px;border:1px solid #ccc"><input type="checkbox" class="rlAccList" value="${l.id}" ${assignedLists.includes(l.id) ? 'checked' : ''}> 📋 ${esc(l.name)}</label>`).join('');
   document.getElementById('rlAccCats').innerHTML = (window._rlCats || []).map(c =>
     `<label style="background:#fff;padding:5px 10px;border-radius:8px;border:1px solid #ccc"><input type="checkbox" class="rlAccCat" value="${esc(c)}" ${assigned.includes(c) ? 'checked' : ''}> ${esc(c) || 'دیگر'}</label>`).join('');
 }
 async function saveRateAccess() {
   const uid = document.getElementById('rlAccUser')?.value;
   const cats = [...document.querySelectorAll('.rlAccCat:checked')].map(x => x.value);
+  const lists = [...document.querySelectorAll('.rlAccList:checked')].map(x => x.value);
   try {
-    await api('POST', '/api/rate-lists/user-cats', { user_id: parseInt(uid, 10), categories: cats });
+    await api('POST', '/api/rate-lists/user-cats', { user_id: parseInt(uid, 10), categories: cats, lists });
     alert('✅ رسائی محفوظ ہو گئی!');
     showRateAccess();
   } catch(e) { alert('Error: ' + (e.message || '')); }

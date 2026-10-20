@@ -204,6 +204,11 @@ CREATE TABLE IF NOT EXISTS rate_list_prices (
   visible INTEGER NOT NULL DEFAULT 1,
   PRIMARY KEY (rate_list_id, product_id)
 );
+CREATE TABLE IF NOT EXISTS rl_user_lists (
+  user_id INTEGER NOT NULL,
+  rate_list_id INTEGER NOT NULL,
+  PRIMARY KEY (user_id, rate_list_id)
+);
 CREATE TABLE IF NOT EXISTS rl_user_cats (
   user_id INTEGER NOT NULL,
   category_name TEXT NOT NULL,
@@ -2142,7 +2147,12 @@ app.get('/api/tray/summary', requireLogin, requireSection('tray_basket', 'view')
 
 // ---------- Rate Lists (multiple price lists) ----------
 app.get('/api/rate-lists', requireLogin, requireSection('rate_lists', 'view'), (req, res) => {
-  const lists = db.prepare('SELECT * FROM rate_lists ORDER BY id').all();
+  let lists = db.prepare('SELECT * FROM rate_lists ORDER BY id').all();
+  // List access: non-super users with assignments see only their lists
+  if (req.user.role !== 'super_admin') {
+    const allowed = db.prepare('SELECT rate_list_id FROM rl_user_lists WHERE user_id=?').all(req.user.id).map(r => r.rate_list_id);
+    if (allowed.length) lists = lists.filter(l => allowed.includes(l.id));
+  }
   res.json(lists);
 });
 app.post('/api/rate-lists', requireLogin, (req, res) => {
@@ -2216,8 +2226,9 @@ app.get('/api/rate-lists/:id/items', requireLogin, requireSection('rate_lists', 
 // Category access control (super admin)
 app.get('/api/rate-lists/user-cats', requireLogin, (req, res) => {
   if (req.user.role !== 'super_admin') return res.status(403).json({ error: 'super only' });
-  const rows = db.prepare('SELECT * FROM rl_user_cats').all();
-  res.json(rows);
+  const cats = db.prepare('SELECT * FROM rl_user_cats').all();
+  const lists = db.prepare('SELECT * FROM rl_user_lists').all();
+  res.json({ cats, lists });
 });
 app.post('/api/rate-lists/user-cats', requireLogin, (req, res) => {
   if (req.user.role !== 'super_admin') return res.status(403).json({ error: 'super only' });
@@ -2227,6 +2238,11 @@ app.post('/api/rate-lists/user-cats', requireLogin, (req, res) => {
   db.prepare('DELETE FROM rl_user_cats WHERE user_id=?').run(uid);
   const ins = db.prepare('INSERT INTO rl_user_cats (user_id, category_name) VALUES (?,?)');
   cats.forEach(c => ins.run(uid, c));
+  if (Array.isArray(b.lists)) {
+    db.prepare('DELETE FROM rl_user_lists WHERE user_id=?').run(uid);
+    const insL = db.prepare('INSERT INTO rl_user_lists (user_id, rate_list_id) VALUES (?,?)');
+    b.lists.forEach(lid => insL.run(uid, parseInt(lid, 10)));
+  }
   res.json({ ok: true });
 });
 app.get('/api/rate-lists/categories', requireLogin, requireSection('rate_lists', 'view'), (req, res) => {
