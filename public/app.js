@@ -224,10 +224,10 @@ const MENU = [
   ['daily', '📝 روزانہ آرڈر'], ['tray', '🧺 ٹرے باسکٹ'],
   ['order_history', '🕘 آرڈر ہسٹری'], ['reports', '🖨 رپورٹس'],
   ['vehicles', '🚚 گاڑیاں'], ['routes', '🗺 روٹس و شیڈول'], ['cats', '🗂 کیٹیگریز'],
-  ['units', '⚖ یونٹس'], ['products', '🍞 آئٹمز'], ['shops', '🏪 دکانیں'],
+  ['units', '⚖ یونٹس'], ['products', '🍞 آئٹمز'], ['ratelists', '💰 ریٹ لسٹس'], ['shops', '🏪 دکانیں'],
 ];
 const VIEW_SEC = { dashboard: 'dashboard', supply: 'routes', order: 'orders', orders: 'orders', daily: 'daily', tray: 'tray_basket', order_history: 'order_history', reports: 'reports',
-  vehicles: 'vehicles', routes: 'routes', cats: 'categories', units: 'units', products: 'products', shops: 'shops' };
+  vehicles: 'vehicles', routes: 'routes', cats: 'categories', units: 'units', products: 'products', ratelists: 'products', shops: 'shops' };
 function viewAllowed(key) {
   const sec = VIEW_SEC[key];
   if (!sec) return true;
@@ -263,7 +263,7 @@ function _showView(name) {
   // View render karo — error aaye to blank screen ki bajaye friendly message
   const _fn = ({ dashboard: renderDashboard, supply: renderSupplyCalendar, order: renderOrderForm, orders: renderOrders, daily: renderDaily, order_history: renderHistory,
      vehicles: () => renderMaster('vehicles'), routes: renderRoutes, cats: () => renderMaster('cats'),
-     units: () => renderMaster('units'), products: renderProducts, shops: () => renderMaster('shops'),
+     units: () => renderMaster('units'), products: renderProducts, ratelists: renderRateLists, shops: () => renderMaster('shops'),
      reports: renderReports, tray: renderTray }[name] || (() => {}));
   const _showViewError = (e) => {
     const vname = (name === 'order_history' ? 'history' : name);
@@ -901,33 +901,31 @@ async function renderProducts() {
       <label><br><button class="btn small green" onclick="prodAdd()">➕ شامل کریں</button></label>
     </div>` : '';
   const isSuper = typeof ME !== 'undefined' && ME && ME.role === 'super_admin';
-  // Rate Lists section
-  let rateListsHtml = '';
-  try {
-    const rateLists = await api('GET', '/api/rate-lists');
-    const isSuper2 = typeof ME !== 'undefined' && ME && ME.role === 'super_admin';
-    rateListsHtml = `<div style="margin:16px 0;padding:12px;background:#f5f5f5;border-radius:12px">
-      <h3>💰 ریٹ لسٹس</h3>
-      <div style="display:flex;gap:8px;flex-wrap:wrap;margin:8px 0">
-        ${rateLists.map(rl => `<button type="button" class="btn small" style="background:#1a237e;color:#fff" onclick="showRateList(${rl.id},'${esc(rl.name)}')">📋 ${esc(rl.name)}</button>`).join('')}
-        ${isSuper2 ? '<button type="button" class="btn small" style="background:#2e7d32;color:#fff" onclick="addRateList()">➕ نئی لسٹ</button>' : ''}
-      </div>
-      <div id="rateListDetail"></div>
-    </div>`;
-  } catch(e) {}
-  $('#v-products').innerHTML = `<h2 class="st">🍞 <span>آئٹمز</span></h2>` + rateListsHtml + `
+  $('#v-products').innerHTML = `<h2 class="st">🍞 <span>آئٹمز</span></h2>` + `
     <div style="margin-bottom:8px;display:flex;gap:8px">
       ${isSuper ? '<button class="btn small" style="background:#ff9800;color:#fff" onclick="cleanDuplicates()">🧹 ڈپلیکیٹ صاف کرو</button>' : ''}
       <button class="btn small" style="background:#1a237e;color:#fff" onclick="window.open('/print?type=catalog&cb='+Date.now(),'_blank')">🖨 کیٹلاگ پرنٹ</button>
     </div>${form}
     <table><tr><th>کیٹیگری</th><th>نام</th><th>یونٹ</th><th></th></tr>${rows || '<tr><td colspan=4>خالی</td></tr>'}</table>`;
 }
+// ---------- Rate Lists (separate view) ----------
+async function renderRateLists() {
+  const isSuper = typeof ME !== 'undefined' && ME && ME.role === 'super_admin';
+  let rateLists = [];
+  try { rateLists = await api('GET', '/api/rate-lists'); } catch(e) {}
+  $('#v-ratelists').innerHTML = `<h2 class="st">💰 <span>ریٹ لسٹس</span></h2>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;margin:12px 0">
+      ${rateLists.map(rl => `<button type="button" class="btn" style="background:#1a237e;color:#fff;padding:10px 18px" onclick="showRateList(${rl.id},'${esc(rl.name)}')">📋 ${esc(rl.name)}</button>`).join('')}
+      ${isSuper ? '<button type="button" class="btn" style="background:#2e7d32;color:#fff;padding:10px 18px" onclick="addRateList()">➕ نئی لسٹ</button>' : ''}
+    </div>
+    <div id="rateListDetail"></div>`;
+}
 async function addRateList() {
   const name = prompt('ریٹ لسٹ کا نام (مثلاً: Wholesale, Distributor):');
   if (!name || !name.trim()) return;
   try {
     await api('POST', '/api/rate-lists', { name: name.trim() });
-    renderProducts();
+    renderRateLists();
   } catch(e) { alert('Error: ' + (e.message || '')); }
 }
 async function showRateList(id, name) {
