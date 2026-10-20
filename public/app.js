@@ -937,19 +937,48 @@ async function showRateList(id, name) {
   try {
     const prices = await api('GET', '/api/rate-lists/' + id + '/prices');
     const isSuper = typeof ME !== 'undefined' && ME && ME.role === 'super_admin';
-    let lastCat = '';
-    let html = `<h4>📋 ${esc(name)} ${isSuper ? `<button type="button" class="btn small danger" onclick="delRateList(${id})" style="margin-right:8px">🗑</button>` : ''}</h4>`;
-    html += '<table><tr><th>کیٹیگری</th><th>آئٹم</th><th>ریٹ (Rs)</th></tr>';
+    let html = `<div id="rlPrint-${id}"><h4>📋 ${esc(name)} — ریٹ لسٹ</h4>`;
+    // Group by category
+    const cats = {};
     prices.forEach(p => {
-      const cat = p.category_name || '—';
-      html += `<tr><td>${esc(cat)}</td><td>${esc(p.product_name)}</td><td>` +
-        (isSuper ? `<input type="number" id="rlp-${id}-${p.product_id}" value="${p.price}" min="0" step="0.5" style="width:90px;padding:4px;border:1px solid #ddd;border-radius:6px">`
-                 : `<b>${p.price}</b>`) + '</td></tr>';
+      const cat = p.category_name || 'دیگر';
+      if (!cats[cat]) cats[cat] = [];
+      cats[cat].push(p);
     });
-    html += '</table>';
-    if (isSuper) html += `<div style="margin-top:8px"><button type="button" class="btn" style="background:#2e7d32;color:#fff" onclick="saveRateList(${id})">💾 ریٹ محفوظ کریں</button></div>`;
+    Object.keys(cats).sort().forEach(cat => {
+      html += `<div style="margin-top:10px;background:#1a237e;color:#fff;padding:6px 12px;border-radius:8px;font-weight:bold">📁 ${esc(cat)}</div>`;
+      html += '<table><tr><th>آئٹم</th><th>ریٹ (Rs)</th></tr>';
+      cats[cat].forEach(p => {
+        html += `<tr><td>${esc(p.product_name)}</td><td>` +
+          (isSuper ? `<input type="number" id="rlp-${id}-${p.product_id}" value="${p.price}" min="0" step="0.5" style="width:90px;padding:4px;border:1px solid #ddd;border-radius:6px">`
+                   : `<b>${p.price}</b>`) + '</td></tr>';
+      });
+      html += '</table>';
+    });
+    html += '</div>';
+    html += `<div style="margin-top:10px;display:flex;gap:8px">
+      <button type="button" class="btn" style="background:#1a237e;color:#fff" onclick="printRateList(${id},'${esc(name)}')">🖨 پرنٹ کریں</button>
+      ${isSuper ? `<button type="button" class="btn" style="background:#2e7d32;color:#fff" onclick="saveRateList(${id})">💾 ریٹ محفوظ کریں</button>
+      <button type="button" class="btn small danger" onclick="delRateList(${id})">🗑 لسٹ حذف</button>` : ''}
+    </div>`;
     box.innerHTML = html;
   } catch(e) { box.innerHTML = '<p>Error loading</p>'; }
+}
+function printRateList(id, name) {
+  const el = document.getElementById('rlPrint-' + id);
+  if (!el) return;
+  const w = window.open('', '_blank');
+  w.document.write('<html><head><title>' + name + ' — Rate List</title><style>' +
+    'body{font-family:"Noto Nastaliq Urdu",serif;direction:rtl;padding:20px}' +
+    'table{width:100%;border-collapse:collapse;margin-bottom:12px}' +
+    'th,td{border:1px solid #333;padding:8px;text-align:right}' +
+    'th{background:#eee}h4{text-align:center;font-size:20px}' +
+    'input{border:none;font-weight:bold;width:60px}' +
+    '</style></head><body><h4>🏭 گلشن فیکٹری — ' + name + ' ریٹ لسٹ</h4>' + el.innerHTML.replace(/<h4>.*?<\/h4>/, '') +
+    '<p style="text-align:center;color:#888;font-size:12px">Printed: ' + new Date().toLocaleDateString('ur-PK') + '</p></body></html>');
+  w.document.close();
+  w.focus();
+  setTimeout(() => w.print(), 500);
 }
 async function saveRateList(id) {
   const inputs = document.querySelectorAll(`[id^="rlp-${id}-"]`);
