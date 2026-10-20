@@ -953,10 +953,14 @@ async function showRateList(id, name) {
       </div>`;
       html += '<table><tr><th>آئٹم</th><th>ریٹ (Rs)</th></tr>';
       cats[cat].forEach((p, idx) => {
-        html += `<tr><td>${esc(p.product_name)}` +
+        const isHidden = p.visible === 0;
+        // Non-super users don't see hidden items
+        if (!isSuper && isHidden) return;
+        html += `<tr style="${isHidden ? 'opacity:0.45;background:#f5f5f5' : ''}"><td>` +
+          (isSuper ? `<input type="number" value="${idx + 1}" min="1" style="width:44px;padding:3px;border:1px solid #bbb;border-radius:6px;text-align:center" onchange="setSerial(${p.product_id},this.value,${id})" title="نمبر بدلیں"> ` : `<b>${idx + 1}.</b> `) +
+          `${esc(p.product_name)}` +
           (isSuper ? ` <button type="button" class="btn small ghost" onclick="editProduct(${p.product_id},'${esc(p.product_name)}',${id})" title="نام بدلیں" style="padding:2px 6px">✏️</button>
-          <button type="button" class="btn small" onclick="moveProduct(${p.product_id},-1,${id})" title="اوپر" style="padding:2px 6px">⬆️</button>
-          <button type="button" class="btn small" onclick="moveProduct(${p.product_id},1,${id})" title="نیچے" style="padding:2px 6px">⬇️</button>
+          <button type="button" class="btn small" onclick="toggleVisible(${p.product_id},${isHidden ? 1 : 0},${id})" title="${isHidden ? 'دکھائیں' : 'چھپائیں'}" style="padding:2px 6px">${isHidden ? '👁️‍🗨️' : '👁️'}</button>
           <button type="button" class="btn small danger" onclick="delProduct(${p.product_id},${id})" title="حذف کریں" style="padding:2px 6px">🗑️</button>` : '') +
           `</td><td>` +
           (isSuper ? `<input type="number" id="rlp-${id}-${p.product_id}" value="${p.price}" min="0" step="0.5" style="width:90px;padding:4px;border:1px solid #ddd;border-radius:6px">`
@@ -1021,6 +1025,28 @@ async function delProduct(pid, rateListId) {
   if (!confirm('یہ آئٹم تمام ریٹ لسٹس سے حذف ہو جائے گا! جاری رکھیں؟')) return;
   try {
     await api('DELETE', '/api/products/' + pid);
+    showRateList(rateListId, document.querySelector('#rateListDetail h4')?.textContent?.replace(/📋|— ریٹ لسٹ/g,'').trim() || '');
+  } catch(e) { alert('Error: ' + (e.message || '')); }
+}
+async function setSerial(pid, newPos, rateListId) {
+  try {
+    const prices = await api('GET', '/api/rate-lists/' + rateListId + '/prices');
+    const catId = prices.find(x => x.product_id === pid)?.category_id;
+    const sorted = prices.filter(p => p.category_id === catId).sort((a,b) => (a.sort_order||0) - (b.sort_order||0));
+    const newIdx = Math.max(0, Math.min(sorted.length - 1, parseInt(newPos, 10) - 1));
+    const item = sorted.find(p => p.product_id === pid);
+    sorted.splice(sorted.indexOf(item), 1);
+    sorted.splice(newIdx, 0, item);
+    // Rewrite sort orders sequentially
+    for (let i = 0; i < sorted.length; i++) {
+      await api('PUT', '/api/products/' + sorted[i].product_id, { sort_order: (i + 1) * 10 });
+    }
+    showRateList(rateListId, document.querySelector('#rateListDetail h4')?.textContent?.replace(/📋|— ریٹ لسٹ/g,'').trim() || '');
+  } catch(e) { alert('Error: ' + (e.message || '')); }
+}
+async function toggleVisible(pid, visible, rateListId) {
+  try {
+    await api('POST', '/api/rate-lists/' + rateListId + '/visibility', { product_id: pid, visible: !!visible });
     showRateList(rateListId, document.querySelector('#rateListDetail h4')?.textContent?.replace(/📋|— ریٹ لسٹ/g,'').trim() || '');
   } catch(e) { alert('Error: ' + (e.message || '')); }
 }

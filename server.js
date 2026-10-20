@@ -201,8 +201,10 @@ CREATE TABLE IF NOT EXISTS rate_list_prices (
   rate_list_id INTEGER NOT NULL REFERENCES rate_lists(id) ON DELETE CASCADE,
   product_id INTEGER NOT NULL REFERENCES products(id) ON DELETE CASCADE,
   price REAL NOT NULL DEFAULT 0,
+  visible INTEGER NOT NULL DEFAULT 1,
   PRIMARY KEY (rate_list_id, product_id)
 );
+try { db.exec('ALTER TABLE rate_list_prices ADD COLUMN visible INTEGER NOT NULL DEFAULT 1'); } catch(e) {}
 CREATE TABLE IF NOT EXISTS products (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   name TEXT NOT NULL,
@@ -2129,11 +2131,21 @@ app.delete('/api/rate-lists/:id', requireLogin, (req, res) => {
 });
 app.get('/api/rate-lists/:id/prices', requireLogin, (req, res) => {
   const prices = db.prepare(`SELECT p.id as product_id, p.name as product_name, c.name as category_name, p.category_id, p.sort_order,
-    COALESCE(rlp.price, 0) as price
+    COALESCE(rlp.price, 0) as price, COALESCE(rlp.visible, 1) as visible
     FROM products p LEFT JOIN categories c ON c.id=p.category_id
     LEFT JOIN rate_list_prices rlp ON rlp.product_id=p.id AND rlp.rate_list_id=?
     WHERE p.active=1 ORDER BY c.name, p.sort_order, p.name`).all(req.params.id);
   res.json(prices);
+});
+app.post('/api/rate-lists/:id/visibility', requireLogin, (req, res) => {
+  if (req.user.role !== 'super_admin') return res.status(403).json({ error: 'super only' });
+  const b = req.body || {};
+  const pid = parseInt(b.product_id, 10);
+  const vis = b.visible ? 1 : 0;
+  db.prepare(`INSERT INTO rate_list_prices (rate_list_id, product_id, price, visible)
+    VALUES (?,?,0,?) ON CONFLICT(rate_list_id, product_id) DO UPDATE SET visible=?`)
+    .run(req.params.id, pid, vis, vis);
+  res.json({ ok: true });
 });
 app.post('/api/rate-lists/:id/prices', requireLogin, (req, res) => {
   if (req.user.role !== 'super_admin') return res.status(403).json({ error: 'super only' });
