@@ -2942,7 +2942,7 @@ ${newPrintHead('catalog', req.user.username)}
         `<tr><td class="n">${i+1}</td><td>${esc(r.name)}</td><td class="t" style="font-weight:bold">${r.price ? 'Rs ' + r.price : '—'}</td></tr>`).join('');
       return `<div class="np-card"><div class="np-cardhead"><span>📂 ${esc(cn)} (${cats[cn].length})</span></div><table><tr><th>#</th><th>آئٹم</th><th>ریٹ</th></tr>${trs}</table></div>`;
     }).join('');
-    return res.send(`<!DOCTYPE html><html lang="ur" dir="rtl"><head><meta charset="utf-8"><title>${esc(list.name)} — ریٹ لسٹ</title>${newPrintCss()}</head><body>
+    return res.send(`<!DOCTYPE html><html lang="ur" dir="rtl"><head><meta charset="utf-8"><title>${esc(list.name)} — ریٹ لسٹ</title>${newPrintCss()}<style>.np-grid{gap:3px}.np-card td{font-size:17px;padding:2px 6px;line-height:1.3}.np-card th{font-size:12px}.np-cardhead{font-size:18px}.np-card td.n{font-size:12px}</style></head><body>
 ${newPrintHead('catalog', req.user.username)}
 <h2 style="text-align:center;color:#e8721c;margin:4px 0 12px">💰 ${esc(list.name)} — ریٹ لسٹ</h2>
 <div class="np-grid">${blocks}</div><button class="np-btn" onclick="window.print()">🖨 پرنٹ</button></body></html>`);

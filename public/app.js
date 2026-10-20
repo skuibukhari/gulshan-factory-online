@@ -925,6 +925,8 @@ async function renderRateLists() {
       </div>` : ''}
     </div>
     <div id="rateListDetail"></div>`;
+  // By default pehli list (Wholesale) khuli rakho
+  if (rateLists.length) showRateList(rateLists[0].id, rateLists[0].name);
 }
 async function addRateList() {
   const name = prompt('ریٹ لسٹ کا نام (مثلاً: Wholesale, Distributor):');
