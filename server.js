@@ -1829,12 +1829,17 @@ app.post('/api/products', requireLogin, requireSection('products', 'full'), (req
 });
 app.put('/api/products/:id', requireLogin, requireSection('products', 'full'), (req, res) => {
   const b = req.body || {};
+  // Partial update: sort_order only (used by rate list reordering)
+  if (b.name === undefined && b.sort_order !== undefined) {
+    db.prepare('UPDATE products SET sort_order=? WHERE id=?').run(parseInt(b.sort_order, 10) || 0, req.params.id);
+    return res.json({ ok: true });
+  }
   const nm = (b.name || '').trim();
   if (!nm) return res.status(400).json({ error: 'name_required' });
   const dup = db.prepare('SELECT id FROM products WHERE TRIM(name)=? AND category_id IS ? AND id != ?').get(nm, b.category_id || null, req.params.id);
   if (dup) return res.status(400).json({ error: 'duplicate', message: 'Ye item pehle se hai!' });
-  db.prepare('UPDATE products SET name=?, category_id=?, unit_id=?, active=? WHERE id=?')
-    .run(nm, b.category_id || null, b.unit_id || null, b.active ?? 1, req.params.id);
+  db.prepare('UPDATE products SET name=?, category_id=?, unit_id=?' + (b.sort_order !== undefined ? ', sort_order=' + (parseInt(b.sort_order, 10) || 0) : '') + ' WHERE id=?')
+    .run(nm, b.category_id ?? null, b.unit_id ?? null, req.params.id);
   res.json({ ok: true });
 });
 app.post('/api/products/clean-duplicates', requireLogin, requireSection('products', 'full'), (req, res) => {
@@ -2156,20 +2161,6 @@ app.post('/api/rate-lists/:id/prices', requireLogin, (req, res) => {
   Object.entries(prices).forEach(([pid, price]) => {
     upsert.run(req.params.id, parseInt(pid, 10), parseFloat(price) || 0);
   });
-  res.json({ ok: true });
-});
-// Product edit/delete/reorder (super_admin only)
-app.put('/api/products/:id', requireLogin, (req, res) => {
-  if (req.user.role !== 'super_admin') return res.status(403).json({ error: 'super only' });
-  const b = req.body || {};
-  if (b.name) db.prepare('UPDATE products SET name=? WHERE id=?').run(b.name.trim(), req.params.id);
-  if (b.sort_order !== undefined) db.prepare('UPDATE products SET sort_order=? WHERE id=?').run(parseInt(b.sort_order, 10) || 0, req.params.id);
-  res.json({ ok: true });
-});
-app.delete('/api/products/:id', requireLogin, (req, res) => {
-  if (req.user.role !== 'super_admin') return res.status(403).json({ error: 'super only' });
-  db.prepare('DELETE FROM products WHERE id=?').run(req.params.id);
-  db.prepare('DELETE FROM rate_list_prices WHERE product_id=?').run(req.params.id);
   res.json({ ok: true });
 });
 // ---------- Users & permissions (super admin) ----------

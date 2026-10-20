@@ -954,16 +954,20 @@ async function showRateList(id, name) {
       html += '<table><tr><th>آئٹم</th><th>ریٹ (Rs)</th></tr>';
       cats[cat].forEach((p, idx) => {
         const isHidden = p.visible === 0;
-        // Non-super users don't see hidden items
         if (!isSuper && isHidden) return;
-        html += `<tr style="${isHidden ? 'opacity:0.45;background:#f5f5f5' : ''}"><td>` +
-          (isSuper ? `<input type="number" value="${idx + 1}" min="1" style="width:44px;padding:3px;border:1px solid #bbb;border-radius:6px;text-align:center" onchange="setSerial(${p.product_id},this.value,${id})" title="نمبر بدلیں"> ` : `<b>${idx + 1}.</b> `) +
-          `${esc(p.product_name)}` +
-          (isSuper ? ` <button type="button" class="btn small ghost" onclick="editProduct(${p.product_id},'${esc(p.product_name)}',${id})" title="نام بدلیں" style="padding:2px 6px">✏️</button>
-          <button type="button" class="btn small" onclick="toggleVisible(${p.product_id},${isHidden ? 1 : 0},${id})" title="${isHidden ? 'دکھائیں' : 'چھپائیں'}" style="padding:2px 6px">${isHidden ? '👁️‍🗨️' : '👁️'}</button>
-          <button type="button" class="btn small danger" onclick="delProduct(${p.product_id},${id})" title="حذف کریں" style="padding:2px 6px">🗑️</button>` : '') +
-          `</td><td>` +
-          (isSuper ? `<input type="number" id="rlp-${id}-${p.product_id}" value="${p.price}" min="0" step="0.5" style="width:90px;padding:4px;border:1px solid #ddd;border-radius:6px">`
+        const iconBtn = 'width:30px;height:30px;border:none;border-radius:50%;cursor:pointer;font-size:14px;display:inline-flex;align-items:center;justify-content:center;box-shadow:0 1px 3px rgba(0,0,0,0.2);transition:transform 0.15s';
+        html += `<tr style="${isHidden ? 'opacity:0.5;background:#f5f5f5' : ''}"><td style="padding:8px">` +
+          `<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">` +
+          (isSuper ? `<input type="number" value="${idx + 1}" min="1" style="width:46px;padding:5px;border:2px solid #1a237e;border-radius:8px;text-align:center;font-weight:bold;color:#1a237e" onchange="setSerial(${p.product_id},this.value,${id})" title="نمبر بدلیں">`
+                   : `<span style="background:#1a237e;color:#fff;border-radius:50%;width:26px;height:26px;display:inline-flex;align-items:center;justify-content:center;font-weight:bold;font-size:13px">${idx + 1}</span>`) +
+          `<span style="font-size:15px;font-weight:600">${esc(p.product_name)}</span>` +
+          (isSuper ? `<span style="display:inline-flex;gap:5px;margin-right:auto">
+            <button type="button" style="${iconBtn};background:#e3f2fd" onclick="editProduct(${p.product_id},'${esc(p.product_name)}',${id})" title="نام بدلیں">✏️</button>
+            <button type="button" style="${iconBtn};background:${isHidden ? '#f3e5f5' : '#e8f5e9'}" onclick="toggleVisible(${p.product_id},${isHidden ? 1 : 0},${id})" title="${isHidden ? 'دکھائیں' : 'چھپائیں'}">${isHidden ? '🚫' : '👁️'}</button>
+            <button type="button" style="${iconBtn};background:#ffebee" onclick="delProduct(${p.product_id},${id})" title="حذف کریں">🗑️</button>
+          </span>` : '') +
+          `</div></td><td>` +
+          (isSuper ? `<input type="number" id="rlp-${id}-${p.product_id}" value="${p.price}" min="0" step="0.5" style="width:90px;padding:6px;border:2px solid #43a047;border-radius:8px;text-align:center;font-weight:bold">`
                    : `<b>${p.price}</b>`) + '</td></tr>';
       });
       html += '</table>';
