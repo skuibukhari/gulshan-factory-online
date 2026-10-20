@@ -900,12 +900,75 @@ async function renderProducts() {
       <label>یونٹ<br><select id="pf-unit">${CACHE.units.map(u => `<option value="${u.id}">${esc(u.name)}</option>`).join('')}</select></label>
       <label><br><button class="btn small green" onclick="prodAdd()">➕ شامل کریں</button></label>
     </div>` : '';
-  $('#v-products').innerHTML = `<h2 class="st">🍞 <span>آئٹمز</span></h2>
+  const isSuper = typeof ME !== 'undefined' && ME && ME.role === 'super_admin';
+  // Rate Lists section
+  let rateListsHtml = '';
+  try {
+    const rateLists = await api('GET', '/api/rate-lists');
+    const isSuper2 = typeof ME !== 'undefined' && ME && ME.role === 'super_admin';
+    rateListsHtml = `<div style="margin:16px 0;padding:12px;background:#f5f5f5;border-radius:12px">
+      <h3>💰 ریٹ لسٹس</h3>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;margin:8px 0">
+        ${rateLists.map(rl => `<button type="button" class="btn small" style="background:#1a237e;color:#fff" onclick="showRateList(${rl.id},'${esc(rl.name)}')">📋 ${esc(rl.name)}</button>`).join('')}
+        ${isSuper2 ? '<button type="button" class="btn small" style="background:#2e7d32;color:#fff" onclick="addRateList()">➕ نئی لسٹ</button>' : ''}
+      </div>
+      <div id="rateListDetail"></div>
+    </div>`;
+  } catch(e) {}
+  $('#v-products').innerHTML = `<h2 class="st">🍞 <span>آئٹمز</span></h2>` + rateListsHtml + `
     <div style="margin-bottom:8px;display:flex;gap:8px">
-      <button class="btn small" style="background:#ff9800;color:#fff" onclick="cleanDuplicates()">🧹 ڈپلیکیٹ صاف کرو</button>
+      ${isSuper ? '<button class="btn small" style="background:#ff9800;color:#fff" onclick="cleanDuplicates()">🧹 ڈپلیکیٹ صاف کرو</button>' : ''}
       <button class="btn small" style="background:#1a237e;color:#fff" onclick="window.open('/print?type=catalog&cb='+Date.now(),'_blank')">🖨 کیٹلاگ پرنٹ</button>
     </div>${form}
     <table><tr><th>کیٹیگری</th><th>نام</th><th>یونٹ</th><th></th></tr>${rows || '<tr><td colspan=4>خالی</td></tr>'}</table>`;
+}
+async function addRateList() {
+  const name = prompt('ریٹ لسٹ کا نام (مثلاً: Wholesale, Distributor):');
+  if (!name || !name.trim()) return;
+  try {
+    await api('POST', '/api/rate-lists', { name: name.trim() });
+    renderProducts();
+  } catch(e) { alert('Error: ' + (e.message || '')); }
+}
+async function showRateList(id, name) {
+  const box = document.getElementById('rateListDetail');
+  if (!box) return;
+  box.innerHTML = '<p>لوڈ ہو رہا ہے...</p>';
+  try {
+    const prices = await api('GET', '/api/rate-lists/' + id + '/prices');
+    const isSuper = typeof ME !== 'undefined' && ME && ME.role === 'super_admin';
+    let lastCat = '';
+    let html = `<h4>📋 ${esc(name)} ${isSuper ? `<button type="button" class="btn small danger" onclick="delRateList(${id})" style="margin-right:8px">🗑</button>` : ''}</h4>`;
+    html += '<table><tr><th>کیٹیگری</th><th>آئٹم</th><th>ریٹ (Rs)</th></tr>';
+    prices.forEach(p => {
+      const cat = p.category_name || '—';
+      html += `<tr><td>${esc(cat)}</td><td>${esc(p.product_name)}</td><td>` +
+        (isSuper ? `<input type="number" id="rlp-${id}-${p.product_id}" value="${p.price}" min="0" step="0.5" style="width:90px;padding:4px;border:1px solid #ddd;border-radius:6px">`
+                 : `<b>${p.price}</b>`) + '</td></tr>';
+    });
+    html += '</table>';
+    if (isSuper) html += `<div style="margin-top:8px"><button type="button" class="btn" style="background:#2e7d32;color:#fff" onclick="saveRateList(${id})">💾 ریٹ محفوظ کریں</button></div>`;
+    box.innerHTML = html;
+  } catch(e) { box.innerHTML = '<p>Error loading</p>'; }
+}
+async function saveRateList(id) {
+  const inputs = document.querySelectorAll(`[id^="rlp-${id}-"]`);
+  const prices = {};
+  inputs.forEach(inp => {
+    const pid = inp.id.replace(`rlp-${id}-`, '');
+    prices[pid] = parseFloat(inp.value) || 0;
+  });
+  try {
+    await api('POST', '/api/rate-lists/' + id + '/prices', { prices });
+    alert('✅ ریٹ محفوظ ہو گئے!');
+  } catch(e) { alert('Error: ' + (e.message || '')); }
+}
+async function delRateList(id) {
+  if (!confirm('یہ ریٹ لسٹ حذف کریں؟')) return;
+  try {
+    await api('DELETE', '/api/rate-lists/' + id);
+    renderProducts();
+  } catch(e) { alert('Error: ' + (e.message || '')); }
 }
 async function prodAdd() {
   await api('POST', '/api/products', { name: $('#pf-name').value, category_id: Number($('#pf-cat').value) || null, unit_id: Number($('#pf-unit').value) || null });

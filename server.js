@@ -192,6 +192,17 @@ CREATE TABLE IF NOT EXISTS units (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   name TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS rate_lists (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  name TEXT NOT NULL,
+  created_at TEXT DEFAULT (datetime('now'))
+);
+CREATE TABLE IF NOT EXISTS rate_list_prices (
+  rate_list_id INTEGER NOT NULL REFERENCES rate_lists(id) ON DELETE CASCADE,
+  product_id INTEGER NOT NULL REFERENCES products(id) ON DELETE CASCADE,
+  price REAL NOT NULL DEFAULT 0,
+  PRIMARY KEY (rate_list_id, product_id)
+);
 CREATE TABLE IF NOT EXISTS products (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   name TEXT NOT NULL,
@@ -2099,6 +2110,41 @@ app.get('/api/tray/summary', requireLogin, requireSection('tray_basket', 'view')
   res.json({ items, factory, shops });
 });
 
+// ---------- Rate Lists (multiple price lists) ----------
+app.get('/api/rate-lists', requireLogin, (req, res) => {
+  const lists = db.prepare('SELECT * FROM rate_lists ORDER BY id').all();
+  res.json(lists);
+});
+app.post('/api/rate-lists', requireLogin, (req, res) => {
+  if (req.user.role !== 'super_admin') return res.status(403).json({ error: 'super only' });
+  const b = req.body || {};
+  if (!b.name || !b.name.trim()) return res.status(400).json({ error: 'name required' });
+  const r = db.prepare('INSERT INTO rate_lists (name) VALUES (?)').run(b.name.trim());
+  res.json({ ok: true, id: r.lastInsertRowid });
+});
+app.delete('/api/rate-lists/:id', requireLogin, (req, res) => {
+  if (req.user.role !== 'super_admin') return res.status(403).json({ error: 'super only' });
+  db.prepare('DELETE FROM rate_lists WHERE id=?').run(req.params.id);
+  res.json({ ok: true });
+});
+app.get('/api/rate-lists/:id/prices', requireLogin, (req, res) => {
+  const prices = db.prepare(`SELECT p.id as product_id, p.name as product_name, c.name as category_name,
+    COALESCE(rlp.price, 0) as price
+    FROM products p LEFT JOIN categories c ON c.id=p.category_id
+    LEFT JOIN rate_list_prices rlp ON rlp.product_id=p.id AND rlp.rate_list_id=?
+    WHERE p.active=1 ORDER BY c.name, p.name`).all(req.params.id);
+  res.json(prices);
+});
+app.post('/api/rate-lists/:id/prices', requireLogin, (req, res) => {
+  if (req.user.role !== 'super_admin') return res.status(403).json({ error: 'super only' });
+  const b = req.body || {};
+  const prices = b.prices || {};
+  const upsert = db.prepare('INSERT OR REPLACE INTO rate_list_prices (rate_list_id, product_id, price) VALUES (?,?,?)');
+  Object.entries(prices).forEach(([pid, price]) => {
+    upsert.run(req.params.id, parseInt(pid, 10), parseFloat(price) || 0);
+  });
+  res.json({ ok: true });
+});
 // ---------- Users & permissions (super admin) ----------
 app.get('/api/users', requireLogin, isAdmin, (req, res) => {
   const users = db.prepare(`SELECT u.id, u.username, u.role, u.shop_id, u.daily_shop_id, u.active, u.created_at, u.phone, u.account_type,
