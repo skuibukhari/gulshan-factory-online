@@ -204,7 +204,6 @@ CREATE TABLE IF NOT EXISTS rate_list_prices (
   visible INTEGER NOT NULL DEFAULT 1,
   PRIMARY KEY (rate_list_id, product_id)
 );
-try { db.exec('ALTER TABLE rate_list_prices ADD COLUMN visible INTEGER NOT NULL DEFAULT 1'); } catch(e) {}
 CREATE TABLE IF NOT EXISTS products (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   name TEXT NOT NULL,
@@ -267,6 +266,8 @@ try { db.exec(`ALTER TABLE users ADD COLUMN phone TEXT DEFAULT ''`); } catch (e)
 try { db.exec(`ALTER TABLE users ADD COLUMN avatar TEXT DEFAULT ''`); } catch (e) {}
 try { db.exec(`ALTER TABLE shops ADD COLUMN image TEXT DEFAULT ''`); } catch (e) {}
 try { db.exec(`ALTER TABLE routes ADD COLUMN open_time TEXT DEFAULT '10:00'`); } catch (e) {}
+try { db.exec('ALTER TABLE rate_list_prices ADD COLUMN visible INTEGER NOT NULL DEFAULT 1'); } catch(e) {}
+try { db.exec('ALTER TABLE products ADD COLUMN sort_order INTEGER NOT NULL DEFAULT 0'); } catch(e) {}
 try { db.exec(`ALTER TABLE users ADD COLUMN account_type TEXT DEFAULT ''`); } catch (e) {}
 try { db.exec(`ALTER TABLE users ADD COLUMN daily_shop_id INTEGER`); } catch (e) {}
 try { db.exec(`ALTER TABLE daily_products ADD COLUMN sort_order INTEGER DEFAULT 0`); } catch (e) {}
