@@ -2426,7 +2426,7 @@ async function renderSettingsUsers() {
     ${u.id !== ME.id ? `<button class="btn small" style="background:#ff9800;color:#fff" onclick="userLogout(${u.id},'${esc(u.username)}')" title="لاگ آؤٹ کریں">🚪</button>
     <button class="btn small danger" onclick="userDel(${u.id})">🗑</button>` : ''}</td></tr>`).join('');
   $('#setUsers').innerHTML = `<h3>👥 یوزرز / اکاؤنٹس</h3>
-    <table><tr><th>یوزر نام</th><th>اکاؤنٹ کی قسم</th><th>دکان</th><th>موبائل</th><th>حالت</th><th>آخری سرگرمی</th><th></th></tr>${rows}</table>
+    <div style="overflow-x:auto"><table style="font-size:13px;white-space:nowrap"><tr><th>یوزر نام</th><th>اکاؤنٹ کی قسم</th><th>دکان</th><th>موبائل</th><th>حالت</th><th>آخری سرگرمی</th><th></th></tr>${rows}</table></div>
     <h3>➕ نیا اکاؤنٹ</h3>
     <div class="formgrid">
       <label>یوزر نام<br><input id="nu-name"></label>

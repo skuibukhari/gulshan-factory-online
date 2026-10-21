@@ -2410,6 +2410,8 @@ app.post('/api/admin/logout-user/:id', requireLogin, (req, res) => {
       }
     } catch(e) {}
   });
+  // Online status bhi khatam (last_seen clear)
+  try { db.prepare('UPDATE users SET last_seen=NULL WHERE id=?').run(uid); } catch (e) {}
   res.json({ ok: true, sessions_cleared: count });
 });
 // Public app version — clients detect updates against this.
