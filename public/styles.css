@@ -428,3 +428,16 @@ tr.hot td{background:#fff3e0 !important;font-weight:bold}
 .med-table th{background:#e8f5e9;color:#1b5e20;border:1px solid #c8e6c9;padding:5px 7px;text-align:right}
 .med-table td{border:1px solid #ddd;padding:5px 7px}
 .med-table tr.tot td{background:#f1f8e9;font-weight:800}
+.med-pagetop{display:flex;align-items:center;gap:10px;margin:6px 0 10px}
+.med-tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:11px;margin:12px 0}
+.med-tile{display:flex;align-items:center;gap:11px;background:#fff;border:2px solid #2e7d32;border-radius:14px;padding:16px 14px;font-size:18px;font-weight:800;color:#1b5e20;cursor:pointer;text-align:right;box-shadow:0 2px 6px rgba(0,0,0,.08)}
+.med-tile:active{transform:scale(.98)}
+.med-tile-ic{font-size:26px}
+.med-tile-lb{flex:1}
+.med-tile-b{background:#c62828;color:#fff;border-radius:12px;padding:1px 10px;font-size:14px}
+.med-tile-ar{color:#e8721c;font-size:20px}
+.med-emp-row{display:flex;align-items:center;gap:10px;border:1.5px solid #c8e6c9;border-radius:11px;padding:10px 12px;margin:8px 0;background:#fdfef9;cursor:pointer}
+.med-emp-main{font-size:17px}
+.med-emp-dept{background:#e8f5e9;border:1px solid #2e7d32;color:#1b5e20;border-radius:9px;padding:0 8px;font-size:13px;font-weight:700}
+.med-emp-sub{color:#555;font-size:14px;flex:1}
+.med-set-row{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:7px 4px;border-bottom:1px dashed #ddd;font-size:16px}
