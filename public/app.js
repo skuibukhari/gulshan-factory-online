@@ -3917,12 +3917,15 @@ function renderMedicine() {
   if (!MED_MONTH) MED_MONTH = karachiToday().slice(0, 7);
   const allowed = medPagesAllowed();
   if (!allowed.includes(MED_PAGE)) MED_PAGE = 'home';
-  const menuItems = MED_PAGES.filter(p => allowed.includes(p[0])).map(p => `<div class="tray-dd-item ${MED_PAGE === p[0] || (MED_PAGE === 'dept' && p[0] === 'home') ? 'on' : ''}" onclick="medGo('${p[0]}')">${p[1]} ${MED_PAGE === p[0] ? '✓' : ''}</div>`).join('');
+  const menuItems = MED_PAGES.filter(p => allowed.includes(p[0])).map(p => { const act = MED_PAGE === p[0] || (MED_PAGE === 'dept' && p[0] === 'home'); return `<button class="${act ? 'active' : ''}" onclick="medGo('${p[0]}')"><span style="font-size:20px">${p[1].split(' ')[0]}</span><span style="font-weight:700">${p[1].split(' ').slice(1).join(' ')}</span>${act ? '<span style="margin-right:auto;color:#2e7d32;font-weight:bold">✓</span>' : ''}</button>`; }).join('');
   v.innerHTML = `
   <div class="tray-hero"><h2>💊 دوا پرچی</h2><div class="sub">گلشن فیکٹری — ملازمین کے علاج و دوا کا حساب</div></div>
-  <div class="tray-dropdown-wrap">
-    <button class="tray-dropdown-btn" onclick="document.getElementById('medMenu').classList.toggle('open')">${(MED_PAGES.find(p => p[0] === MED_PAGE) || ['home', MED_PAGE === 'dept' ? '🏢 ' + esc(MED_DEPT) : '🏠 ڈیش بورڈ'])[1]} <span>▼</span></button>
-    <div class="tray-dropdown-menu" id="medMenu">${menuItems}</div>
+  <div class="tray-dropdown-wrap" id="medDD">
+    <button class="tray-dropdown-btn" onclick="document.getElementById('medDD').classList.toggle('open')">
+      <span style="font-weight:700">${(MED_PAGES.find(p => p[0] === MED_PAGE) || ['home', MED_PAGE === 'dept' ? '🏢 ' + esc(MED_DEPT) : '🏠 ڈیش بورڈ'])[1]}</span>
+      <span class="tray-dd-arrow">▼</span>
+    </button>
+    <div class="tray-dropdown-menu">${menuItems}</div>
   </div>
   <div id="medBody"></div>`;
   medLoadMasters().then(() => {
@@ -3938,7 +3941,7 @@ function renderMedicine() {
     else if (MED_PAGE === 'settings') medPageSettings();
   });
 }
-function medGo(p) { MED_PAGE = p; const m = $('#medMenu'); if (m) m.classList.remove('open'); renderMedicine(); window.scrollTo(0, 0); }
+function medGo(p) { MED_PAGE = p; const m = $('#medDD'); if (m) m.classList.remove('open'); renderMedicine(); window.scrollTo(0, 0); }
 function medDeptGo(name) { MED_DEPT = name; MED_PAGE = 'dept'; renderMedicine(); window.scrollTo(0, 0); }
 function medTypeChip(r) { return r.has_print ? '<span class="med-chip p">🖨 پرنٹ پرچی</span>' : '<span class="med-chip m">🎫 دستی</span>'; }
 function medSlipCard(r, showReturnBtn) {
