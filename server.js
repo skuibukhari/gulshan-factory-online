@@ -2258,6 +2258,21 @@ app.post('/api/rate-lists/:id/items', requireLogin, (req, res) => {
     .run(req.params.id, b.name.trim(), b.category_name || '', parseFloat(b.price) || 0, maxSort + 10);
   res.json({ ok: true, id: r.lastInsertRowid });
 });
+app.put('/api/rate-lists/:id/prices-bulk', requireLogin, (req, res) => {
+  if (req.user.role !== 'super_admin') return res.status(403).json({ error: 'super only' });
+  const items = (req.body && Array.isArray(req.body.items)) ? req.body.items : [];
+  const upd = db.prepare('UPDATE rate_list_items SET price=? WHERE id=? AND rate_list_id=?');
+  const tx = db.transaction((rows) => {
+    let n = 0;
+    for (const r of rows) {
+      const info = upd.run(parseFloat(r.price) || 0, parseInt(r.id, 10), req.params.id);
+      n += info.changes;
+    }
+    return n;
+  });
+  const updated = tx(items);
+  res.json({ ok: true, updated });
+});
 app.put('/api/rate-list-items/:id', requireLogin, (req, res) => {
   if (req.user.role !== 'super_admin') return res.status(403).json({ error: 'super only' });
   const b = req.body || {};

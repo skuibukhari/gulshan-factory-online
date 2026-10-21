@@ -1032,14 +1032,18 @@ async function showRateList(id, name) {
   html += '</div>';
   box.innerHTML = html;
 }
-async function saveRateListPrices(id) {
+async function saveRateListPrices(id, btn) {
   try {
     const items = await api('GET', '/api/rate-lists/' + id + '/items');
+    const payload = [];
     for (const it of items) {
       const inp = document.getElementById('rli-' + id + '-' + it.id);
-      if (inp) await api('PUT', '/api/rate-list-items/' + it.id, { price: parseFloat(inp.value) || 0 });
+      if (inp) payload.push({ id: it.id, price: parseFloat(inp.value) || 0 });
     }
-    alert('✅ ریٹس محفوظ ہو گئے!');
+    if (!payload.length) { alert('⚠️ koi item nahi mila!'); return; }
+    // ONE bulk request — pehle har item ki alag request jati thi (slow!)
+    await api('PUT', '/api/rate-lists/' + id + '/prices-bulk', { items: payload });
+    showTrayToast('✅ ریٹس محفوظ ہو گئے!', payload.length + ' items update');
   } catch(e) { alert('Error: ' + (e.message || '')); }
 }
 function printRateList(id, name) {
@@ -1694,19 +1698,29 @@ function tvItemAdj(id, n) {
   el.closest('.tv-item').style.borderColor = Number(el.value) > 0 ? '#4caf50' : '#e0e0e0';
 }
 async function saveTrayVoucher(kind) {
-  // Anti-double: agar pehle se save chal raha hai to dobara na chalao
+  // Anti-double guard — release HAR haal me finally me hoga (button kabhi stuck nahi hoga)
   if (window._traySaving) return;
   window._traySaving = true;
-  const _saveBtns = document.querySelectorAll('#v-tray button.btn.green');
-  _saveBtns.forEach(b => { b.disabled = true; b.style.opacity = '0.6'; });
-  const _release = () => { window._traySaving = false; _saveBtns.forEach(b => { b.disabled = false; b.style.opacity = ''; }); };
+  const _btns = () => document.querySelectorAll('#v-tray button.btn.green');
+  _btns().forEach(b => { b.disabled = true; b.style.opacity = '0.6'; });
+  try {
+    await _saveTrayVoucherInner(kind);
+  } catch (e) {
+    const m = document.getElementById('tvMsg');
+    if (m) m.innerHTML = '<div class="err">❌ ' + ((e && e.message) || 'خرابی') + '</div>';
+  } finally {
+    window._traySaving = false;
+    _btns().forEach(b => { b.disabled = false; b.style.opacity = ''; });
+  }
+}
+async function _saveTrayVoucherInner(kind) {
   const isSent = kind === 'sent';
   const sh = trayParseShop($('#tvShop').value);
   const qtys = TRAY.items.map(it => {
     const el = $('#tvQ_' + it.id);
     return { id: it.id, qty: el ? (Number(el.value) || 0) : 0 };
   }).filter(x => x.qty > 0);
-  if (!qtys.length) { $('#tvMsg').innerHTML = `<div class="err">❌ کوئی تعداد نہیں لکھی</div>`; _release(); return; }
+  if (!qtys.length) { $('#tvMsg').innerHTML = `<div class="err">❌ کوئی تعداد نہیں لکھی</div>`; return; }
   // Edit mode: update single voucher
   if (window._editingVoucher) {
     const q = qtys[0];
@@ -1723,7 +1737,6 @@ async function saveTrayVoucher(kind) {
       $('#tvNote').value = '';
       loadTrayVoucherList();
     } catch (e) { $('#tvMsg').innerHTML = `<div class="err">❌ ${e.message || 'خرابی'}</div>`; }
-    _release();
     return;
   }
   $('#tvMsg').innerHTML = '<p>محفوظ ہو رہا ہے...</p>';
@@ -1741,20 +1754,18 @@ async function saveTrayVoucher(kind) {
   }
   if (!ok && lastErr) {
     $('#tvMsg').innerHTML = `<div class="err">❌ Save nahi hua: ${lastErr}</div>`;
-    _release();
     return;
   }
   const _failedCount = qtys.length - ok;
   $('#tvMsg').innerHTML = `<div class="note">✅ ${ok} واؤچر محفوظ! <b>${vnos.join(', ')}</b></div>
     <div style="margin-top:8px"><button class="btn small dark" onclick="printLastTrayVouchers('${kind}')">🖨 پرنٹ کریں</button></div>`;
   showTrayToast(`✅ ${ok} واؤچر محفوظ!`, vnos.join(', '));
-  TRAY.items.forEach(it => { window['_tvPQ_' + it.id] = Number($('#tvQ_' + it.id).value) || 0; $('#tvQ_' + it.id).value = 0; $('#tvQ_' + it.id).closest('.tv-item').style.borderColor = '#e0e0e0'; });
+  TRAY.items.forEach(it => { window['_tvPQ_' + it.id] = Number($('#tvQ_' + it.id).value) || 0; $('#tvQ_' + it.id).value = 0; const _c = $('#tvQ_' + it.id).closest('.tv-item'); if (_c) _c.style.borderColor = '#e0e0e0'; });
   $('#tvNote').value = '';
   window._lastTrayVouchers = vnos;
   if (_failedCount > 0) {
     $('#tvMsg').innerHTML += `<div class="err" style="margin-top:6px">⚠️ ${_failedCount} آئٹم save NAHI hua — dobara likh kar save karain! (${lastErr})</div>`;
   }
-  _release();
   // Sync shop before reloading list
   if ($('#tvShop')) window._trayShop = $('#tvShop').value;
   // Small delay to ensure server has committed, then reload
