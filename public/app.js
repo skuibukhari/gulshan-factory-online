@@ -3896,60 +3896,93 @@ let MED_RETURN_ID = null;
 const medFmtDate = iso => { if (!iso) return ''; const p = String(iso).split('-'); return p.length === 3 ? `${p[2]}-${p[1]}-${p[0]}` : iso; };
 const medMoney = n => 'Rs ' + Number(n || 0).toLocaleString('en-PK');
 
+const MED_PAGES = [
+  ['home', '📊', 'ڈیش بورڈ'],
+  ['entry', '📝', 'نئی انٹری'],
+  ['list', '📋', 'واؤچرز / پرچیاں'],
+  ['employees', '👥', 'تمام ملازمین'],
+  ['print', '🖨', 'پرنٹ'],
+  ['report', '📈', 'رپورٹ'],
+  ['settings', '⚙️', 'سیٹنگز'],
+];
+function medPagesAllowed() {
+  const full = can('medicine', 'full');
+  return MED_PAGES.filter(p => full || !['entry', 'print', 'settings'].includes(p[0]));
+}
 async function renderMedicine() {
   const v = $('#v-medicine'); if (!v) return;
   const [stats, emps, depts] = await Promise.all([
     api('GET', '/api/med/stats'), api('GET', '/api/med/employees'), api('GET', '/api/med/departments')]);
   MED_STATS = stats; MED_EMPS = emps; MED_DEPTS = depts;
   if (!MED_MONTH) MED_MONTH = stats.month;
+  const pages = medPagesAllowed();
+  if (!pages.some(p => p[0] === MED_PAGE)) MED_PAGE = 'home';
+  const cur = pages.find(p => p[0] === MED_PAGE) || pages[0];
+  v.innerHTML = `
+  <div class="tray-hero"><h2>💊 دوا پرچی</h2><div class="sub">گلشن فیکٹری — ملازمین کے علاج و دوا کا حساب</div></div>
+  <div class="tray-dropdown-wrap" id="medDD">
+    <button class="tray-dropdown-btn" onclick="document.getElementById('medDD').classList.toggle('open')">
+      <span style="font-weight:700">${cur[1]} ${cur[2]}</span>
+      <span class="tray-dd-arrow">▼</span>
+    </button>
+    <div class="tray-dropdown-menu">
+      ${pages.map(p => `<button class="${MED_PAGE === p[0] ? 'active' : ''}" onclick="medGo('${p[0]}')"><span style="font-size:20px">${p[1]}</span><span style="font-weight:700">${p[2]}</span>${MED_PAGE === p[0] ? '<span style="margin-right:auto;color:#2e7d32;font-weight:bold">✓</span>' : ''}</button>`).join('')}
+    </div>
+  </div>
+  <div id="medBody" style="margin-top:12px"></div>`;
   medPaint();
 }
-
-function medGo(p) { MED_PAGE = p; medPaint(); try { window.scrollTo({ top: 0 }); } catch (e) {} }
-function medBackBar(title) {
-  return `<div class="med-pagetop"><button class="btn ghost" onclick="medGo('home')">⬅️ واپس</button><h2 style="margin:0">${title}</h2></div>`;
-}
+function medGo(p) { MED_PAGE = p; renderMedicine(); try { window.scrollTo({ top: 0 }); } catch (e) {} }
 function medPaint() {
   const fn = { home: medPageHome, entry: medPageEntry, list: medPageList, employees: medPageEmployees,
     print: medPagePrint, report: medPageReport, settings: medPageSettings }[MED_PAGE] || medPageHome;
   fn();
 }
 
-// ----- Dashboard (home) -----
+// ----- Dashboard (home) — tray style -----
 function medPageHome() {
-  const v = $('#v-medicine'); if (!v) return;
+  const v = $('#medBody'); if (!v) return;
   const s = MED_STATS || { month_slips: 0, month_amount: 0, pending: 0, unprinted: 0 };
-  const full = can('medicine', 'full');
-  const tile = (page, icon, label, badge, tab) => `<button class="med-tile" onclick="medTileGo('${page}','${tab || ''}')">
-      <span class="med-tile-ic">${icon}</span><span class="med-tile-lb">${label}</span>
-      ${badge ? `<span class="med-tile-b">${badge}</span>` : ''}<span class="med-tile-ar">➜</span></button>`;
   v.innerHTML = `
-  <h2 style="margin:6px 0">💊 دوا پرچی — ڈیش بورڈ</h2>
-  <div class="med-stats">
-    <div class="med-stat"><div class="med-stat-n">${s.month_slips}</div><div class="med-stat-l">اس مہینے کی پرچیاں</div></div>
-    <div class="med-stat"><div class="med-stat-n">${medMoney(s.month_amount)}</div><div class="med-stat-l">اس مہینے کا کل خرچ</div></div>
-    <div class="med-stat warn"><div class="med-stat-n">${s.pending}</div><div class="med-stat-l">⏳ واپسی باقی</div></div>
-    <div class="med-stat warn"><div class="med-stat-n">${s.unprinted}</div><div class="med-stat-l">🖨 پرنٹ باقی</div></div>
+  <div class="tray-kpis">
+    <div class="tray-kpi tk1"><div class="v">${s.month_slips}</div><div class="t">اس مہینے کی پرچیاں</div></div>
+    <div class="tray-kpi tk2"><div class="v">${Number(s.month_amount || 0).toLocaleString('en-PK')}</div><div class="t">کل خرچ (Rs)</div></div>
+    <div class="tray-kpi tk3"><div class="v">${s.pending}</div><div class="t">واپسی باقی</div></div>
+    <div class="tray-kpi tk4"><div class="v">${s.unprinted}</div><div class="t">پرنٹ باقی</div></div>
   </div>
-  <div class="med-tiles">
-    ${full ? tile('entry', '📝', 'نئی پرچی / انٹری') : ''}
-    ${tile('list', '⏳', 'واپسی باقی پرچیاں', s.pending || '', 'pending')}
-    ${tile('list', '📋', 'تمام واؤچرز / پرچیاں', '', 'all')}
-    ${tile('employees', '👥', 'تمام ملازمین')}
-    ${full ? tile('print', '🖨', 'پرچی پرنٹ کریں', s.unprinted || '') : ''}
-    ${tile('report', '📊', 'ماہانہ رپورٹ')}
-    ${full ? tile('settings', '⚙️', 'سیٹنگز — شعبے و ملازمین') : ''}
-  </div>`;
+  <h3 style="margin:12px 0 8px">👥 ملازمین <span style="font-size:13px;color:#777">(خانے پر دبائیں — ہسٹری کھل جائے گی)</span></h3>
+  <div id="medHomeEmps"><div class="med-note">لوڈ ہو رہا ہے…</div></div>`;
+  medLoadHomeEmps();
 }
-function medTileGo(page, tab) {
-  if (page === 'list' && tab) { MED_TAB = tab; MED_EMPF = null; }
-  medGo(page);
+async function medLoadHomeEmps() {
+  const box = $('#medHomeEmps'); if (!box) return;
+  const rows = await api('GET', '/api/med/slips');
+  const map = {};
+  for (const r of rows) {
+    const k = r.employee_id || r.emp_name;
+    if (!map[k]) map[k] = { id: r.employee_id, name: r.emp_name, dept: r.department || '', slips: 0, pending: 0, amount: 0 };
+    map[k].slips++;
+    if (r.status === 'done') map[k].amount += r.amount || 0; else map[k].pending++;
+  }
+  const list = Object.values(map).sort((a, b) => b.amount - a.amount);
+  if (!list.length) { box.innerHTML = '<div class="med-note" style="text-align:center;padding:10px">ابھی کوئی انٹری نہیں — اوپر والے مینو سے "نئی انٹری" منتخب کریں</div>'; return; }
+  const colors = ['sb1', 'sb2', 'sb3', 'sb4', 'sb5', 'sb6', 'sb7', 'sb8', 'sb9'];
+  box.innerHTML = '<div class="shop-boxes">' + list.map((e, i) => `
+    <div class="shop-box ${colors[i % colors.length]}" style="cursor:pointer" title="ہسٹری کے لیے دبائیں" onclick="medEmpHistory(${e.id},'${esc(e.name)}','${esc(e.dept)}')">
+      <div class="sname">${esc(e.name)}</div>
+      <div style="font-size:12.5px;opacity:.92">${esc(e.dept || '')}</div>
+      <div class="sitems">
+        <div class="si"><div class="e">📋</div><div class="v">${e.slips}</div></div>
+        <div class="si"><div class="e">⏳</div><div class="v">${e.pending}</div></div>
+      </div>
+      <div class="stotal"><div class="tv">Rs ${Number(e.amount).toLocaleString('en-PK')}</div><div class="tl">کل خرچ</div></div>
+    </div>`).join('') + '</div>';
 }
 
 // ----- Entry page -----
 function medPageEntry() {
-  const v = $('#v-medicine'); if (!v) return;
-  v.innerHTML = medBackBar('📝 نئی پرچی / انٹری') + `
+  const v = $('#medBody'); if (!v) return;
+  v.innerHTML = `
   <div class="med-card">
     <label>ملازم (لسٹ سے منتخب کریں)<br>
       <select id="medEmpSel" onchange="medEmpSelChange()">
@@ -4028,9 +4061,9 @@ async function medSave(hasPrint) {
 
 // ----- Vouchers / list page -----
 function medPageList() {
-  const v = $('#v-medicine'); if (!v) return;
+  const v = $('#medBody'); if (!v) return;
   const full = can('medicine', 'full');
-  v.innerHTML = medBackBar('📋 واؤچرز / پرچیاں') + `
+  v.innerHTML = `
   ${full ? `<div class="med-card" id="medReturnCard" style="display:none">
     <h3>💰 واپسی درج کریں — <span id="medReturnNo"></span></h3>
     <label>رقم (Rs)<br><input id="medRetAmt" type="number" min="0" inputmode="numeric" placeholder="رقم"></label>
@@ -4102,7 +4135,7 @@ async function medLoadList() {
 
 function medEmpHistory(id, name, dept) {
   if (!id) return;
-  MED_EMPF = { id, name, dept }; MED_TAB = 'all'; MED_PAGE = 'list'; medPaint();
+  MED_EMPF = { id, name, dept }; MED_TAB = 'all'; MED_PAGE = 'list'; renderMedicine();
 }
 function medClearEmpF() { MED_EMPF = null; medLoadList(); }
 
@@ -4143,8 +4176,8 @@ async function medDelete(id, no) {
 
 // ----- Employees page -----
 function medPageEmployees() {
-  const v = $('#v-medicine'); if (!v) return;
-  v.innerHTML = medBackBar('👥 تمام ملازمین') + `<div class="med-card"><div id="medEmpList"><div class="med-note">لوڈ ہو رہا ہے…</div></div></div>`;
+  const v = $('#medBody'); if (!v) return;
+  v.innerHTML = `<div class="med-card"><div id="medEmpList"><div class="med-note">لوڈ ہو رہا ہے…</div></div></div>`;
   medLoadEmployees();
 }
 async function medLoadEmployees() {
@@ -4168,8 +4201,8 @@ async function medLoadEmployees() {
 
 // ----- Print page -----
 function medPagePrint() {
-  const v = $('#v-medicine'); if (!v) return;
-  v.innerHTML = medBackBar('🖨 پرچی پرنٹ کریں') + `
+  const v = $('#medBody'); if (!v) return;
+  v.innerHTML = `
   <div class="med-card">
     <div id="medPrintList"></div>
     <label>صفحے پر جگہ<br>
@@ -4258,8 +4291,8 @@ body { font-family: 'Jameel Noori Nastaleeq', 'Noto Nastaliq Urdu', serif; }
 
 // ----- Report page -----
 function medPageReport() {
-  const v = $('#v-medicine'); if (!v) return;
-  v.innerHTML = medBackBar('📊 ماہانہ رپورٹ') + `
+  const v = $('#medBody'); if (!v) return;
+  v.innerHTML = `
   <div class="med-card">
     <label>مہینہ<br><input id="medMonth" type="month" value="${MED_MONTH}" onchange="MED_MONTH=this.value;medLoadReport()"></label>
     <div id="medReport"></div>
@@ -4284,9 +4317,9 @@ async function medLoadReport() {
 
 // ----- Settings page -----
 function medPageSettings() {
-  const v = $('#v-medicine'); if (!v) return;
+  const v = $('#medBody'); if (!v) return;
   const isSuper = ME && ME.role === 'super_admin';
-  v.innerHTML = medBackBar('⚙️ سیٹنگز — شعبے و ملازمین') + `
+  v.innerHTML = `
   <div class="med-card">
     <h3>🏢 شعبے (Departments)</h3>
     <div id="medDeptList">${MED_DEPTS.length ? MED_DEPTS.map(d => `<div class="med-set-row"><span>${esc(d.name)}</span>${isSuper ? `<button class="btn small ghost" onclick="medDeptDelete(${d.id},'${esc(d.name)}')">🗑️</button>` : ''}</div>`).join('') : '<div class="med-note">ابھی کوئی شعبہ نہیں</div>'}</div>
