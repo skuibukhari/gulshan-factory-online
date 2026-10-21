@@ -382,3 +382,12 @@ tr.hot td{background:#fff3e0 !important;font-weight:bold}
   50% { transform: scale(1.3); }
   100% { transform: scale(1); }
 }
+
+/* Mobile: settings panel poori screen + users cards */
+@media (max-width:640px){
+  .setpanel{width:100vw;max-width:100vw;left:-104vw}
+  .setpanel.on{left:0}
+}
+.ucard{background:#fff;border:1.5px solid #e5ddc8;border-radius:12px;padding:10px 12px;margin:8px 0}
+.ucard .urow{display:flex;justify-content:space-between;align-items:center;gap:8px}
+.ucard .umeta{color:#777;font-size:13px;margin-top:4px}

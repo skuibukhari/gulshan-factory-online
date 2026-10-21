@@ -2420,13 +2420,17 @@ function lastSeenTxt(ts) {
 async function renderSettingsUsers() {
   const users = await api('GET', '/api/users');
   await refreshCache();
-  const rows = users.map(u => `<tr><td>${esc(u.username)}</td><td>${acctLabel(u)}</td>
-    <td>${esc(u.shop_name || '—')}</td><td dir="ltr">${esc(u.phone || '—')}</td><td>${u.active ? '<span class="badge">فعال</span>' : '<span class="badge off">بند</span>'}</td><td>${lastSeenTxt(u.last_seen)}</td>
-    <td><button class="btn small ghost" onclick="userEdit(${u.id})">✏</button>
+  const rows = users.map(u => `<div class="ucard">
+    <div class="urow"><b style="font-size:16px">👤 ${esc(u.username)}</b>
+    <span>${u.active ? '<span class="badge">فعال</span>' : '<span class="badge off">بند</span>'}
+    <button class="btn small ghost" onclick="userEdit(${u.id})">✏</button>
     ${u.id !== ME.id ? `<button class="btn small" style="background:#ff9800;color:#fff" onclick="userLogout(${u.id},'${esc(u.username)}')" title="لاگ آؤٹ کریں">🚪</button>
-    <button class="btn small danger" onclick="userDel(${u.id})">🗑</button>` : ''}</td></tr>`).join('');
+    <button class="btn small danger" onclick="userDel(${u.id})">🗑</button>` : ''}</span></div>
+    <div class="umeta">${acctLabel(u)} • ${esc(u.shop_name || '—')} • <span dir="ltr">${esc(u.phone || '—')}</span></div>
+    <div style="margin-top:4px">${lastSeenTxt(u.last_seen)}</div>
+  </div>`).join('');
   $('#setUsers').innerHTML = `<h3>👥 یوزرز / اکاؤنٹس</h3>
-    <div style="overflow-x:auto"><table style="font-size:13px;white-space:nowrap"><tr><th>یوزر نام</th><th>اکاؤنٹ کی قسم</th><th>دکان</th><th>موبائل</th><th>حالت</th><th>آخری سرگرمی</th><th></th></tr>${rows}</table></div>
+    <div>${rows}</div>
     <h3>➕ نیا اکاؤنٹ</h3>
     <div class="formgrid">
       <label>یوزر نام<br><input id="nu-name"></label>
