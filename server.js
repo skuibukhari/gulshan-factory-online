@@ -506,6 +506,12 @@ db.exec(`CREATE TABLE IF NOT EXISTS med_slips (
   created_by INTEGER,
   created_at TEXT DEFAULT (datetime('now'))
 )`);
+db.exec(`CREATE TABLE IF NOT EXISTS med_doctors (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  name TEXT NOT NULL UNIQUE,
+  created_at TEXT DEFAULT (datetime('now'))
+)`);
+try { db.exec(`ALTER TABLE med_slips ADD COLUMN doctor TEXT NOT NULL DEFAULT ''`); } catch (e) { /* already there */ }
 // --- Daily system: fully separate catalog (mukamal alag data) — one-time copy ---
 // Same IDs so existing daily_orders/access rows stay valid; after this, independent.
 if (!db.prepare(`SELECT value FROM daily_settings WHERE key='catalog_split'`).get()) {
@@ -2295,6 +2301,19 @@ app.delete('/api/med/departments/:id', requireLogin, (req, res, next) => { if (r
   db.prepare('DELETE FROM med_departments WHERE id=?').run(req.params.id);
   res.json({ ok: true });
 });
+app.get('/api/med/doctors', requireLogin, requireSection('medicine', 'view'), (req, res) => {
+  res.json(db.prepare('SELECT * FROM med_doctors ORDER BY name').all());
+});
+app.post('/api/med/doctors', requireLogin, requireSection('medicine', 'full'), (req, res) => {
+  const name = ((req.body || {}).name || '').trim();
+  if (!name) return res.status(400).json({ error: 'name required' });
+  db.prepare('INSERT OR IGNORE INTO med_doctors (name) VALUES (?)').run(name);
+  res.json({ ok: true });
+});
+app.delete('/api/med/doctors/:id', requireLogin, (req, res, next) => { if (req.user.role !== 'super_admin') return res.status(403).json({ error: 'super only' }); next(); }, (req, res) => {
+  db.prepare('DELETE FROM med_doctors WHERE id=?').run(req.params.id);
+  res.json({ ok: true });
+});
 app.get('/api/med/employees', requireLogin, requireSection('medicine', 'view'), (req, res) => {
   res.json(db.prepare('SELECT * FROM med_employees WHERE active=1 ORDER BY name').all());
 });
@@ -2335,6 +2354,7 @@ app.get('/api/med/slips', requireLogin, requireSection('medicine', 'view'), (req
   if (q.employee_id) { sql += ' AND employee_id=?'; args.push(parseInt(q.employee_id, 10)); }
   if (q.month) { sql += ' AND substr(date,1,7)=?'; args.push(q.month); }
   if (q.unprinted === '1') { sql += ' AND has_print=1 AND printed=0'; }
+  if (q.doctor) { sql += ' AND doctor=?'; args.push(q.doctor); }
   sql += ' ORDER BY id DESC LIMIT 500';
   res.json(db.prepare(sql).all(...args));
 });
@@ -2349,8 +2369,13 @@ app.post('/api/med/slips', requireLogin, requireSection('medicine', 'full'), (re
   if (!e) { const r = db.prepare('INSERT INTO med_employees (name, department) VALUES (?,?)').run(empName, dept); e = { id: r.lastInsertRowid }; }
   const no = medSlipNo();
   const hasPrint = b.has_print === 0 ? 0 : 1;
-  const r = db.prepare(`INSERT INTO med_slips (slip_no, employee_id, emp_name, department, date, notes, has_print, printed, created_by)
-    VALUES (?,?,?,?,?,?,?,?,?)`).run(no, e.id, empName, dept, date, (b.notes || '').trim(), hasPrint, hasPrint ? 0 : 1, req.user.id);
+  const doc = (b.doctor || '').trim();
+  if (doc) db.prepare('INSERT OR IGNORE INTO med_doctors (name) VALUES (?)').run(doc);
+  const manAmt = parseFloat(b.amount);
+  const isDone = hasPrint === 0 && !isNaN(manAmt) && manAmt >= 0;
+  const r = db.prepare(`INSERT INTO med_slips (slip_no, employee_id, emp_name, department, date, notes, has_print, printed, created_by, doctor, status, amount, return_detail, returned_date)
+    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).run(no, e.id, empName, dept, date, (b.notes || '').trim(), hasPrint, hasPrint ? 0 : 1, req.user.id, doc,
+      isDone ? 'done' : 'pending', isDone ? manAmt : null, isDone ? (b.return_detail || '').trim() : '', isDone ? date : null);
   res.json({ ok: true, id: r.lastInsertRowid, slip_no: no });
 });
 app.put('/api/med/slips/:id/return', requireLogin, requireSection('medicine', 'full'), (req, res) => {
@@ -2396,7 +2421,13 @@ app.get('/api/med/report', requireLogin, requireSection('medicine', 'view'), (re
       COALESCE(SUM(CASE WHEN status='done' THEN amount ELSE 0 END), 0) AS total_amount
     FROM med_slips WHERE substr(date,1,7)=? GROUP BY employee_id, emp_name, department ORDER BY total_amount DESC`).all(month);
   const totals = rows.reduce((a, r) => ({ slips: a.slips + r.slips, done: a.done + (r.done || 0), pending: a.pending + (r.pending || 0), total_amount: a.total_amount + r.total_amount }), { slips: 0, done: 0, pending: 0, total_amount: 0 });
-  res.json({ month, rows, totals });
+  const doctors = db.prepare(`SELECT doctor,
+      SUM(CASE WHEN has_print=1 THEN 1 ELSE 0 END) AS printed_cnt,
+      SUM(CASE WHEN has_print=0 THEN 1 ELSE 0 END) AS manual_cnt,
+      SUM(CASE WHEN status='pending' THEN 1 ELSE 0 END) AS pending,
+      COALESCE(SUM(CASE WHEN status='done' THEN amount ELSE 0 END), 0) AS total_amount
+    FROM med_slips WHERE substr(date,1,7)=? GROUP BY doctor ORDER BY total_amount DESC`).all(month);
+  res.json({ month, rows, totals, doctors });
 });
 
 // ---------- Rate Lists (multiple price lists) ----------

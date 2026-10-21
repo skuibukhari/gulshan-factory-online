@@ -441,3 +441,31 @@ tr.hot td{background:#fff3e0 !important;font-weight:bold}
 .med-emp-dept{background:#e8f5e9;border:1px solid #2e7d32;color:#1b5e20;border-radius:9px;padding:0 8px;font-size:13px;font-weight:700}
 .med-emp-sub{color:#555;font-size:14px;flex:1}
 .med-set-row{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:7px 4px;border-bottom:1px dashed #ddd;font-size:16px}
+
+/* Medicine v3 — dashboard + separate vouchers + doctor tally (2026-10-21) */
+.med-sect { font-weight: 800; font-size: 16px; margin: 12px 0 7px; }
+.med-chip { border-radius: 9px; padding: 1px 8px; font-size: 11.5px; font-weight: 700; }
+.med-chip.p { background: #e3f2fd; color: #1565c0; border: 1px solid #1565c0; }
+.med-chip.m { background: #fff3e0; color: #b26a00; border: 1px solid #e8721c; }
+.med-slip { background: #fff; border: 1.6px solid #ddd; border-radius: 13px; padding: 9px 12px; margin-bottom: 8px; color: #222; }
+.med-slip.pend { border-color: #ef5350; background: #fff8f8; }
+.med-slip.done { border-color: #a5d6a7; }
+.med-slip-top { display: flex; align-items: center; gap: 8px; }
+.med-no { color: #c62828; font-size: 15.5px; }
+.med-amt { margin-inline-start: auto; font-weight: 800; color: #1b5e20; }
+.med-slip.pend .med-amt { color: #c62828; }
+.med-slip-mid { font-size: 14px; margin-top: 3px; }
+.med-slip-note { font-size: 13px; color: #555; margin-top: 2px; }
+.med-slip-actions { display: flex; gap: 6px; margin-top: 7px; flex-wrap: wrap; }
+.med-ret-grid { display: grid; grid-template-columns: 130px 1fr auto; gap: 7px; margin-top: 8px; }
+.med-ret-grid input { border: 1.5px solid #999; border-radius: 9px; padding: 6px 9px; font-family: inherit; font-size: 14.5px; width: 100%; }
+@media (max-width: 560px) { .med-ret-grid { grid-template-columns: 1fr; } }
+.med-filters { display: flex; flex-wrap: wrap; gap: 8px; align-items: flex-end; }
+.med-filters label { flex: 1 1 140px; }
+.med-totbar { display: flex; flex-wrap: wrap; gap: 8px 16px; background: #f1f8e9; border: 1.5px solid #a5d6a7; border-radius: 11px; padding: 7px 12px; margin-top: 10px; font-size: 14.5px; }
+.med-totbar .grand { font-weight: 800; color: #1b5e20; margin-inline-start: auto; }
+.med-table { width: 100%; border-collapse: collapse; font-size: 14px; }
+.med-table th { background: #e8f5e9; color: #1b5e20; padding: 5px 7px; border: 1px solid #c8e6c9; text-align: right; }
+.med-table td { padding: 5px 7px; border: 1px solid #e0e0e0; }
+.med-table tr.tot td { background: #f1f8e9; }
+a.med-emp { color: #1565c0; font-weight: 700; text-decoration: none; }
