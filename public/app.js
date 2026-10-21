@@ -3884,21 +3884,20 @@ async function dailyShopEdit(id) {
 
 document.addEventListener('DOMContentLoaded', init);
 
-// ---------- Medicine Parchi (دوا پرچی) — ڈیش بورڈ + الگ واؤچرز + ڈاکٹر ٹیلی ----------
+// ---------- Medicine Parchi (دوا پرچی) v4 — professional theme, aik screen, roster-first ----------
 let MED_PAGE = 'home';
 let MED_MONTH = '';
 let MED_PRINT_SEL = [];
-let MED_EMPS = [], MED_DEPTS = [], MED_DOCTORS = [];
+let MED_EMPS = [], MED_ALL_EMPS = [], MED_DEPTS = [], MED_DOCTORS = [];
 let MED_DEPT = '';
+let MED_H = { dept: '', empId: null, manualOpen: false };
 let MED_LED = { month: '', dept: '', type: 'all', doctor: '', status: '' };
 let MED_EMPVIEW = null;
+let MED_PAY_DOCTOR = '';
 const MED_PAGES = [
-  ['home', '🏠 ڈیش بورڈ'],
-  ['printform', '🖨 پرچی پرنٹ کریں'],
-  ['return', '↩️ واپسی درج کریں'],
-  ['manual', '🎫 دستی انٹری'],
+  ['home', '🏠 مرکزی صفحہ'],
   ['ledger', '📒 لیجر'],
-  ['tally', '📊 ٹیلی / رپورٹ'],
+  ['tally', '📊 رپورٹ / ٹیلی'],
   ['employees', '👥 ملازمین'],
   ['printq', '🖨 پرنٹ باقی'],
   ['settings', '⚙️ سیٹنگز'],
@@ -3917,89 +3916,49 @@ function renderMedicine() {
   if (!MED_MONTH) MED_MONTH = karachiToday().slice(0, 7);
   const allowed = medPagesAllowed();
   if (!allowed.includes(MED_PAGE)) MED_PAGE = 'home';
+  const monthName = new Date(MED_MONTH + '-02T00:00:00').toLocaleDateString('en-GB', { month: 'long', year: 'numeric' });
   const menuItems = MED_PAGES.filter(p => allowed.includes(p[0])).map(p => { const act = MED_PAGE === p[0] || (MED_PAGE === 'dept' && p[0] === 'home'); return `<button class="${act ? 'active' : ''}" onclick="medGo('${p[0]}')"><span style="font-size:20px">${p[1].split(' ')[0]}</span><span style="font-weight:700">${p[1].split(' ').slice(1).join(' ')}</span>${act ? '<span style="margin-right:auto;color:#2e7d32;font-weight:bold">✓</span>' : ''}</button>`; }).join('');
-  v.innerHTML = `
-  <div class="tray-hero"><h2>💊 دوا پرچی</h2><div class="sub">گلشن فیکٹری — ملازمین کے علاج و دوا کا حساب</div></div>
+  const curLabel = (MED_PAGES.find(p => p[0] === MED_PAGE) || ['home', MED_PAGE === 'dept' ? '🏢 ' + esc(MED_DEPT) : '🏠 مرکزی صفحہ'])[1];
+  v.innerHTML = `<div class="medpro">
+  <div class="mp-hero"><img class="mp-logo" src="/logo.png" alt=""><div class="mp-ht"><div class="mp-t">💊 دوا پرچی</div><div class="mp-s">گلشن فیکٹری — ملازمین کے علاج و دوا کا حساب</div></div><span class="mp-badge">${monthName}</span></div>
   <div class="tray-dropdown-wrap" id="medDD">
     <button class="tray-dropdown-btn" onclick="document.getElementById('medDD').classList.toggle('open')">
-      <span style="font-weight:700">${(MED_PAGES.find(p => p[0] === MED_PAGE) || ['home', MED_PAGE === 'dept' ? '🏢 ' + esc(MED_DEPT) : '🏠 ڈیش بورڈ'])[1]}</span>
+      <span style="font-weight:700">${curLabel}</span>
       <span class="tray-dd-arrow">▼</span>
     </button>
     <div class="tray-dropdown-menu">${menuItems}</div>
   </div>
-  <div id="medBody"></div>`;
+  <div id="medBody"></div></div>`;
   medLoadMasters().then(() => {
     if (MED_PAGE === 'home') medPageHome();
-    else if (MED_PAGE === 'printform') medPagePrintForm();
-    else if (MED_PAGE === 'return') medPageReturn();
-    else if (MED_PAGE === 'manual') medPageManual();
     else if (MED_PAGE === 'ledger') medPageLedger();
-    else if (MED_PAGE === 'dept') medPageDept();
     else if (MED_PAGE === 'tally') medPageTally();
     else if (MED_PAGE === 'employees') medPageEmployees();
+    else if (MED_PAGE === 'dept') medPageDept();
     else if (MED_PAGE === 'printq') medPagePrintQ();
     else if (MED_PAGE === 'settings') medPageSettings();
   });
 }
 function medGo(p) { MED_PAGE = p; const m = $('#medDD'); if (m) m.classList.remove('open'); renderMedicine(); window.scrollTo(0, 0); }
 function medDeptGo(name) { MED_DEPT = name; MED_PAGE = 'dept'; renderMedicine(); window.scrollTo(0, 0); }
-let MED_PF_DEPT = '';
-function medDeptVoucher(name) { MED_PF_DEPT = name; MED_PAGE = 'printform'; renderMedicine(); window.scrollTo(0, 0); }
-function medTypeChip(r) { return r.has_print ? '<span class="med-chip p">🖨 پرنٹ پرچی</span>' : '<span class="med-chip m">🎫 دستی</span>'; }
+function medDeptVoucher(name) { MED_H.dept = name; MED_H.empId = null; MED_PAGE = 'home'; renderMedicine(); window.scrollTo(0, 0); }
+function medTypeChip(r) { return r.has_print ? '<span class="mp-chip p">🖨 پرنٹ پرچی</span>' : '<span class="mp-chip m">🎫 دستی</span>'; }
 function medSlipCard(r, showReturnBtn) {
   const pend = r.status === 'pending';
-  return `<div class="med-slip ${pend ? 'pend' : 'done'}">
-    <div class="med-slip-top"><b class="med-no">${esc(r.slip_no)}</b>${medTypeChip(r)}
-      <span class="med-amt">${r.status === 'done' ? medMoney(r.amount) : '⏳ واپسی باقی'}</span></div>
-    <div class="med-slip-mid">👤 <b>${esc(r.emp_name)}</b>${r.department ? ' · ' + esc(r.department) : ''}${r.doctor ? ' · 🩺 ' + esc(r.doctor) : ''} · 📅 ${medFmtDate(r.date)}${pend ? ' · ' + medDays(r) + ' دن' : ''}</div>
-    ${r.return_detail ? `<div class="med-slip-note">📝 ${esc(r.return_detail)}</div>` : ''}
-    ${r.notes ? `<div class="med-slip-note">🗒 ${esc(r.notes)}</div>` : ''}
-    <div class="med-slip-actions">
-      ${pend && showReturnBtn ? `<button class="btn small green" onclick="medGo('return')">💰 رقم لکھیں</button>` : ''}
-      ${pend && !showReturnBtn ? '' : ''}
+  return `<div class="mp-slip ${pend ? 'pend' : 'done'}">
+    <div class="mp-slip-top"><b class="mp-no">${esc(r.slip_no)}</b>${medTypeChip(r)}
+      <span class="mp-amt">${r.status === 'done' ? medMoney(r.amount) : '⏳ واپسی باقی'}</span></div>
+    <div class="mp-slip-mid">👤 <b>${esc(r.emp_name)}</b>${r.department ? ' · ' + esc(r.department) : ''}${r.doctor ? ' · 🩺 ' + esc(r.doctor) : ''} · 📅 ${medFmtDate(r.date)}${pend ? ' · ' + medDays(r) + ' دن' : ''}${r.by_name ? ' · جاری کردہ: ' + esc(r.by_name) : ''}</div>
+    ${r.return_detail ? `<div class="mp-slip-note">📝 ${esc(r.return_detail)}</div>` : ''}
+    ${r.notes ? `<div class="mp-slip-note">🗒 ${esc(r.notes)}</div>` : ''}
+    <div class="mp-slip-actions">
+      ${pend && showReturnBtn ? `<button class="btn small green" onclick="medGo('home')">💰 رقم لکھیں</button>` : ''}
       ${!pend ? `<button class="btn small" onclick="medReopen(${r.id})">↩ دوبارہ باقی کریں</button>` : ''}
       <button class="btn small" onclick="medEditSlip(${r.id})">✏️ ترمیم</button>
       <button class="btn small red" onclick="medDelSlip(${r.id})">🗑</button>
     </div>
   </div>`;
 }
-// ----- Dashboard -----
-async function medPageHome() {
-  const v = $('#medBody'); if (!v) return;
-  const month = karachiToday().slice(0, 7);
-  const [st, pend, mslips] = await Promise.all([
-    api('GET', '/api/med/stats'),
-    api('GET', '/api/med/slips?status=pending'),
-    api('GET', '/api/med/slips?month=' + month),
-  ]);
-  const deptNames = [...new Set([...MED_DEPTS.map(d => d.name), ...MED_EMPS.map(e => e.department).filter(Boolean), ...mslips.map(r => r.department).filter(Boolean)])];
-  const grads = ['sb1', 'sb2', 'sb3', 'sb4', 'sb5', 'sb6', 'sb7', 'sb8', 'sb9'];
-  const boxes = deptNames.map((dn, i) => {
-    const emps = MED_EMPS.filter(e => e.department === dn).length;
-    const dp = pend.filter(r => r.department === dn).length;
-    const amt = mslips.filter(r => r.department === dn && r.status === 'done').reduce((a, r) => a + (+r.amount || 0), 0);
-    return `<div class="shop-box ${grads[i % 9]}" onclick="medDeptVoucher('${esc(dn)}')">
-      <div class="sname">${esc(dn)}</div>
-      <div class="sitems"><span class="si">👥 ${emps} ملازم</span><span class="si">⏳ ${dp} باقی</span></div>
-      <div class="stotal">${medMoney(amt)}</div>
-    </div>`;
-  }).join('');
-  v.innerHTML = `
-  <div class="tray-kpis">
-    <div class="tray-kpi tk1"><div class="v">${st.month_slips}</div><div class="t">اس مہینے پرچیاں</div></div>
-    <div class="tray-kpi tk2"><div class="v">${medMoney(st.month_amount)}</div><div class="t">اس مہینے کا خرچ</div></div>
-    <div class="tray-kpi tk3"><div class="v">${st.pending}</div><div class="t">واپسی باقی</div></div>
-    <div class="tray-kpi tk4"><div class="v">${st.unprinted}</div><div class="t">پرنٹ باقی</div></div>
-  </div>
-  ${pend.length ? `<div class="med-sect" style="color:#c62828">⏳ واپسی باقی — رقم لکھنا باقی</div>` + pend.slice(0, 6).map(r => medSlipCard(r, true)).join('') + (pend.length > 6 ? `<div class="med-note">… اور ${pend.length - 6} مزید — مکمل فہرست کے لیے "واپسی درج کریں" کھولیں</div>` : '') : ''}
-  <div class="med-sect" style="color:#1b5e20">🏢 شعبے — خانہ دبائیں، اس شعبے کے واؤچر کھل جائیں گے</div>
-  <div class="shop-boxes">${boxes || '<div class="med-note">ابھی کوئی شعبہ نہیں — سیٹنگز سے بنائیں</div>'}</div>
-  <div class="med-btnrow" style="margin-top:10px">
-    <button class="btn green" onclick="medGo('printform')">🖨 نئی پرچی پرنٹ کریں</button>
-    <button class="btn" onclick="medGo('manual')">🎫 دستی انٹری</button>
-  </div>`;
-}
-// ----- Print voucher form (پرچی بنانا + پرنٹ) -----
 function medDocOptions(sel) {
   return `<option value="">— ڈاکٹر / ریفرنس منتخب کریں —</option>` + MED_DOCTORS.map(d => `<option value="${esc(d.name)}" ${sel === d.name ? 'selected' : ''}>${esc(d.name)}</option>`).join('') + `<option value="__new">➕ نیا ڈاکٹر لکھیں…</option>`;
 }
@@ -4014,122 +3973,147 @@ function medDocValue(selId, inpId) {
   if (!s) return '';
   return s.value === '__new' ? (i.value || '').trim() : s.value;
 }
-function medEmpListFor(dept) {
-  return MED_EMPS.filter(e => !dept || e.department === dept).map(e => `<option value="${esc(e.name)}">`).join('');
-}
-function medPagePrintForm() {
+// ----- Home: aik screen (parchi + wapsi + dasti) -----
+async function medPageHome() {
   const v = $('#medBody'); if (!v) return;
-  const deptOpts = MED_DEPTS.map(d => `<option value="${esc(d.name)}" ${MED_PF_DEPT === d.name ? 'selected' : ''}>${esc(d.name)}</option>`).join('');
+  const month = karachiToday().slice(0, 7);
+  const [st, pend, mslips] = await Promise.all([
+    api('GET', '/api/med/stats'),
+    api('GET', '/api/med/slips?status=pending'),
+    api('GET', '/api/med/slips?month=' + month),
+  ]);
+  if (!MED_H.dept && MED_DEPTS.length) MED_H.dept = MED_DEPTS[0].name;
+  const deptEmps = MED_EMPS.filter(e => e.department === MED_H.dept);
+  if (MED_H.empId && !deptEmps.some(e => e.id === MED_H.empId)) MED_H.empId = null;
+  const deptNames = [...new Set([...MED_DEPTS.map(d => d.name), ...MED_EMPS.map(e => e.department).filter(Boolean), ...mslips.map(r => r.department).filter(Boolean)])];
+  const tones = ['g', 'o', 'b', 'p', 'r', 't'];
+  const boxes = deptNames.map((dn, i) => {
+    const emps = MED_EMPS.filter(e => e.department === dn).length;
+    const dp = pend.filter(r => r.department === dn).length;
+    const amt = mslips.filter(r => r.department === dn && r.status === 'done').reduce((a, r) => a + (+r.amount || 0), 0);
+    return `<div class="mp-dbox ${tones[i % 6]}" onclick="medDeptVoucher('${esc(dn)}')">
+      <div class="mp-dbox-t">${esc(dn)}</div>
+      <div class="mp-dbox-m"><span>👥 ${emps} ملازم</span><span>⏳ ${dp} باقی</span></div>
+      <div class="mp-dbox-a">${medMoney(amt)}</div>
+    </div>`;
+  }).join('');
   v.innerHTML = `
-  <div class="med-card">
-    <h3>🖨 پرچی پرنٹ کریں</h3>
-    ${MED_PF_DEPT ? `<div class="med-btnrow" style="margin:0 0 8px"><button class="btn small" onclick="medDeptGo(document.getElementById('medPfDept').value || '${esc(MED_PF_DEPT)}')">📋 اس شعبے کے پرانے واؤچر دیکھیں</button></div>` : ''}
-    <label>شعبہ<br><select id="medPfDept" onchange="document.getElementById('medPfNames').innerHTML = medEmpListFor(this.value)"><option value="">— شعبہ منتخب کریں —</option>${deptOpts}</select></label>
-    <label>ملازم کا نام (لکھتے جائیں — پرانے نام خود آ جائیں گے)<br>
-      <input id="medPfName" list="medPfNames" placeholder="نام لکھیں" autocomplete="off"><datalist id="medPfNames">${medEmpListFor(MED_PF_DEPT || '')}</datalist></label>
-    <label>ڈاکٹر / ریفرنس (کس ڈاکٹر کے پاس جا رہا ہے — ٹیلی اسی سے ہوگی)<br>
-      <select id="medPfDoc" onchange="medDocChange('medPfDoc','medPfDocNew')">${medDocOptions('')}</select>
-      <input id="medPfDocNew" placeholder="نئے ڈاکٹر کا نام" style="display:none;margin-top:6px"></label>
-    <label>تاریخ<br><input id="medPfDate" type="date" value="${karachiToday()}"></label>
-    <label>نوٹس (اختیاری)<br><input id="medPfNotes" placeholder="مثلاً بخار کی شکایت"></label>
-    <div class="med-btnrow"><button class="btn green" onclick="medPfSave()">💾 محفوظ + 🖨 پرنٹ کریں</button></div>
-    <div class="med-note">ایک A4 پر 2 پرچیاں چھپتی ہیں — یہ والی پرچی "جگہ 1 (اوپر)" پر چھپے گی۔ پرچی پر صرف نمبر، نام، شعبہ اور تاریخ چھپے گا — باقی جگہ ڈاکٹر کے لکھنے کے لیے خالی رہے گی۔</div>
-  </div>`;
+  <div class="mp-kpis">
+    <div class="mp-kpi g" style="cursor:pointer" title="اس مہینے کے سارے واؤچر" onclick="medKpiGo('month')"><div class="v">${st.month_slips}</div><div class="t">اس مہینے پرچیاں 👆</div></div>
+    <div class="mp-kpi o" style="cursor:pointer" title="اس مہینے کے مکمل واؤچر" onclick="medKpiGo('spent')"><div class="v">${medMoney(st.month_amount)}</div><div class="t">اس مہینے کا خرچ 👆</div></div>
+    <div class="mp-kpi r" style="cursor:pointer" title="واپسی باقی واؤچر" onclick="medKpiGo('pending')"><div class="v">${st.pending}</div><div class="t">واپسی باقی 👆</div></div>
+    <div class="mp-kpi b" style="cursor:pointer" title="پرنٹ باقی پرچیاں" onclick="medGo('printq')"><div class="v">${st.unprinted}</div><div class="t">پرنٹ باقی 👆</div></div>
+  </div>
+  <div class="mp-card">
+    <div class="mp-ct"><span class="mp-dot"></span>🖨 پرچی بنائیں</div>
+    <div class="mp-lbl">قدم 1 — شعبہ</div>
+    <div class="mp-pills">${MED_DEPTS.length ? MED_DEPTS.map(d => `<button class="mp-pill ${MED_H.dept === d.name ? 'on' : ''}" onclick="MED_H.dept='${esc(d.name)}';MED_H.empId=null;medPageHome()">${esc(d.name)}</button>`).join('') : '<span class="mp-note">پہلے سیٹنگز سے شعبہ بنائیں</span>'}</div>
+    <div class="mp-lbl">قدم 2 — ملازم (صرف فہرست والے — نیا ہو تو پہلے 👥 ملازمین میں شامل کریں)</div>
+    <div class="mp-pills">${deptEmps.length ? deptEmps.map(e => `<button class="mp-pill emp ${MED_H.empId === e.id ? 'on' : ''}" onclick="MED_H.empId=${e.id};medPageHome()">${esc(e.name)}</button>`).join('') : '<span class="mp-note">اس شعبے میں کوئی ملازم IN نہیں ہے</span>'}</div>
+    <div class="mp-lbl">قدم 3 — ڈاکٹر / ریفرنس</div>
+    <select id="medHDoc" class="mp-inp" onchange="medDocChange('medHDoc','medHDocNew')">${medDocOptions('')}</select>
+    <input id="medHDocNew" class="mp-inp" placeholder="نئے ڈاکٹر کا نام" style="display:none;margin-top:6px">
+    <input id="medHNotes" class="mp-inp" placeholder="نوٹس (اختیاری) — مثلاً بخار کی شکایت" style="margin-top:6px">
+    <button class="mp-big" onclick="medHomePrint()">🖨 پرنٹ کریں</button>
+    ${MED_H.dept ? `<div style="text-align:center;margin-top:7px"><a href="javascript:void(0)" onclick="medDeptGo('${esc(MED_H.dept)}')" style="color:#1565c0;font-size:13.5px">📋 ${esc(MED_H.dept)} کے پرانے واؤچر دیکھیں</a></div>` : ''}
+  </div>
+  <div class="mp-card">
+    <div class="mp-ct"><span class="mp-dot"></span>🎫 دستی انٹری — بغیر پرچی (ایمرجنسی)
+      <button class="btn small" style="margin-inline-start:auto" onclick="MED_H.manualOpen=!MED_H.manualOpen;medPageHome()">${MED_H.manualOpen ? '✖ بند' : 'کھولیں'}</button></div>
+    ${MED_H.manualOpen ? `
+    <div class="mp-lbl">شعبہ · ملازم</div>
+    <div class="mp-row">
+      <select id="medMnDept" class="mp-inp" onchange="medMnDeptChange()">${MED_DEPTS.map(d => `<option value="${esc(d.name)}" ${MED_H.dept === d.name ? 'selected' : ''}>${esc(d.name)}</option>`).join('')}</select>
+      <select id="medMnEmp" class="mp-inp"></select>
+    </div>
+    <div class="mp-lbl">ریفرنس (ڈاکٹر / دکان)</div>
+    <select id="medMnDoc" class="mp-inp" onchange="medDocChange('medMnDoc','medMnDocNew')">${medDocOptions('')}</select>
+    <input id="medMnDocNew" class="mp-inp" placeholder="نیا نام لکھیں" style="display:none;margin-top:6px">
+    <div class="mp-row" style="margin-top:6px">
+      <input id="medMnAmt" class="mp-inp" type="number" min="0" placeholder="رقم (Rs)">
+      <input id="medMnDet" class="mp-inp" placeholder="تفصیل — کون سی دوا">
+    </div>
+    <button class="mp-big alt" onclick="medMnSave()">💾 دستی انٹری محفوظ کریں</button>` : '<div class="mp-note">خود دوا لے آئے یا ایمرجنسی ہو — رقم اسی وقت لکھی جائے گی, واپسی باقی میں نہیں جائے گی۔</div>'}
+  </div>
+  ${pend.length ? `<div class="mp-sect">⏳ واپسی باقی — رقم یہیں لکھیں</div>` + pend.map(r => `
+  <div class="mp-pend">
+    <div class="mp-pend-top"><b class="mp-no">${esc(r.slip_no)}</b><b>${esc(r.emp_name)}</b><span class="mp-meta">${esc(r.department || '')}${r.doctor ? ' · 🩺 ' + esc(r.doctor) : ''} · ${medFmtDate(r.date)}${r.by_name ? ' · جاری کردہ: ' + esc(r.by_name) : ''}</span><span class="mp-days">${medDays(r)} دن</span></div>
+    <div class="mp-ret-grid">
+      <input id="hret-amt-${r.id}" type="number" min="0" placeholder="رقم (Rs)">
+      <input id="hret-det-${r.id}" placeholder="تفصیل — ڈاکٹر نے کیا لکھا">
+      <button class="mp-ok" onclick="medHomeReturn(${r.id})">✓ ہو گیا</button>
+    </div>
+    <div class="mp-slip-actions"><button class="btn small" onclick="medEditSlip(${r.id})">✏️ ترمیم</button><button class="btn small red" onclick="medDelSlip(${r.id})">🗑 حذف</button></div>
+  </div>`).join('') : `<div class="mp-card"><div class="mp-note" style="text-align:center">✅ کوئی پرچی واپسی باقی نہیں</div></div>`}
+  <div class="mp-sect">🏢 شعبے — خانہ دبائیں, اس شعبے کی پرچی بنائیں</div>
+  <div class="mp-dboxes">${boxes || '<div class="mp-note">ابھی کوئی شعبہ نہیں</div>'}</div>
+  <div class="mp-links">مزید — <a href="javascript:void(0)" onclick="medGo('ledger')">📒 لیجر</a> · <a href="javascript:void(0)" onclick="medGo('tally')">📊 رپورٹ / ٹیلی</a> · <a href="javascript:void(0)" onclick="medGo('employees')">👥 ملازمین</a> · <a href="javascript:void(0)" onclick="medGo('printq')">🖨 پرنٹ باقی</a> · <a href="javascript:void(0)" onclick="medGo('settings')">⚙️ سیٹنگز</a></div>`;
+  medMnDeptChange();
 }
-async function medPfSave() {
-  const dept = $('#medPfDept').value;
-  const name = ($('#medPfName').value || '').trim();
-  if (!dept) { alert('پہلے شعبہ منتخب کریں'); return; }
-  if (!name) { alert('ملازم کا نام لکھیں'); return; }
-  const exist = MED_EMPS.find(e => e.name === name && e.department === dept);
+function medKpiGo(kind) {
+  const cur = karachiToday().slice(0, 7);
+  if (kind === 'month') MED_LED = { month: cur, dept: '', type: 'all', doctor: '', status: '' };
+  else if (kind === 'spent') MED_LED = { month: cur, dept: '', type: 'all', doctor: '', status: 'done' };
+  else if (kind === 'pending') MED_LED = { month: '', dept: '', type: 'all', doctor: '', status: 'pending' };
+  MED_PAGE = 'ledger'; renderMedicine(); window.scrollTo(0, 0);
+}
+function medMnDeptChange() {
+  const d = document.getElementById('medMnDept'), s = document.getElementById('medMnEmp');
+  if (!d || !s) return;
+  const list = MED_EMPS.filter(e => e.department === d.value);
+  s.innerHTML = list.length ? list.map(e => `<option value="${e.id}">${esc(e.name)}</option>`).join('') : '<option value="">— اس شعبے میں ملازم نہیں —</option>';
+}
+async function medHomePrint() {
+  if (!MED_H.dept) { alert('پہلے شعبہ منتخب کریں'); return; }
+  if (!MED_H.empId) { alert('ملازم منتخب کریں — نام کے خانے پر کلک کریں'); return; }
+  const emp = MED_EMPS.find(e => e.id === MED_H.empId);
   const r = await api('POST', '/api/med/slips', {
-    employee_id: exist ? exist.id : undefined,
-    employee_name: name, department: dept,
-    doctor: medDocValue('medPfDoc', 'medPfDocNew'),
-    date: $('#medPfDate').value || karachiToday(),
-    notes: $('#medPfNotes').value || '', has_print: 1,
+    employee_id: MED_H.empId,
+    doctor: medDocValue('medHDoc', 'medHDocNew'),
+    date: karachiToday(),
+    notes: ($('#medHNotes') ? $('#medHNotes').value : '') || '', has_print: 1,
   });
   if (!r || !r.id) { showTrayToast('خرابی', 'پرچی محفوظ نہیں ہوئی'); return; }
-  MED_EMPS = await api('GET', '/api/med/employees');
+  showTrayToast('پرچی بن گئی ✅', r.slip_no + (emp ? ' — ' + emp.name : ''));
   const rows = await api('GET', '/api/med/slips?unprinted=1');
   const row = rows.find(x => x.id === r.id);
-  if (row) medOpenPrint([row], 1, async () => { MED_PAGE = 'home'; renderMedicine(); });
-  else { MED_PAGE = 'home'; renderMedicine(); }
+  if (row) medOpenPrint([row], 1, () => { MED_PAGE = 'home'; renderMedicine(); });
+  else renderMedicine();
 }
-// ----- Return voucher (واپسی) -----
-async function medPageReturn() {
-  const v = $('#medBody'); if (!v) return;
-  const pend = await api('GET', '/api/med/slips?status=pending');
-  v.innerHTML = `<div class="med-card"><h3>↩️ واپسی درج کریں</h3>
-    <div class="med-note">ڈاکٹر کی واپس کی ہوئی کاپی دیکھ کر رقم اور تفصیل لکھیں — محفوظ کرتے ہی پرچی اس فہرست سے صاف ہو جائے گی۔</div></div>` +
-    (pend.length ? pend.map(r => `
-    <div class="med-slip pend">
-      <div class="med-slip-top"><b class="med-no">${esc(r.slip_no)}</b>${medTypeChip(r)}<span class="med-amt">⏳ ${medDays(r)} دن سے باقی</span></div>
-      <div class="med-slip-mid">👤 <b>${esc(r.emp_name)}</b>${r.department ? ' · ' + esc(r.department) : ''}${r.doctor ? ' · 🩺 ' + esc(r.doctor) : ''} · 📅 ${medFmtDate(r.date)}</div>
-      <div class="med-ret-grid">
-        <input id="ret-amt-${r.id}" type="number" min="0" placeholder="رقم (Rs)">
-        <input id="ret-det-${r.id}" placeholder="ڈاکٹر کی لکھی تفصیل (دوا وغیرہ)">
-        <button class="btn green" onclick="medReturnSave(${r.id})">✅ محفوظ — صاف کریں</button>
-      </div>
-      <div class="med-slip-actions"><button class="btn small" onclick="medEditSlip(${r.id})">✏️ ترمیم</button><button class="btn small red" onclick="medDelSlip(${r.id})">🗑 حذف</button></div>
-    </div>`).join('') : '<div class="med-card"><div class="med-note" style="text-align:center">✅ کوئی پرچی واپسی باقی نہیں</div></div>');
-}
-async function medReturnSave(id) {
-  const amt = parseFloat(document.getElementById('ret-amt-' + id).value);
+async function medHomeReturn(id) {
+  const amtEl = document.getElementById('hret-amt-' + id), detEl = document.getElementById('hret-det-' + id);
+  const amt = parseFloat(amtEl ? amtEl.value : '');
   if (isNaN(amt) || amt < 0) { alert('رقم لکھیں'); return; }
-  const det = document.getElementById('ret-det-' + id).value || '';
-  const r = await api('PUT', '/api/med/slips/' + id + '/return', { amount: amt, return_detail: det, returned_date: karachiToday() });
-  if (r && r.ok) { showTrayToast('واپسی درج ہو گئی ✅', 'پرچی صاف ہو گئی'); medPageReturnInto(); }
+  const r = await api('PUT', '/api/med/slips/' + id + '/return', { amount: amt, return_detail: detEl ? detEl.value : '', returned_date: karachiToday() });
+  if (r && r.ok) { showTrayToast('واپسی درج ہو گئی ✅', 'پرچی صاف ہو گئی'); renderMedicine(); }
   else showTrayToast('خرابی', 'محفوظ نہیں ہوا');
 }
-function medPageReturnInto() { if (MED_PAGE === 'return') medPageReturn(); else renderMedicine(); }
-// ----- Manual entry voucher (دستی انٹری) -----
-function medPageManual() {
-  const v = $('#medBody'); if (!v) return;
-  const deptOpts = MED_DEPTS.map(d => `<option value="${esc(d.name)}">${esc(d.name)}</option>`).join('');
-  v.innerHTML = `
-  <div class="med-card">
-    <h3>🎫 دستی انٹری — بغیر پرچی</h3>
-    <div class="med-note">ایمرجنسی ہو یا کوئی خود دوا لے آئے — پرچی کے بغیر والی انٹری یہاں کریں۔ رقم اسی وقت لکھی جائے گی، یہ واپسی باقی میں نہیں جائے گی۔</div>
-    <label>شعبہ<br><select id="medMnDept" onchange="document.getElementById('medMnNames').innerHTML = medEmpListFor(this.value)"><option value="">— شعبہ منتخب کریں —</option>${deptOpts}</select></label>
-    <label>ملازم کا نام<br><input id="medMnName" list="medMnNames" placeholder="نام لکھیں" autocomplete="off"><datalist id="medMnNames">${medEmpListFor('')}</datalist></label>
-    <label>ریفرنس (ڈاکٹر / دکان — جہاں سے دوا آئی)<br>
-      <select id="medMnDoc" onchange="medDocChange('medMnDoc','medMnDocNew')">${medDocOptions('')}</select>
-      <input id="medMnDocNew" placeholder="نیا نام لکھیں" style="display:none;margin-top:6px"></label>
-    <label>رقم (Rs)<br><input id="medMnAmt" type="number" min="0" placeholder="کتنے کی دوا آئی"></label>
-    <label>تفصیل (کون سی دوا وغیرہ)<br><input id="medMnDet" placeholder="مثلاً انجیکشن + ٹیبلیٹ"></label>
-    <label>تاریخ<br><input id="medMnDate" type="date" value="${karachiToday()}"></label>
-    <div class="med-btnrow"><button class="btn green" onclick="medMnSave()">💾 انٹری محفوظ کریں</button></div>
-  </div>`;
-}
 async function medMnSave() {
-  const dept = $('#medMnDept').value;
-  const name = ($('#medMnName').value || '').trim();
+  const dept = $('#medMnDept') ? $('#medMnDept').value : '';
+  const empSel = $('#medMnEmp');
+  const empId = empSel && empSel.value ? parseInt(empSel.value, 10) : null;
   const amt = parseFloat($('#medMnAmt').value);
   if (!dept) { alert('شعبہ منتخب کریں'); return; }
-  if (!name) { alert('نام لکھیں'); return; }
+  if (!empId) { alert('ملازم منتخب کریں'); return; }
   if (isNaN(amt) || amt < 0) { alert('رقم لکھیں'); return; }
-  const exist = MED_EMPS.find(e => e.name === name && e.department === dept);
   const r = await api('POST', '/api/med/slips', {
-    employee_id: exist ? exist.id : undefined,
-    employee_name: name, department: dept,
+    employee_id: empId,
     doctor: medDocValue('medMnDoc', 'medMnDocNew'),
-    date: $('#medMnDate').value || karachiToday(),
-    notes: '', has_print: 0, amount: amt, return_detail: $('#medMnDet').value || '',
+    date: karachiToday(), notes: '', has_print: 0, amount: amt, return_detail: $('#medMnDet').value || '',
   });
-  if (r && r.id) { showTrayToast('دستی انٹری ہو گئی ✅', r.slip_no + ' — ' + medMoney(amt)); MED_EMPS = await api('GET', '/api/med/employees'); medGo('ledger'); }
+  if (r && r.id) { showTrayToast('دستی انٹری ہو گئی ✅', r.slip_no + ' — ' + medMoney(amt)); MED_H.manualOpen = false; medGo('ledger'); }
   else showTrayToast('خرابی', 'انٹری محفوظ نہیں ہوئی');
 }
-// ----- Ledger (لیجر + فلٹر) -----
+// ----- Ledger -----
 function medPageLedger() {
   const v = $('#medBody'); if (!v) return;
   if (!MED_LED.month) MED_LED.month = karachiToday().slice(0, 7);
   const deptOpts = `<option value="">تمام شعبے</option>` + MED_DEPTS.map(d => `<option value="${esc(d.name)}" ${MED_LED.dept === d.name ? 'selected' : ''}>${esc(d.name)}</option>`).join('');
   const docOpts = `<option value="">تمام ڈاکٹر / ریفرنس</option>` + MED_DOCTORS.map(d => `<option value="${esc(d.name)}" ${MED_LED.doctor === d.name ? 'selected' : ''}>${esc(d.name)}</option>`).join('');
   v.innerHTML = `
-  <div class="med-card">
-    <h3>📒 لیجر</h3>
-    <div class="med-filters">
+  <div class="mp-card">
+    <div class="mp-ct"><span class="mp-dot"></span>📒 لیجر</div>
+    <div class="mp-filters">
       <label>مہینہ<input id="ledMonth" type="month" value="${MED_LED.month}"></label>
       <label>شعبہ<select id="ledDept">${deptOpts}</select></label>
       <label>قسم<select id="ledType">
@@ -4166,16 +4150,15 @@ async function medLedgerLoad() {
   if (MED_LED.type === 'print') rows = rows.filter(r => r.has_print);
   if (MED_LED.type === 'manual') rows = rows.filter(r => !r.has_print);
   if (MED_LED.status) rows = rows.filter(r => r.status === MED_LED.status);
-  const done = rows.filter(r => r.status === 'done');
   const pRows = rows.filter(r => r.has_print), mRows = rows.filter(r => !r.has_print);
   const sum = arr => arr.filter(r => r.status === 'done').reduce((a, r) => a + (+r.amount || 0), 0);
   const t = $('#ledTotals');
-  if (t) t.innerHTML = `<div class="med-totbar">
+  if (t) t.innerHTML = `<div class="mp-totbar">
     <span>🖨 پرنٹ پرچی: <b>${pRows.length}</b> عدد · <b>${medMoney(sum(pRows))}</b></span>
     <span>🎫 دستی: <b>${mRows.length}</b> عدد · <b>${medMoney(sum(mRows))}</b></span>
     <span>⏳ باقی: <b>${rows.filter(r => r.status === 'pending').length}</b></span>
     <span class="grand">کل رقم: ${medMoney(sum(rows))}</span></div>`;
-  box.innerHTML = rows.length ? rows.map(r => medSlipCard(r, true)).join('') : '<div class="med-card"><div class="med-note" style="text-align:center">اس فلٹر میں کوئی انٹری نہیں</div></div>';
+  box.innerHTML = rows.length ? rows.map(r => medSlipCard(r, true)).join('') : '<div class="mp-card"><div class="mp-note" style="text-align:center">اس فلٹر میں کوئی انٹری نہیں</div></div>';
 }
 // ----- Department page -----
 async function medPageDept() {
@@ -4184,107 +4167,219 @@ async function medPageDept() {
   const rows = (await api('GET', '/api/med/slips')).filter(r => r.department === MED_DEPT);
   const tot = rows.filter(r => r.status === 'done').reduce((a, r) => a + (+r.amount || 0), 0);
   v.innerHTML = `
-  <div class="med-card"><h3>🏢 ${esc(MED_DEPT)}</h3>
-    <div class="med-note">ملازمین: ${emps.length} · واؤچر: ${rows.length} · واپسی باقی: ${rows.filter(r => r.status === 'pending').length} · کل رقم: <b>${medMoney(tot)}</b></div>
-    ${emps.map(e => { const er = rows.filter(r => r.employee_id === e.id); return `<div class="med-emp-row" onclick="medEmpHistory(${e.id})">
-      <div class="med-emp-main"><b>${esc(e.name)}</b></div>
-      <div class="med-emp-sub">پرچیاں: ${er.length} · باقی: ${er.filter(r => r.status === 'pending').length} · رقم: <b>${medMoney(er.filter(r => r.status === 'done').reduce((a, r) => a + (+r.amount || 0), 0))}</b></div>
-      <span class="med-tile-ar">➜</span></div>`; }).join('')}
+  <div class="mp-card"><div class="mp-ct"><span class="mp-dot"></span>🏢 ${esc(MED_DEPT)}</div>
+    <div class="mp-note">ملازمین: ${emps.length} · واؤچر: ${rows.length} · واپسی باقی: ${rows.filter(r => r.status === 'pending').length} · کل رقم: <b>${medMoney(tot)}</b></div>
+    ${emps.map(e => { const er = rows.filter(r => r.employee_id === e.id); return `<div class="mp-emp-row" onclick="medEmpHistory(${e.id})">
+      <div class="mp-emp-main"><b>${esc(e.name)}</b></div>
+      <div class="mp-emp-sub">پرچیاں: ${er.length} · باقی: ${er.filter(r => r.status === 'pending').length} · رقم: <b>${medMoney(er.filter(r => r.status === 'done').reduce((a, r) => a + (+r.amount || 0), 0))}</b></div>
+      <span class="mp-tile-ar">➜</span></div>`; }).join('')}
   </div>
-  <div class="med-sect" style="color:#1b5e20">اس شعبے کے واؤچر</div>
-  ${rows.length ? rows.map(r => medSlipCard(r, true)).join('') : '<div class="med-card"><div class="med-note">ابھی کوئی واؤچر نہیں</div></div>'}
-  <div class="med-btnrow"><button class="btn" onclick="medGo('home')">⬅ ڈیش بورڈ</button></div>`;
+  <div class="mp-sect">اس شعبے کے واؤچر</div>
+  ${rows.length ? rows.map(r => medSlipCard(r, true)).join('') : '<div class="mp-card"><div class="mp-note">ابھی کوئی واؤچر نہیں</div></div>'}
+  <div style="text-align:center"><button class="btn" onclick="medGo('home')">⬅ مرکزی صفحہ</button></div>`;
 }
-// ----- Tally / Report (ڈاکٹر وار + ملازم وار) -----
+// ----- Tally / Report -----
 function medPageTally() {
   const v = $('#medBody'); if (!v) return;
   v.innerHTML = `
-  <div class="med-card">
-    <label>مہینہ<br><input id="medMonth" type="month" value="${MED_MONTH}" onchange="MED_MONTH=this.value;medLoadTally()"></label>
-    <h3 style="margin-top:8px">🩺 ڈاکٹر وار ٹیلی</h3>
-    <div class="med-note">کسی ڈاکٹر کے نام پر کلک کریں — اس مہینے کا اس کا پورا رجسٹر (لیجر) کھل جائے گا، ٹیلی کے لیے۔</div>
+  <div class="mp-card">
+    <div class="mp-ct"><span class="mp-dot"></span>📊 رپورٹ / ٹیلی</div>
+    <label>مہینہ<br><input id="medMonth" type="month" value="${MED_MONTH}" onchange="MED_MONTH=this.value;MED_PAY_DOCTOR='';medLoadTally()"></label>
+    <div class="mp-sect" style="margin-top:10px">🩺 ڈاکٹر وار ٹیلی</div>
+    <div class="mp-note">💰 ادائیگی = مہینے کے آخر میں ڈاکٹر کو دی گئی رقم کی انٹری · 🖨 پرنٹ = اس ڈاکٹر کا نمبر + رقم والا رجسٹر, ٹیلی کے لیے</div>
     <div id="medDocTally"></div>
-    <h3 style="margin-top:12px">👥 ملازم وار رپورٹ</h3>
+    <div id="medPayList"></div>
+    <div class="mp-sect" style="margin-top:12px">👤 کس user نے کتنی پرچیاں بنائیں</div>
+    <div id="medUserRep"></div>
+    <div class="mp-sect" style="margin-top:12px">👥 ملازم وار رپورٹ</div>
     <div id="medReport"></div>
   </div>`;
   medLoadTally();
 }
 async function medLoadTally() {
-  const rep = await api('GET', '/api/med/report?month=' + encodeURIComponent(MED_MONTH || karachiToday().slice(0, 7)));
+  const month = MED_MONTH || karachiToday().slice(0, 7);
+  const rep = await api('GET', '/api/med/report?month=' + encodeURIComponent(month));
   const db_ = $('#medDocTally');
   if (db_) {
-    db_.innerHTML = rep.doctors && rep.doctors.length ? `<div style="overflow-x:auto"><table class="med-table">
-      <tr><th>ڈاکٹر / ریفرنس</th><th>🖨 پرنٹ پرچیاں</th><th>🎫 دستی</th><th>باقی</th><th>کل رقم</th></tr>
+    db_.innerHTML = rep.doctors && rep.doctors.length ? `<div style="overflow-x:auto"><table class="mp-table">
+      <tr><th>ڈاکٹر / ریفرنس</th><th>🖨 پرنٹ</th><th>🎫 دستی</th><th>باقی پرچیاں</th><th>کل رقم</th><th>ادا شدہ</th><th>بقایا</th><th>ایکشن</th></tr>
       ${rep.doctors.map(d => `<tr>
-        <td>${d.doctor ? `<a href="javascript:void(0)" class="med-emp" onclick="medDoctorLedger('${esc(d.doctor)}')">${esc(d.doctor)}</a>` : '<i>بغیر ریفرنس</i>'}</td>
+        <td>${d.doctor ? `<a href="javascript:void(0)" class="mp-emp" onclick="medDoctorLedger('${esc(d.doctor)}')">${esc(d.doctor)}</a>` : '<i>بغیر ریفرنس</i>'}</td>
         <td>${d.printed_cnt || 0}</td><td>${d.manual_cnt || 0}</td>
         <td style="color:${d.pending ? '#c62828' : '#555'};font-weight:${d.pending ? 800 : 400}">${d.pending || 0}</td>
-        <td><b>${medMoney(d.total_amount)}</b></td></tr>`).join('')}
-      </table></div>` : '<div class="med-note">اس مہینے کی کوئی انٹری نہیں</div>';
+        <td><b>${medMoney(d.total_amount)}</b></td><td>${medMoney(d.paid || 0)}</td>
+        <td style="color:${d.balance > 0 ? '#c62828' : '#2e7d32'};font-weight:800">${d.balance > 0 ? medMoney(d.balance) : '✅ صاف'}</td>
+        <td style="white-space:nowrap">${d.doctor ? `<button class="btn small green" onclick="MED_PAY_DOCTOR = MED_PAY_DOCTOR==='${esc(d.doctor)}' ? '' : '${esc(d.doctor)}';medLoadTally()">💰 ادائیگی</button> <button class="btn small" onclick="medDoctorPrint('${esc(d.doctor)}')">🖨 پرنٹ</button>` : ''}</td></tr>
+      ${MED_PAY_DOCTOR && d.doctor === MED_PAY_DOCTOR ? `<tr><td colspan="8"><div class="mp-ret-grid" style="grid-template-columns:150px 150px 1fr auto">
+        <input id="pay-amt" type="number" min="0" value="${d.balance > 0 ? d.balance : ''}" placeholder="رقم (Rs)">
+        <input id="pay-date" type="date" value="${karachiToday()}">
+        <input id="pay-note" placeholder="نوٹ (اختیاری) — مثلاً کیش ادائیگی">
+        <button class="btn green" onclick="medPaySave('${esc(d.doctor)}')">💾 ادائیگی محفوظ کریں</button></div></td></tr>` : ''}`).join('')}
+      </table></div>` : '<div class="mp-note">اس مہینے کی کوئی انٹری نہیں</div>';
+  }
+  const pl = $('#medPayList');
+  if (pl) {
+    const pays = await api('GET', '/api/med/payments?month=' + encodeURIComponent(month));
+    pl.innerHTML = pays.length ? `<div class="mp-sect" style="margin-top:10px">💰 اس مہینے کی ادائیگیاں</div>` + pays.map(p => `<div class="mp-emp-row" style="cursor:default">
+      <div class="mp-emp-main"><b>${esc(p.doctor)}</b> — <b>${medMoney(p.amount)}</b></div>
+      <div class="mp-emp-sub">📅 ${medFmtDate(p.date)}${p.note ? ' · ' + esc(p.note) : ''}${p.by_name ? ' · درج کردہ: ' + esc(p.by_name) : ''}</div>
+      <button class="btn small red" onclick="medPayDelete(${p.id})">🗑</button></div>`).join('') : '';
+  }
+  const ub = $('#medUserRep');
+  if (ub) {
+    ub.innerHTML = rep.users && rep.users.length ? `<div style="overflow-x:auto"><table class="mp-table">
+      <tr><th>User</th><th>🖨 پرنٹ پرچیاں</th><th>🎫 دستی</th><th>کل عدد</th><th>کل رقم</th></tr>
+      ${rep.users.map(u => `<tr><td><b>${esc(u.user_name || '—')}</b></td><td>${u.printed_cnt || 0}</td><td>${u.manual_cnt || 0}</td><td><b>${u.total_cnt || 0}</b></td><td>${medMoney(u.total_amount)}</td></tr>`).join('')}
+      </table></div>` : '<div class="mp-note">اس مہینے کی کوئی انٹری نہیں</div>';
   }
   const box = $('#medReport'); if (!box) return;
-  if (!rep.rows.length) { box.innerHTML = '<div class="med-note" style="text-align:center;padding:8px">اس مہینے کی کوئی انٹری نہیں</div>'; return; }
-  box.innerHTML = `<div style="overflow-x:auto"><table class="med-table">
+  if (!rep.rows.length) { box.innerHTML = '<div class="mp-note" style="text-align:center;padding:8px">اس مہینے کی کوئی انٹری نہیں</div>'; return; }
+  box.innerHTML = `<div style="overflow-x:auto"><table class="mp-table">
     <tr><th>ملازم</th><th>شعبہ</th><th>پرچیاں</th><th>مکمل</th><th>باقی</th><th>کل رقم</th></tr>
     ${rep.rows.map(r => `<tr>
-      <td><a href="javascript:void(0)" class="med-emp" onclick="medEmpHistory(${r.employee_id})">${esc(r.emp_name)}</a></td>
+      <td><a href="javascript:void(0)" class="mp-emp" onclick="medEmpHistory(${r.employee_id})">${esc(r.emp_name)}</a></td>
       <td>${esc(r.department || '')}</td><td>${r.slips}</td><td>${r.done || 0}</td>
       <td style="color:${r.pending ? '#c62828' : '#555'}">${r.pending || 0}</td><td><b>${medMoney(r.total_amount)}</b></td></tr>`).join('')}
     <tr class="tot"><td colspan="2"><b>کل</b></td><td><b>${rep.totals.slips}</b></td><td><b>${rep.totals.done}</b></td><td><b>${rep.totals.pending}</b></td><td><b>${medMoney(rep.totals.total_amount)}</b></td></tr>
     </table></div>`;
 }
+async function medPaySave(doctor) {
+  const amt = parseFloat(document.getElementById('pay-amt').value);
+  if (isNaN(amt) || amt <= 0) { alert('درست رقم لکھیں'); return; }
+  const r = await api('POST', '/api/med/payments', { doctor, month: MED_MONTH || karachiToday().slice(0, 7), amount: amt, date: document.getElementById('pay-date').value || karachiToday(), note: document.getElementById('pay-note').value || '' });
+  if (r && r.ok) { showTrayToast('ادائیگی درج ہو گئی ✅', doctor + ' — ' + medMoney(amt)); MED_PAY_DOCTOR = ''; medLoadTally(); }
+  else showTrayToast('خرابی', (r && r.error) || 'نہیں ہوا');
+}
+async function medPayDelete(id) {
+  if (!confirm('یہ ادائیگی حذف کر دیں؟ بقایا دوبارہ بڑھ جائے گا')) return;
+  await api('DELETE', '/api/med/payments/' + id);
+  showTrayToast('حذف ہو گئی', '');
+  medLoadTally();
+}
 function medDoctorLedger(doc) {
   MED_LED = { month: MED_MONTH || karachiToday().slice(0, 7), dept: '', type: 'all', doctor: doc, status: '' };
   MED_PAGE = 'ledger'; renderMedicine();
 }
-// ----- Employees -----
-function medPageEmployees() {
+async function medDoctorPrint(doctor) {
+  const month = MED_MONTH || karachiToday().slice(0, 7);
+  const rows = await api('GET', '/api/med/slips?month=' + encodeURIComponent(month) + '&doctor=' + encodeURIComponent(doctor));
+  const pays = await api('GET', '/api/med/payments?month=' + encodeURIComponent(month) + '&doctor=' + encodeURIComponent(doctor));
+  const tot = rows.filter(r => r.status === 'done').reduce((a, r) => a + (+r.amount || 0), 0);
+  const paid = pays.reduce((a, p) => a + (+p.amount || 0), 0);
+  const trs = rows.map(r => `<tr><td>${esc(r.slip_no)}</td><td>${medFmtDate(r.date)}</td><td>${esc(r.emp_name)}</td><td>${esc(r.department || '')}</td><td>${r.has_print ? 'پرنٹ پرچی' : 'دستی'}</td><td>${r.status === 'done' ? 'مکمل' : 'واپسی باقی'}</td><td>${r.status === 'done' ? medMoney(r.amount) : '—'}</td></tr>`).join('');
+  const html = `<!DOCTYPE html><html dir="rtl" lang="ur"><head><meta charset="utf-8"><title>ڈاکٹر رجسٹر — ${esc(doctor)}</title>
+<style>
+body { font-family: 'Jameel Noori Nastaleeq', 'Noto Nastaliq Urdu', serif; color:#222; margin: 10mm; }
+.hd { display:flex; align-items:center; gap:4mm; border-bottom: 2.5px solid #1b5e20; padding-bottom: 3mm; }
+.hd img { width: 13mm; height: 13mm; object-fit: contain; }
+.hd .n { font-size: 17pt; font-weight: 700; color:#1b5e20; line-height:1.5; }
+.hd .e { font-size: 8pt; letter-spacing: 1px; font-family: Arial; color:#666; }
+h2 { font-size: 14.5pt; margin: 5mm 0 1mm; }
+.sub { color:#555; font-size: 11pt; margin-bottom: 4mm; }
+table { width:100%; border-collapse: collapse; font-size: 11.5pt; }
+th { background:#e8f5e9; color:#1b5e20; border:1px solid #a5d6a7; padding: 1.5mm 2mm; text-align:right; }
+td { border:1px solid #ccc; padding: 1.2mm 2mm; }
+.sum { margin-top: 5mm; font-size: 12.5pt; line-height: 2; }
+.sum b { color:#1b5e20; }
+.sign { margin-top: 14mm; display:flex; justify-content: space-between; font-size: 11.5pt; color:#444; }
+</style></head><body>
+<div class="hd"><img src="/logo.png" alt=""><div><div class="n">گلشن فیکٹری</div><div class="e">GULSHAN FACTORY • DERA ISMAIL KHAN</div></div></div>
+<h2>🩺 ڈاکٹر رجسٹر — ${esc(doctor)}</h2>
+<div class="sub">مہینہ: ${esc(month)} · کل انٹریاں: ${rows.length} · واپسی باقی: ${rows.filter(r => r.status === 'pending').length}</div>
+<table><tr><th>نمبر</th><th>تاریخ</th><th>ملازم</th><th>شعبہ</th><th>قسم</th><th>حالت</th><th>رقم</th></tr>${trs || '<tr><td colspan="7" style="text-align:center">کوئی انٹری نہیں</td></tr>'}</table>
+<div class="sum">کل رقم: <b>${medMoney(tot)}</b><br>ادا شدہ: <b>${medMoney(paid)}</b><br>بقایا: <b>${medMoney(Math.round((tot - paid) * 100) / 100)}</b></div>
+<div class="sign"><span>دستخط (فیکٹری): ____________</span><span>دستخط (ڈاکٹر): ____________</span></div>
+<script>window.onload = () => setTimeout(() => window.print(), 350);<\/script>
+</body></html>`;
+  const w = window.open('', '_blank');
+  if (!w) { alert('پاپ اپ بلاک ہے — براؤزر میں اجازت دیں'); return; }
+  w.document.write(html); w.document.close();
+}
+// ----- Employees (roster, department-wise, IN/OUT) -----
+async function medPageEmployees() {
   const v = $('#medBody'); if (!v) return;
-  v.innerHTML = `<div id="medEmpHistBox"></div><div class="med-card"><h3>👥 تمام ملازمین</h3><div id="medEmpList"></div></div>`;
-  medLoadEmpList();
+  v.innerHTML = `<div id="medEmpHistBox"></div><div class="mp-card"><div class="mp-ct"><span class="mp-dot"></span>👥 ملازمین — شعبہ وار فہرست</div><div id="medEmpList"><div class="mp-note">لوڈ ہو رہا ہے…</div></div></div>`;
+  MED_ALL_EMPS = await api('GET', '/api/med/employees?all=1');
+  medRenderRoster();
   if (MED_EMPVIEW) medEmpHistory(MED_EMPVIEW);
 }
-async function medLoadEmpList() {
+function medRenderRoster() {
   const box = $('#medEmpList'); if (!box) return;
-  const sums = {};
-  const all = await api('GET', '/api/med/slips');
-  for (const r of all) {
-    const s = sums[r.employee_id] || (sums[r.employee_id] = { slips: 0, done: 0, pending: 0, amount: 0 });
-    s.slips++; if (r.status === 'done') { s.done++; s.amount += (+r.amount || 0); } else s.pending++;
-  }
-  box.innerHTML = MED_EMPS.length ? MED_EMPS.map(e => { const s = sums[e.id] || { slips: 0, done: 0, pending: 0, amount: 0 }; return `<div class="med-emp-row" onclick="medEmpHistory(${e.id})">
-      <div class="med-emp-main"><b>${esc(e.name)}</b>${e.department ? ` <span class="med-emp-dept">${esc(e.department)}</span>` : ''}</div>
-      <div class="med-emp-sub">پرچیاں: ${s.slips} · مکمل: ${s.done} · <span style="color:${s.pending ? '#c62828' : '#555'}">باقی: ${s.pending}</span> · کل رقم: <b>${medMoney(s.amount)}</b></div>
-      <span onclick="event.stopPropagation()"><button class="btn small" onclick="medEmpEdit(${e.id})">✏️</button> <button class="btn small red" onclick="medEmpDelete(${e.id})">🗑</button></span>
-      <span class="med-tile-ar">➜</span></div>`; }).join('') + '<div class="med-note">کسی ملازم پر کلک کریں — اس کی مکمل ہسٹری کھل جائے گی · ✏️ سے نام/شعبہ بدلیں، 🗑 سے ملازم ختم کریں</div>'
-    : '<div class="med-note">ابھی کوئی ملازم نہیں</div>';
+  const deptNames = [...new Set([...MED_DEPTS.map(d => d.name), ...MED_ALL_EMPS.map(e => e.department).filter(Boolean)])];
+  const noDept = MED_ALL_EMPS.filter(e => !e.department);
+  const group = (dn, list) => `
+    <div class="mp-roster-hd"><b>🏢 ${esc(dn || 'بغیر شعبہ')}</b><span class="mp-cnt">${list.filter(e => e.active).length} IN · کل ${list.length}</span>
+      <button class="btn small green" style="margin-inline-start:auto" onclick="medAddEmpTo('${esc(dn)}')">➕ نیا ملازم</button></div>
+    ${list.length ? list.map(e => `<div class="mp-emp-row ${e.active ? '' : 'mp-out'}">
+      <div class="mp-emp-main"><b>${esc(e.name)}</b> <span class="mp-tag ${e.active ? 'in' : 'out'}">${e.active ? 'IN' : 'OUT'}</span></div>
+      <span onclick="event.stopPropagation()">
+        ${e.active ? `<button class="btn small" style="background:#ef6c00;color:#fff" onclick="medEmpActive(${e.id},0)">OUT کریں</button>` : `<button class="btn small green" onclick="medEmpActive(${e.id},1)">IN کریں</button>`}
+        <button class="btn small" onclick="medEmpEdit(${e.id})">✏️</button>
+        <button class="btn small red" onclick="medEmpDelete(${e.id})">🗑</button>
+      </span>
+      <span class="mp-tile-ar" onclick="medEmpHistory(${e.id})">➜</span></div>`).join('') : '<div class="mp-note">اس شعبے میں کوئی ملازم نہیں</div>'}`;
+  box.innerHTML = (deptNames.map(dn => group(dn, MED_ALL_EMPS.filter(e => e.department === dn))).join('') + (noDept.length ? group('', noDept) : ''))
+    + '<div class="mp-note">OUT والا ملازم پرچی کی فہرست میں نہیں آئے گا — واپس آئے تو IN کر دیں, ہسٹری ویسے ہی رہے گی۔ نام پر ➜ دبائیں تو اس کی ہسٹری کھلے گی۔</div>';
+}
+async function medAddEmpTo(dept) {
+  const name = prompt((dept ? dept + ' — ' : '') + 'نئے ملازم کا نام:', '');
+  if (name === null || !name.trim()) return;
+  const r = await api('POST', '/api/med/employees', { name: name.trim(), department: dept || '' });
+  if (r && r.id) { showTrayToast('ملازم شامل ہو گیا ✅', name.trim()); MED_EMPS = await api('GET', '/api/med/employees'); medPageEmployees(); }
+  else showTrayToast('خرابی', 'نہیں ہوا');
+}
+async function medEmpActive(id, act) {
+  const e = (MED_ALL_EMPS.length ? MED_ALL_EMPS : MED_EMPS).find(x => x.id === id);
+  if (!act && !confirm('"' + (e ? e.name : '') + '" کو OUT کر دیں؟ پرچیوں کی فہرست سے غائب ہو جائے گا (ہسٹری رہے گی)')) return;
+  const r = await api('POST', '/api/med/employees/' + id + '/active', { active: act });
+  if (r && r.ok) { showTrayToast(act ? 'IN ہو گیا ✅' : 'OUT ہو گیا', e ? e.name : ''); MED_EMPS = await api('GET', '/api/med/employees'); if (MED_PAGE === 'employees') medPageEmployees(); else renderMedicine(); }
+  else showTrayToast('خرابی', 'نہیں ہوا');
 }
 async function medEmpHistory(empId) {
   MED_EMPVIEW = empId;
   if (MED_PAGE !== 'employees') { MED_PAGE = 'employees'; renderMedicine(); return; }
-  const e = MED_EMPS.find(x => x.id === empId);
+  const all = MED_ALL_EMPS.length ? MED_ALL_EMPS : MED_EMPS;
+  const e = all.find(x => x.id === empId);
   const rows = await api('GET', '/api/med/slips?employee_id=' + empId);
   const box = $('#medEmpHistBox'); if (!box) return;
   const tot = rows.filter(r => r.status === 'done').reduce((a, r) => a + (+r.amount || 0), 0);
-  box.innerHTML = `<div class="med-card" style="border-color:#2e7d32">
-    <h3>👤 ${esc(e ? e.name : '')} ${e && e.department ? '— ' + esc(e.department) : ''}</h3>
-    <div class="med-note">کل پرچیاں: ${rows.length} · واپسی باقی: ${rows.filter(r => r.status === 'pending').length} · کل رقم: <b>${medMoney(tot)}</b>
+  box.innerHTML = `<div class="mp-card" style="border-color:#2e7d32">
+    <div class="mp-ct"><span class="mp-dot"></span>👤 ${esc(e ? e.name : '')} ${e && e.department ? '— ' + esc(e.department) : ''}</div>
+    <div class="mp-note">کل پرچیاں: ${rows.length} · واپسی باقی: ${rows.filter(r => r.status === 'pending').length} · کل رقم: <b>${medMoney(tot)}</b>
       <button class="btn small" style="margin-inline-start:8px" onclick="MED_EMPVIEW=null;document.getElementById('medEmpHistBox').innerHTML=''">✖ بند کریں</button></div>
-    ${rows.length ? rows.map(r => medSlipCard(r, true)).join('') : '<div class="med-note">اس ملازم کی کوئی پرچی نہیں</div>'}
+    ${rows.length ? rows.map(r => medSlipCard(r, true)).join('') : '<div class="mp-note">اس ملازم کی کوئی پرچی نہیں</div>'}
   </div>`;
 }
-// ----- Print queue -----
+async function medEmpEdit(id) {
+  const all = MED_ALL_EMPS.length ? MED_ALL_EMPS : MED_EMPS;
+  const e = all.find(x => x.id === id); if (!e) return;
+  const name = prompt('ملازم کا نام:', e.name); if (name === null) return;
+  if (!name.trim()) { alert('نام خالی نہیں ہو سکتا'); return; }
+  const dept = prompt('شعبہ:', e.department || ''); if (dept === null) return;
+  const r = await api('PUT', '/api/med/employees/' + id, { name: name.trim(), department: dept.trim() });
+  if (r && r.ok) { showTrayToast('ترمیم ہو گئی ✅', 'ساری پرچیوں پر نیا نام/شعبہ لگ گیا'); MED_EMPS = await api('GET', '/api/med/employees'); if (MED_PAGE === 'employees') medPageEmployees(); else renderMedicine(); }
+  else showTrayToast('خرابی', (r && r.error) || 'نہیں ہوا');
+}
+async function medEmpDelete(id) {
+  const all = MED_ALL_EMPS.length ? MED_ALL_EMPS : MED_EMPS;
+  const e = all.find(x => x.id === id); if (!e) return;
+  if (!confirm('ملازم "' + e.name + '" ختم کر دیں؟\n(اگر اس کی پرچیاں موجود ہوئیں تو وہ ویسے ہی رہیں گی — صرف نام فہرست سے چھپ جائے گا)')) return;
+  const r = await api('DELETE', '/api/med/employees/' + id);
+  if (r && r.ok) { showTrayToast('ہو گیا', r.mode === 'hidden' ? 'نام فہرست سے چھپ گیا — پرچیاں محفوظ ہیں' : 'ملازم حذف ہو گیا'); if (MED_EMPVIEW === id) MED_EMPVIEW = null; MED_EMPS = await api('GET', '/api/med/employees'); if (MED_PAGE === 'employees') medPageEmployees(); else renderMedicine(); }
+  else showTrayToast('خرابی', (r && r.error) || 'نہیں ہوا');
+}
+// ----- Print queue + slip layout (Letter, har copy ka apna header) -----
 function medPagePrintQ() {
   const v = $('#medBody'); if (!v) return;
   v.innerHTML = `
-  <div class="med-card">
-    <h3>🖨 پرنٹ باقی پرچیاں</h3>
+  <div class="mp-card">
+    <div class="mp-ct"><span class="mp-dot"></span>🖨 پرنٹ باقی پرچیاں</div>
     <div id="medPrintList"></div>
     <label>صفحے پر جگہ<br>
-      <select id="medPrintPos"><option value="1">جگہ 1 — اوپر سے</option><option value="2">جگہ 2 — نیچے سے</option></select>
+      <select id="medPrintPos" class="mp-inp"><option value="1">جگہ 1 — اوپر والی</option><option value="2">جگہ 2 — نیچے والی</option></select>
     </label>
-    <div class="med-btnrow"><button class="btn green" onclick="medQueuePrint()">🖨 پرنٹ کریں</button></div>
-    <div class="med-note">نیا صفحہ ہو تو جگہ 1 رکھیں۔ اوپر والی جگہ پہلے چھپ چکی ہو تو وہی صفحہ دوبارہ ڈال کر جگہ 2 منتخب کریں۔ (A4 — ایک صفحے پر 2 پرچیاں)</div>
+    <button class="mp-big" onclick="medQueuePrint()">🖨 پرنٹ کریں</button>
+    <div class="mp-note">Letter سائز — ایک صفحے پر 2 پرچیاں (آدھا آدھا). نیا صفحہ ہو تو جگہ 1؛ اوپر والی پہلے چھپ چکی ہو تو وہی صفحہ دوبارہ ڈال کر جگہ 2 منتخب کریں۔</div>
   </div>`;
   medLoadPrintList();
 }
@@ -4292,11 +4387,11 @@ async function medLoadPrintList() {
   const box = $('#medPrintList'); if (!box) return;
   const rows = await api('GET', '/api/med/slips?unprinted=1');
   MED_PRINT_SEL = MED_PRINT_SEL.filter(id => rows.some(r => r.id === id));
-  if (!rows.length) { box.innerHTML = '<div class="med-note">پرنٹ باقی کوئی پرچی نہیں</div>'; return; }
-  box.innerHTML = rows.map(r => `<label class="med-prt-row">
+  if (!rows.length) { box.innerHTML = '<div class="mp-note">پرنٹ باقی کوئی پرچی نہیں</div>'; return; }
+  box.innerHTML = rows.map(r => `<label class="mp-prt-row">
     <input type="checkbox" ${MED_PRINT_SEL.includes(r.id) ? 'checked' : ''} onchange="medPrintToggle(${r.id}, this.checked)">
     <b>${esc(r.slip_no)}</b> — ${esc(r.emp_name)}${r.department ? ' (' + esc(r.department) + ')' : ''} · ${medFmtDate(r.date)}
-  </label>`).join('') + '<div class="med-note">ایک صفحے پر زیادہ سے زیادہ 2 پرچیاں منتخب کریں</div>';
+  </label>`).join('') + '<div class="mp-note">ایک صفحے پر زیادہ سے زیادہ 2 پرچیاں منتخب کریں</div>';
 }
 function medPrintToggle(id, on) {
   if (on) {
@@ -4305,16 +4400,18 @@ function medPrintToggle(id, on) {
   } else MED_PRINT_SEL = MED_PRINT_SEL.filter(x => x !== id);
 }
 function medSlipHTML(r) {
-  const copy = (label, cls) => `<div class="copy ${cls}">
-      <div class="crow"><span class="chip">${label}</span><span>نمبر: <b class="no">${esc(r.slip_no)}</b></span><span>تاریخ: ${medFmtDate(r.date)}</span></div>
-      <div class="fld">نام: <b>${esc(r.emp_name)}</b></div>
-      <div class="fld">شعبہ: <b>${esc(r.department || '')}</b></div>
-      ${r.doctor ? `<div class="fld">Refer to: <b>${esc(r.doctor)}</b></div>` : ''}
+  const copy = (label) => `<div class="copy">
+      <div class="chd"><img src="/logo.png" alt=""><div class="ct2"><div class="cn">گلشن فیکٹری — دوا پرچی</div><div class="ce">GULSHAN FACTORY</div></div><span class="clab">${label}</span></div>
+      <div class="cbody">
+        <div class="crow"><span>نمبر: <b class="no">${esc(r.slip_no)}</b></span><span>تاریخ: ${medFmtDate(r.date)}</span></div>
+        <div class="fld">نام: <b>${esc(r.emp_name)}</b></div>
+        <div class="fld">شعبہ: <b>${esc(r.department || '')}</b></div>
+        ${r.doctor ? `<div class="fld">Refer to: <b>${esc(r.doctor)}</b></div>` : ''}
+        <div class="write"></div>
+        <div class="sign"><span>دستخطِ ڈاکٹر: ______________</span>${r.by_name ? `<span class="by">جاری کردہ: ${esc(r.by_name)}</span>` : ''}</div>
+      </div>
     </div>`;
-  return `<div class="slip">
-    <div class="hd"><img src="/logo.png" alt=""><div class="t"><div class="n">گلشن فیکٹری — دوا پرچی</div><div class="e">GULSHAN FACTORY • DERA ISMAIL KHAN</div></div></div>
-    <div class="cols">${copy('دفتری کاپی', 'c1')}${copy('ڈاکٹر کاپی', 'c2')}</div>
-  </div>`;
+  return `<div class="slip">${copy('دفتری کاپی')}${copy('ڈاکٹر کاپی')}</div>`;
 }
 function medOpenPrint(selRows, pos, after) {
   let slots = '';
@@ -4322,25 +4419,26 @@ function medOpenPrint(selRows, pos, after) {
   for (const r of selRows) slots += `<div class="slot">${medSlipHTML(r)}</div>`;
   const html = `<!DOCTYPE html><html dir="rtl" lang="ur"><head><meta charset="utf-8"><title>دوا پرچی پرنٹ</title>
 <style>
-@page { size: A4 portrait; margin: 0; }
+@page { size: Letter portrait; margin: 0; }
 * { box-sizing: border-box; margin: 0; padding: 0; }
 body { font-family: 'Jameel Noori Nastaleeq', 'Noto Nastaliq Urdu', serif; }
-.page { width: 210mm; height: 296mm; padding: 6mm 7mm; display: flex; flex-direction: column; }
-.slot { height: 141mm; padding: 1.5mm 0; }
-.slip { border: 2.2px solid #1b5e20; border-radius: 4mm; overflow: hidden; height: 100%; display: flex; flex-direction: column; }
-.hd { background: #2e7d32; color: #fff; display: flex; align-items: center; gap: 4mm; padding: 2mm 4mm; }
-.hd img { width: 11mm; height: 11mm; border-radius: 50%; background: #fff; object-fit: contain; }
-.hd .t { flex: 1; text-align: center; }
-.hd .n { font-size: 19pt; font-weight: 700; line-height: 1.5; }
-.hd .e { font-size: 7.5pt; letter-spacing: 1px; font-family: Arial, sans-serif; }
-.cols { display: flex; flex: 1; }
-.copy { flex: 1; padding: 3mm 4mm; font-size: 13.5pt; line-height: 2; }
-.copy.c1 { border-left: 2px dashed #d32f2f; }
-.crow { display: flex; justify-content: space-between; align-items: center; font-size: 11.5pt; }
-.chip { border: 1.4px solid #2e7d32; color: #1b5e20; border-radius: 10px; padding: 0 8px; font-weight: 700; font-size: 11pt; }
-.copy.c2 .chip { border-color: #e8721c; color: #b26a00; }
+.page { width: 215.9mm; height: 279.4mm; padding: 9mm 8mm; display: flex; flex-direction: column; }
+.slot { height: 126.5mm; padding: 1mm 0; }
+.slip { border: 2.2px solid #1b5e20; border-radius: 3.5mm; overflow: hidden; height: 100%; display: flex; }
+.copy { flex: 1; display: flex; flex-direction: column; }
+.copy:first-child { border-left: 2px dashed #d32f2f; }
+.chd { background: #2e7d32; color: #fff; display: flex; align-items: center; gap: 2.5mm; padding: 1.6mm 3mm; }
+.chd img { width: 8.5mm; height: 8.5mm; border-radius: 50%; background: #fff; object-fit: contain; }
+.chd .ct2 { flex: 1; }
+.chd .cn { font-size: 12.5pt; font-weight: 700; line-height: 1.45; }
+.chd .ce { font-size: 6pt; letter-spacing: 1.2px; font-family: Arial, sans-serif; opacity: .85; }
+.chd .clab { border: 1.3px solid #fff; border-radius: 8px; padding: 0 6px; font-size: 9.5pt; font-weight: 700; white-space: nowrap; }
+.cbody { flex: 1; display: flex; flex-direction: column; padding: 2.5mm 3.5mm; font-size: 12pt; line-height: 1.9; }
+.crow { display: flex; justify-content: space-between; font-size: 10.5pt; }
 .no { color: #c62828; }
-.fld { margin-top: 1mm; }
+.write { flex: 1; }
+.sign { border-top: 1px solid #bbb; padding-top: 1.2mm; display: flex; justify-content: space-between; align-items: center; font-size: 10.5pt; }
+.by { font-size: 8.5pt; color: #666; }
 </style></head><body><div class="page">${slots}</div>
 <script>window.onload = () => setTimeout(() => window.print(), 350);<\/script>
 </body></html>`;
@@ -4361,10 +4459,8 @@ async function medQueuePrint() {
   const sel = rows.filter(r => MED_PRINT_SEL.includes(r.id));
   if (!sel.length) { alert('منتخب پرچیاں نہیں ملیں'); return; }
   const pos = parseInt($('#medPrintPos').value, 10) || 1;
-  const ids = MED_PRINT_SEL.slice();
   MED_PRINT_SEL = [];
   medOpenPrint(sel, pos, () => { MED_PAGE = 'printq'; renderMedicine(); });
-  void ids;
 }
 // ----- Slip actions -----
 async function medReopen(id) {
@@ -4384,61 +4480,39 @@ async function medEditSlip(id) {
   const r = rows.find(x => x.id === id); if (!r) return;
   const name = prompt('ملازم کا نام:', r.emp_name); if (name === null) return;
   const dept = prompt('شعبہ:', r.department || ''); if (dept === null) return;
+  const doc = prompt('ڈاکٹر / ریفرنس:', r.doctor || ''); if (doc === null) return;
   const dt = prompt('تاریخ (YYYY-MM-DD):', r.date); if (dt === null) return;
   const nt = prompt('نوٹس:', r.notes || ''); if (nt === null) return;
-  await api('PUT', '/api/med/slips/' + id, { emp_name: name, department: dept, date: dt, notes: nt });
+  await api('PUT', '/api/med/slips/' + id, { emp_name: name, department: dept, date: dt, notes: nt, doctor: doc });
   showTrayToast('ترمیم ہو گئی', '');
   renderMedicine();
-}
-async function medEmpEdit(id) {
-  const e = MED_EMPS.find(x => x.id === id); if (!e) return;
-  const name = prompt('ملازم کا نام:', e.name); if (name === null) return;
-  if (!name.trim()) { alert('نام خالی نہیں ہو سکتا'); return; }
-  const dept = prompt('شعبہ:', e.department || ''); if (dept === null) return;
-  const r = await api('PUT', '/api/med/employees/' + id, { name: name.trim(), department: dept.trim() });
-  if (r && r.ok) { showTrayToast('ترمیم ہو گئی ✅', 'اس ملازم کی ساری پرچیوں پر نیا نام/شعبہ لگ گیا'); renderMedicine(); }
-  else showTrayToast('خرابی', (r && r.error) || 'نہیں ہوا');
-}
-async function medEmpDelete(id) {
-  const e = MED_EMPS.find(x => x.id === id); if (!e) return;
-  if (!confirm('ملازم "' + e.name + '" ختم کر دیں؟\n(اگر اس کی پرچیاں موجود ہوئیں تو وہ ویسے ہی رہیں گی — صرف نام فہرست سے چھپ جائے گا)')) return;
-  const r = await api('DELETE', '/api/med/employees/' + id);
-  if (r && r.ok) { showTrayToast('ہو گیا', r.mode === 'hidden' ? 'نام فہرست سے چھپ گیا — پرچیاں محفوظ ہیں' : 'ملازم حذف ہو گیا'); if (MED_EMPVIEW === id) MED_EMPVIEW = null; renderMedicine(); }
-  else showTrayToast('خرابی', (r && r.error) || 'نہیں ہوا');
 }
 // ----- Settings -----
 function medPageSettings() {
   const v = $('#medBody'); if (!v) return;
   const isSuper = ME && ME.role === 'super_admin';
   v.innerHTML = `
-  <div class="med-card">
-    <h3>🏢 شعبے</h3>
-    <div>${MED_DEPTS.length ? MED_DEPTS.map(d => `<div class="med-set-row"><span><b>${esc(d.name)}</b></span>${isSuper ? `<button class="btn small red" onclick="medDelDept(${d.id})">🗑 حذف</button>` : ''}</div>`).join('') : '<div class="med-note">ابھی کوئی شعبہ نہیں</div>'}</div>
-    <label>نیا شعبہ — نام<br><input id="medDeptName" placeholder="مثلاً پروڈکشن"></label>
-    <div class="med-btnrow"><button class="btn green" onclick="medAddDept()">➕ شعبہ شامل کریں</button></div>
+  <div class="mp-card">
+    <div class="mp-ct"><span class="mp-dot"></span>🏢 شعبے</div>
+    <div>${MED_DEPTS.length ? MED_DEPTS.map(d => `<div class="mp-set-row"><span><b>${esc(d.name)}</b></span>${isSuper ? `<button class="btn small red" onclick="medDelDept(${d.id})">🗑 حذف</button>` : ''}</div>`).join('') : '<div class="mp-note">ابھی کوئی شعبہ نہیں</div>'}</div>
+    <label>نیا شعبہ — نام<br><input id="medDeptName" class="mp-inp" placeholder="مثلاً پروڈکشن"></label>
+    <button class="mp-big" onclick="medAddDept()">➕ شعبہ شامل کریں</button>
   </div>
-  <div class="med-card">
-    <h3>🩺 ڈاکٹر / ریفرنس</h3>
-    <div>${MED_DOCTORS.length ? MED_DOCTORS.map(d => `<div class="med-set-row"><span><b>${esc(d.name)}</b></span>${isSuper ? `<button class="btn small red" onclick="medDelDoctor(${d.id})">🗑 حذف</button>` : ''}</div>`).join('') : '<div class="med-note">ابھی کوئی ڈاکٹر نہیں — پرچی بناتے وقت لکھنے سے خود شامل ہو جائے گا</div>'}</div>
-    <label>نیا ڈاکٹر — نام<br><input id="medDocName" placeholder="مثلاً ڈاکٹر احمد"></label>
-    <div class="med-btnrow"><button class="btn green" onclick="medAddDoctor()">➕ ڈاکٹر شامل کریں</button></div>
+  <div class="mp-card">
+    <div class="mp-ct"><span class="mp-dot"></span>🩺 ڈاکٹر / ریفرنس</div>
+    <div>${MED_DOCTORS.length ? MED_DOCTORS.map(d => `<div class="mp-set-row"><span><b>${esc(d.name)}</b></span>${isSuper ? `<button class="btn small red" onclick="medDelDoctor(${d.id})">🗑 حذف</button>` : ''}</div>`).join('') : '<div class="mp-note">ابھی کوئی ڈاکٹر نہیں — پرچی بناتے وقت لکھنے سے خود شامل ہو جائے گا</div>'}</div>
+    <label>نیا ڈاکٹر — نام<br><input id="medDocName" class="mp-inp" placeholder="مثلاً ڈاکٹر احمد"></label>
+    <button class="mp-big" onclick="medAddDoctor()">➕ ڈاکٹر شامل کریں</button>
   </div>
-  <div class="med-card">
-    <h3>🔀 دوہرے نام ایک کریں</h3>
-    <div class="med-note">اگر ایک ہی ملازم دو ناموں سے بن گیا ہو (مثلاً کشف اور kashaf) تو اضافی نام منتخب کر کے اصل نام میں ملا دیں — اس کی ساری پرچیاں اصل نام پر چلی جائیں گی۔</div>
+  <div class="mp-card">
+    <div class="mp-ct"><span class="mp-dot"></span>🔀 دوہرے نام ایک کریں</div>
+    <div class="mp-note">اگر ایک ہی ملازم دو ناموں سے بن گیا ہو (مثلاً کشف اور kashaf) تو اضافی نام منتخب کر کے اصل نام میں ملا دیں — اس کی ساری پرچیاں اصل نام پر چلی جائیں گی۔</div>
     <label>اضافی / دوہرا نام (یہ ختم ہو جائے گا)<br>
-      <select id="medMergeFrom"><option value="">— منتخب کریں —</option>${MED_EMPS.map(e => `<option value="${e.id}">${esc(e.name)} — ${esc(e.department || '')}</option>`).join('')}</select></label>
+      <select id="medMergeFrom" class="mp-inp"><option value="">— منتخب کریں —</option>${MED_EMPS.map(e => `<option value="${e.id}">${esc(e.name)} — ${esc(e.department || '')}</option>`).join('')}</select></label>
     <label>اصل نام (یہ رہے گا)<br>
-      <select id="medMergeTo"><option value="">— منتخب کریں —</option>${MED_EMPS.map(e => `<option value="${e.id}">${esc(e.name)} — ${esc(e.department || '')}</option>`).join('')}</select></label>
-    <div class="med-btnrow"><button class="btn green" onclick="medMergeSave()">🔀 ایک کر دیں</button></div>
-  </div>
-  <div class="med-card">
-    <h3>👥 ملازمین</h3>
-    <div>${MED_EMPS.length ? MED_EMPS.map(e => `<div class="med-set-row"><span><b>${esc(e.name)}</b>${e.department ? ' — ' + esc(e.department) : ''}</span><span><button class="btn small" onclick="medEmpEdit(${e.id})">✏️ ترمیم</button> <button class="btn small red" onclick="medEmpDelete(${e.id})">🗑 حذف</button></span></div>`).join('') : '<div class="med-note">ابھی کوئی ملازم نہیں</div>'}</div>
-    <label>نیا ملازم — نام<br><input id="medEmpAddName" placeholder="ملازم کا نام"></label>
-    <label>شعبہ<br><select id="medEmpAddDept"><option value="">— شعبہ منتخب کریں —</option>${MED_DEPTS.map(d => `<option value="${esc(d.name)}">${esc(d.name)}</option>`).join('')}</select></label>
-    <div class="med-btnrow"><button class="btn green" onclick="medAddEmp()">➕ ملازم شامل کریں</button></div>
-    <div class="med-note">نوٹ: پرچی بناتے وقت نیا نام لکھنے سے ملازم خود اسی شعبے میں شامل ہو جاتا ہے۔</div>
+      <select id="medMergeTo" class="mp-inp"><option value="">— منتخب کریں —</option>${MED_EMPS.map(e => `<option value="${e.id}">${esc(e.name)} — ${esc(e.department || '')}</option>`).join('')}</select></label>
+    <button class="mp-big" onclick="medMergeSave()">🔀 ایک کر دیں</button>
+    <div class="mp-note" style="margin-top:8px">👥 ملازمین شامل کرنا, IN/OUT اور ناموں کی ترمیم 👥 ملازمین والے صفحے پر ہے۔</div>
   </div>`;
 }
 async function medAddDept() {
@@ -4469,9 +4543,4 @@ async function medMergeSave() {
   const r = await api('POST', '/api/med/employees/merge', { from_id: f, to_id: t });
   if (r && r.ok) { showTrayToast('ایک ہو گئے ✅', r.moved + ' پرچیاں منتقل ہو گئیں'); renderMedicine(); }
   else showTrayToast('خرابی', (r && r.error) || 'نہیں ہوا');
-}
-async function medAddEmp() {
-  const n = ($('#medEmpAddName').value || '').trim(); if (!n) { alert('نام لکھیں'); return; }
-  await api('POST', '/api/med/employees', { name: n, department: $('#medEmpAddDept').value || '' });
-  showTrayToast('ملازم شامل ہو گیا', n); renderMedicine();
 }

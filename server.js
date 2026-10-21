@@ -512,6 +512,16 @@ db.exec(`CREATE TABLE IF NOT EXISTS med_doctors (
   created_at TEXT DEFAULT (datetime('now'))
 )`);
 try { db.exec(`ALTER TABLE med_slips ADD COLUMN doctor TEXT NOT NULL DEFAULT ''`); } catch (e) { /* already there */ }
+db.exec(`CREATE TABLE IF NOT EXISTS med_payments (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  doctor TEXT NOT NULL DEFAULT '',
+  month TEXT NOT NULL DEFAULT '',
+  amount REAL NOT NULL DEFAULT 0,
+  date TEXT NOT NULL DEFAULT '',
+  note TEXT DEFAULT '',
+  created_by INTEGER,
+  created_at TEXT DEFAULT (datetime('now'))
+)`);
 // --- Daily system: fully separate catalog (mukamal alag data) — one-time copy ---
 // Same IDs so existing daily_orders/access rows stay valid; after this, independent.
 if (!db.prepare(`SELECT value FROM daily_settings WHERE key='catalog_split'`).get()) {
@@ -2315,7 +2325,15 @@ app.delete('/api/med/doctors/:id', requireLogin, (req, res, next) => { if (req.u
   res.json({ ok: true });
 });
 app.get('/api/med/employees', requireLogin, requireSection('medicine', 'view'), (req, res) => {
+  if (req.query.all === '1') return res.json(db.prepare('SELECT * FROM med_employees ORDER BY active DESC, department, name').all());
   res.json(db.prepare('SELECT * FROM med_employees WHERE active=1 ORDER BY name').all());
+});
+app.post('/api/med/employees/:id/active', requireLogin, requireSection('medicine', 'full'), (req, res) => {
+  const e = db.prepare('SELECT * FROM med_employees WHERE id=?').get(req.params.id);
+  if (!e) return res.status(404).json({ error: 'not found' });
+  const act = (req.body || {}).active ? 1 : 0;
+  db.prepare('UPDATE med_employees SET active=? WHERE id=?').run(act, e.id);
+  res.json({ ok: true, active: act });
 });
 app.post('/api/med/employees', requireLogin, requireSection('medicine', 'full'), (req, res) => {
   const b = req.body || {};
@@ -2360,6 +2378,30 @@ app.delete('/api/med/employees/:id', requireLogin, requireSection('medicine', 'f
   db.prepare('DELETE FROM med_employees WHERE id=?').run(e.id);
   res.json({ ok: true, mode: 'deleted' });
 });
+app.get('/api/med/payments', requireLogin, requireSection('medicine', 'view'), (req, res) => {
+  const q = req.query || {};
+  let sql = 'SELECT p.*, u.username AS by_name FROM med_payments p LEFT JOIN users u ON u.id = p.created_by WHERE 1=1'; const args = [];
+  if (q.doctor) { sql += ' AND p.doctor=?'; args.push(q.doctor); }
+  if (q.month) { sql += ' AND p.month=?'; args.push(q.month); }
+  sql += ' ORDER BY p.id DESC LIMIT 300';
+  res.json(db.prepare(sql).all(...args));
+});
+app.post('/api/med/payments', requireLogin, requireSection('medicine', 'full'), (req, res) => {
+  const b = req.body || {};
+  const doc = (b.doctor || '').trim();
+  const amt = parseFloat(b.amount);
+  if (!doc) return res.status(400).json({ error: 'doctor required' });
+  if (isNaN(amt) || amt <= 0) return res.status(400).json({ error: 'amount required' });
+  const month = /^\d{4}-\d{2}$/.test(b.month || '') ? b.month : karachiDateStr().slice(0, 7);
+  const date = /^\d{4}-\d{2}-\d{2}$/.test(b.date || '') ? b.date : karachiDateStr();
+  const r = db.prepare('INSERT INTO med_payments (doctor, month, amount, date, note, created_by) VALUES (?,?,?,?,?,?)')
+    .run(doc, month, amt, date, (b.note || '').trim(), req.user.id);
+  res.json({ ok: true, id: r.lastInsertRowid });
+});
+app.delete('/api/med/payments/:id', requireLogin, requireSection('medicine', 'full'), (req, res) => {
+  db.prepare('DELETE FROM med_payments WHERE id=?').run(req.params.id);
+  res.json({ ok: true });
+});
 app.get('/api/med/stats', requireLogin, requireSection('medicine', 'view'), (req, res) => {
   const month = karachiDateStr().slice(0, 7);
   const m = db.prepare(`SELECT COUNT(*) c, COALESCE(SUM(CASE WHEN status='done' THEN amount ELSE 0 END),0) amt FROM med_slips WHERE substr(date,1,7)=?`).get(month);
@@ -2369,19 +2411,23 @@ app.get('/api/med/stats', requireLogin, requireSection('medicine', 'view'), (req
 });
 app.get('/api/med/slips', requireLogin, requireSection('medicine', 'view'), (req, res) => {
   const q = req.query || {};
-  let sql = 'SELECT * FROM med_slips WHERE 1=1'; const args = [];
-  if (q.status) { sql += ' AND status=?'; args.push(q.status); }
-  if (q.employee_id) { sql += ' AND employee_id=?'; args.push(parseInt(q.employee_id, 10)); }
-  if (q.month) { sql += ' AND substr(date,1,7)=?'; args.push(q.month); }
-  if (q.unprinted === '1') { sql += ' AND has_print=1 AND printed=0'; }
-  if (q.doctor) { sql += ' AND doctor=?'; args.push(q.doctor); }
-  sql += ' ORDER BY id DESC LIMIT 500';
+  let sql = 'SELECT s.*, u.username AS by_name FROM med_slips s LEFT JOIN users u ON u.id = s.created_by WHERE 1=1'; const args = [];
+  if (q.status) { sql += ' AND s.status=?'; args.push(q.status); }
+  if (q.employee_id) { sql += ' AND s.employee_id=?'; args.push(parseInt(q.employee_id, 10)); }
+  if (q.month) { sql += ' AND substr(s.date,1,7)=?'; args.push(q.month); }
+  if (q.unprinted === '1') { sql += ' AND s.has_print=1 AND s.printed=0'; }
+  if (q.doctor) { sql += ' AND s.doctor=?'; args.push(q.doctor); }
+  sql += ' ORDER BY s.id DESC LIMIT 500';
   res.json(db.prepare(sql).all(...args));
 });
 app.post('/api/med/slips', requireLogin, requireSection('medicine', 'full'), (req, res) => {
   const b = req.body || {};
-  const empName = (b.employee_name || '').trim();
-  const dept = (b.department || '').trim();
+  let empName = (b.employee_name || '').trim();
+  let dept = (b.department || '').trim();
+  if (b.employee_id) {
+    const er = db.prepare('SELECT * FROM med_employees WHERE id=?').get(parseInt(b.employee_id, 10));
+    if (er) { empName = er.name; dept = er.department || ''; }
+  }
   if (!empName) return res.status(400).json({ error: 'employee required' });
   const date = /^\d{4}-\d{2}-\d{2}$/.test(b.date || '') ? b.date : karachiDateStr();
   if (dept) db.prepare('INSERT OR IGNORE INTO med_departments (name) VALUES (?)').run(dept);
@@ -2416,8 +2462,10 @@ app.put('/api/med/slips/:id', requireLogin, requireSection('medicine', 'full'), 
   const s = db.prepare('SELECT * FROM med_slips WHERE id=?').get(req.params.id);
   if (!s) return res.status(404).json({ error: 'not found' });
   const date = /^\d{4}-\d{2}-\d{2}$/.test(b.date || '') ? b.date : s.date;
-  db.prepare('UPDATE med_slips SET emp_name=?, department=?, date=?, notes=? WHERE id=?')
-    .run((b.emp_name !== undefined ? b.emp_name : s.emp_name).trim(), (b.department !== undefined ? b.department : s.department).trim(), date, (b.notes !== undefined ? b.notes : s.notes).trim(), req.params.id);
+  const doc = (b.doctor !== undefined ? b.doctor : s.doctor || '').trim();
+  if (doc) db.prepare('INSERT OR IGNORE INTO med_doctors (name) VALUES (?)').run(doc);
+  db.prepare('UPDATE med_slips SET emp_name=?, department=?, date=?, notes=?, doctor=? WHERE id=?')
+    .run((b.emp_name !== undefined ? b.emp_name : s.emp_name).trim(), (b.department !== undefined ? b.department : s.department).trim(), date, (b.notes !== undefined ? b.notes : s.notes).trim(), doc, req.params.id);
   res.json({ ok: true });
 });
 app.delete('/api/med/slips/:id', requireLogin, requireSection('medicine', 'full'), (req, res) => {
@@ -2447,7 +2495,18 @@ app.get('/api/med/report', requireLogin, requireSection('medicine', 'view'), (re
       SUM(CASE WHEN status='pending' THEN 1 ELSE 0 END) AS pending,
       COALESCE(SUM(CASE WHEN status='done' THEN amount ELSE 0 END), 0) AS total_amount
     FROM med_slips WHERE substr(date,1,7)=? GROUP BY doctor ORDER BY total_amount DESC`).all(month);
-  res.json({ month, rows, totals, doctors });
+  for (const d of doctors) {
+    const p = db.prepare('SELECT COALESCE(SUM(amount),0) paid FROM med_payments WHERE doctor=? AND month=?').get(d.doctor, month);
+    d.paid = p ? p.paid : 0;
+    d.balance = Math.round((d.total_amount - d.paid) * 100) / 100;
+  }
+  const users = db.prepare(`SELECT s.created_by, u.username AS user_name,
+      SUM(CASE WHEN s.has_print=1 THEN 1 ELSE 0 END) AS printed_cnt,
+      SUM(CASE WHEN s.has_print=0 THEN 1 ELSE 0 END) AS manual_cnt,
+      COUNT(*) AS total_cnt,
+      COALESCE(SUM(CASE WHEN s.status='done' THEN s.amount ELSE 0 END), 0) AS total_amount
+    FROM med_slips s LEFT JOIN users u ON u.id = s.created_by WHERE substr(s.date,1,7)=? GROUP BY s.created_by ORDER BY total_cnt DESC`).all(month);
+  res.json({ month, rows, totals, doctors, users });
 });
 
 // ---------- Rate Lists (multiple price lists) ----------
