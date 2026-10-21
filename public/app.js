@@ -1681,7 +1681,7 @@ async function editTrayVoucher(id) {
 }
 function cancelTrayEdit() {
   window._editingVoucher = null;
-  TRAY.items.forEach(it => { $('#tvQ_' + it.id).value = 0; });
+  TRAY.items.forEach(it => { const _e = $('#tvQ_' + it.id); if (_e) _e.value = 0; });
   $('#tvNote').value = '';
   $('#tvMsg').innerHTML = '';
 }
@@ -1733,7 +1733,7 @@ async function _saveTrayVoucherInner(kind) {
       });
       $('#tvMsg').innerHTML = `<div class="note">✅ واؤچر اپڈیٹ ہو گیا!</div>`;
       window._editingVoucher = null;
-      TRAY.items.forEach(it => { $('#tvQ_' + it.id).value = 0; });
+      TRAY.items.forEach(it => { const _e = $('#tvQ_' + it.id); if (_e) _e.value = 0; });
       $('#tvNote').value = '';
       loadTrayVoucherList();
     } catch (e) { $('#tvMsg').innerHTML = `<div class="err">❌ ${e.message || 'خرابی'}</div>`; }
@@ -1760,7 +1760,7 @@ async function _saveTrayVoucherInner(kind) {
   $('#tvMsg').innerHTML = `<div class="note">✅ ${ok} واؤچر محفوظ! <b>${vnos.join(', ')}</b></div>
     <div style="margin-top:8px"><button class="btn small dark" onclick="printLastTrayVouchers('${kind}')">🖨 پرنٹ کریں</button></div>`;
   showTrayToast(`✅ ${ok} واؤچر محفوظ!`, vnos.join(', '));
-  TRAY.items.forEach(it => { window['_tvPQ_' + it.id] = Number($('#tvQ_' + it.id).value) || 0; $('#tvQ_' + it.id).value = 0; const _c = $('#tvQ_' + it.id).closest('.tv-item'); if (_c) _c.style.borderColor = '#e0e0e0'; });
+  TRAY.items.forEach(it => { const _e = $('#tvQ_' + it.id); if (!_e) return; window['_tvPQ_' + it.id] = Number(_e.value) || 0; _e.value = 0; const _c = _e.closest('.tv-item'); if (_c) _c.style.borderColor = '#e0e0e0'; });
   $('#tvNote').value = '';
   window._lastTrayVouchers = vnos;
   if (_failedCount > 0) {
