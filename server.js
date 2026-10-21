@@ -430,6 +430,34 @@ try {
     console.log('[migration] shop_id FK removed');
   }
 } catch (e) { console.log('[migration] shop_id FK removal failed:', e.message); }
+// Migration: voucher_no UNIQUE hatana — aik voucher me kai items (grouped vouchers) ke liye
+try {
+  const tsql = db.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='tray_vouchers'").get();
+  if (tsql && /voucher_no\s+TEXT\s+UNIQUE/i.test(tsql.sql || '')) {
+    console.log('[migration] removing UNIQUE on tray_vouchers.voucher_no (grouped vouchers)');
+    db.exec(`
+      CREATE TABLE tray_vouchers_g (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        voucher_no TEXT NOT NULL,
+        date TEXT NOT NULL,
+        shop_id INTEGER NOT NULL,
+        shop_type TEXT NOT NULL DEFAULT 'shop',
+        vehicle_id INTEGER REFERENCES vehicles(id) ON DELETE SET NULL,
+        item_id INTEGER NOT NULL REFERENCES tray_items(id),
+        sent INTEGER NOT NULL DEFAULT 0,
+        returned INTEGER NOT NULL DEFAULT 0,
+        notes TEXT DEFAULT '',
+        created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+        created_at TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+      INSERT INTO tray_vouchers_g (id, voucher_no, date, shop_id, shop_type, vehicle_id, item_id, sent, returned, notes, created_by, created_at)
+        SELECT id, voucher_no, date, shop_id, shop_type, vehicle_id, item_id, sent, returned, notes, created_by, created_at FROM tray_vouchers;
+      DROP TABLE tray_vouchers;
+      ALTER TABLE tray_vouchers_g RENAME TO tray_vouchers;
+    `);
+    console.log('[migration] voucher_no UNIQUE removed');
+  }
+} catch (e) { console.log('[migration] voucher_no UNIQUE removal failed:', e.message); }
 try { db.exec(`ALTER TABLE tray_opening ADD COLUMN shop_type TEXT NOT NULL DEFAULT 'shop'`); } catch (e) {}
 try {
   db.exec(`CREATE TABLE IF NOT EXISTS tray_opening_new (
