@@ -2307,6 +2307,20 @@ app.post('/api/med/employees', requireLogin, requireSection('medicine', 'full'),
   if (!e) { const r = db.prepare('INSERT INTO med_employees (name, department) VALUES (?,?)').run(name, dept); e = db.prepare('SELECT * FROM med_employees WHERE id=?').get(r.lastInsertRowid); }
   res.json(e);
 });
+app.post('/api/med/employees/merge', requireLogin, requireSection('medicine', 'full'), (req, res) => {
+  const b = req.body || {};
+  const fromId = parseInt(b.from_id, 10), toId = parseInt(b.to_id, 10);
+  if (!fromId || !toId || fromId === toId) return res.status(400).json({ error: 'bad ids' });
+  const to = db.prepare('SELECT * FROM med_employees WHERE id=?').get(toId);
+  const from = db.prepare('SELECT * FROM med_employees WHERE id=?').get(fromId);
+  if (!to || !from) return res.status(404).json({ error: 'not found' });
+  const tx = db.transaction(() => {
+    db.prepare('UPDATE med_slips SET employee_id=?, emp_name=?, department=? WHERE employee_id=?').run(toId, to.name, to.department, fromId);
+    db.prepare('UPDATE med_employees SET active=0 WHERE id=?').run(fromId);
+  });
+  tx();
+  res.json({ ok: true, merged_into: to.name });
+});
 app.get('/api/med/stats', requireLogin, requireSection('medicine', 'view'), (req, res) => {
   const month = karachiDateStr().slice(0, 7);
   const m = db.prepare(`SELECT COUNT(*) c, COALESCE(SUM(CASE WHEN status='done' THEN amount ELSE 0 END),0) amt FROM med_slips WHERE substr(date,1,7)=?`).get(month);

@@ -3951,11 +3951,17 @@ function medPageEntry() {
   const v = $('#v-medicine'); if (!v) return;
   v.innerHTML = medBackBar('📝 نئی پرچی / انٹری') + `
   <div class="med-card">
-    <label>ملازم کا نام (لکھنا شروع کریں — نام خود آ جائے گا)<br>
-      <input id="medEmp" list="medEmpDl" autocomplete="off" placeholder="نام لکھیں یا منتخب کریں" oninput="medEmpPicked()">
-      <datalist id="medEmpDl">${MED_EMPS.map(e => `<option value="${esc(e.name)}" label="${esc(e.name)} — ${esc(e.department || '')}"></option>`).join('')}</datalist>
+    <label>ملازم (لسٹ سے منتخب کریں)<br>
+      <select id="medEmpSel" onchange="medEmpSelChange()">
+        <option value="">— ملازم منتخب کریں —</option>
+        ${MED_EMPS.map(e => `<option value="${e.id}">${esc(e.name)} — ${esc(e.department || '')}</option>`).join('')}
+        <option value="__new">➕ نیا ملازم شامل کریں…</option>
+      </select>
     </label>
-    <label>شعبہ (منتخب کریں)<br>
+    <div id="medNewEmp" style="display:none">
+      <label>نئے ملازم کا نام<br><input id="medNewEmpName" placeholder="نام ایک ہی دفعہ لکھیں — پھر ہمیشہ لسٹ سے منتخب ہوگا"></label>
+    </div>
+    <label>شعبہ<br>
       <select id="medDeptSel" onchange="medDeptSelChange()">
         <option value="">— شعبہ منتخب کریں —</option>
         ${MED_DEPTS.map(d => `<option value="${esc(d.name)}">${esc(d.name)}</option>`).join('')}
@@ -3971,13 +3977,20 @@ function medPageEntry() {
     </div>
   </div>`;
 }
-function medEmpPicked() {
-  const name = ($('#medEmp').value || '').trim();
-  const e = MED_EMPS.find(x => x.name === name);
-  if (e && e.department) {
-    const sel = $('#medDeptSel');
-    if ([...sel.options].some(o => o.value === e.department)) { sel.value = e.department; $('#medDeptNew').style.display = 'none'; }
-    else { sel.value = '__new'; const ni = $('#medDeptNew'); ni.style.display = ''; ni.value = e.department; }
+function medEmpSelChange() {
+  const sel = $('#medEmpSel');
+  const isNew = sel.value === '__new';
+  $('#medNewEmp').style.display = isNew ? '' : 'none';
+  const deptSel = $('#medDeptSel'), deptNew = $('#medDeptNew');
+  if (!isNew && sel.value) {
+    const e = MED_EMPS.find(x => x.id === parseInt(sel.value, 10));
+    if (e && e.department) {
+      if ([...deptSel.options].some(o => o.value === e.department)) { deptSel.value = e.department; deptNew.style.display = 'none'; }
+      else { deptSel.value = '__new'; deptNew.style.display = ''; deptNew.value = e.department; }
+    }
+    deptSel.disabled = true; deptNew.disabled = true;
+  } else {
+    deptSel.disabled = false; deptNew.disabled = false;
   }
 }
 function medDeptSelChange() {
@@ -3991,11 +4004,19 @@ function medDeptValue() {
 let MED_SAVING = false;
 async function medSave(hasPrint) {
   if (MED_SAVING) return;
-  const name = ($('#medEmp').value || '').trim();
-  if (!name) { alert('پہلے ملازم کا نام لکھیں'); return; }
+  const sel = $('#medEmpSel');
+  let name = '', dept = medDeptValue();
+  if (sel.value === '__new') {
+    name = ($('#medNewEmpName').value || '').trim();
+    if (!name) { alert('نئے ملازم کا نام لکھیں'); return; }
+  } else if (sel.value) {
+    const e = MED_EMPS.find(x => x.id === parseInt(sel.value, 10));
+    if (!e) { alert('ملازم منتخب کریں'); return; }
+    name = e.name; dept = e.department || '';
+  } else { alert('پہلے ملازم منتخب کریں'); return; }
   MED_SAVING = true;
   try {
-    const r = await api('POST', '/api/med/slips', { employee_name: name, department: medDeptValue(),
+    const r = await api('POST', '/api/med/slips', { employee_name: name, department: dept,
       date: $('#medDate').value, notes: $('#medNotes').value, has_print: hasPrint });
     showTrayToast('✅ پرچی محفوظ!', r.slip_no);
     await renderMedicine();
@@ -4154,12 +4175,11 @@ function medPagePrint() {
     <label>صفحے پر جگہ<br>
       <select id="medPrintPos">
         <option value="1">جگہ 1 — اوپر سے</option>
-        <option value="2">جگہ 2 — درمیان سے</option>
-        <option value="3">جگہ 3 — نیچے سے</option>
+        <option value="2">جگہ 2 — نیچے سے</option>
       </select>
     </label>
     <div class="med-btnrow"><button class="btn green" onclick="medDoPrint()">🖨 پرنٹ کریں</button></div>
-    <div class="med-note">نیا صفحہ ہو تو جگہ 1 رکھیں۔ اگر اسی صفحے پر اوپر والی جگہ پہلے چھپ چکی ہے تو وہی صفحہ دوبارہ ڈال کر جگہ 2 یا 3 منتخب کریں۔ (A4 — ایک صفحے پر 3 پرچیاں)</div>
+    <div class="med-note">نیا صفحہ ہو تو جگہ 1 رکھیں۔ اگر اسی صفحے پر اوپر والی جگہ پہلے چھپ چکی ہے تو وہی صفحہ دوبارہ ڈال کر جگہ 2 منتخب کریں۔ (A4 — ایک صفحے پر 2 پرچیاں، آدھا آدھا صفحہ)</div>
   </div>`;
   medLoadPrintList();
 }
@@ -4171,11 +4191,11 @@ async function medLoadPrintList() {
   box.innerHTML = rows.map(r => `<label class="med-prt-row">
     <input type="checkbox" ${MED_PRINT_SEL.includes(r.id) ? 'checked' : ''} onchange="medPrintToggle(${r.id}, this.checked)">
     <b>${esc(r.slip_no)}</b> — ${esc(r.emp_name)}${r.department ? ' (' + esc(r.department) + ')' : ''} · ${medFmtDate(r.date)}
-  </label>`).join('') + '<div class="med-note">ایک صفحے پر زیادہ سے زیادہ 3 پرچیاں منتخب کریں</div>';
+  </label>`).join('') + '<div class="med-note">ایک صفحے پر زیادہ سے زیادہ 2 پرچیاں منتخب کریں</div>';
 }
 function medPrintToggle(id, on) {
   if (on) {
-    if (MED_PRINT_SEL.length >= 3) { alert('ایک صفحے پر زیادہ سے زیادہ 3 پرچیاں'); medLoadPrintList(); return; }
+    if (MED_PRINT_SEL.length >= 2) { alert('ایک صفحے پر زیادہ سے زیادہ 2 پرچیاں'); medLoadPrintList(); return; }
     MED_PRINT_SEL.push(id);
   } else MED_PRINT_SEL = MED_PRINT_SEL.filter(x => x !== id);
 }
@@ -4205,7 +4225,7 @@ function medDoPrint() {
 * { box-sizing: border-box; margin: 0; padding: 0; }
 body { font-family: 'Jameel Noori Nastaleeq', 'Noto Nastaliq Urdu', serif; }
 .page { width: 210mm; height: 296mm; padding: 6mm 7mm; display: flex; flex-direction: column; }
-.slot { height: 93mm; padding: 1.5mm 0; }
+.slot { height: 141mm; padding: 1.5mm 0; }
 .slip { border: 2.2px solid #1b5e20; border-radius: 4mm; overflow: hidden; height: 100%; display: flex; flex-direction: column; }
 .hd { background: #2e7d32; color: #fff; display: flex; align-items: center; gap: 4mm; padding: 2mm 4mm; }
 .hd img { width: 11mm; height: 11mm; border-radius: 50%; background: #fff; object-fit: contain; }
@@ -4274,6 +4294,17 @@ function medPageSettings() {
     <div class="med-btnrow"><button class="btn green" onclick="medDeptAddSave()">➕ شعبہ شامل کریں</button></div>
   </div>
   <div class="med-card">
+    <h3>🔀 دوہرے نام ایک کریں</h3>
+    <div class="med-note">اگر ایک ہی ملازم دو ناموں سے بن گیا ہو (مثلاً کشف اور kashaf) تو اضافی نام منتخب کر کے اصل نام میں ملا دیں — اس کی ساری پرچیاں اصل نام پر چلی جائیں گی۔</div>
+    <label>اضافی / دوہرا نام (یہ ختم ہو جائے گا)<br>
+      <select id="medMergeFrom"><option value="">— منتخب کریں —</option>${MED_EMPS.map(e => `<option value="${e.id}">${esc(e.name)} — ${esc(e.department || '')}</option>`).join('')}</select>
+    </label>
+    <label>اصل نام (یہ رہے گا)<br>
+      <select id="medMergeTo"><option value="">— منتخب کریں —</option>${MED_EMPS.map(e => `<option value="${e.id}">${esc(e.name)} — ${esc(e.department || '')}</option>`).join('')}</select>
+    </label>
+    <div class="med-btnrow"><button class="btn green" onclick="medMergeSave()">🔀 ایک کر دیں</button></div>
+  </div>
+  <div class="med-card">
     <h3>👥 ملازمین</h3>
     <div>${MED_EMPS.length ? MED_EMPS.map(e => `<div class="med-set-row"><span><b>${esc(e.name)}</b>${e.department ? ' — ' + esc(e.department) : ''}</span></div>`).join('') : '<div class="med-note">ابھی کوئی ملازم نہیں</div>'}</div>
     <label>نیا ملازم — نام<br><input id="medEmpAddName" placeholder="ملازم کا نام"></label>
@@ -4304,5 +4335,16 @@ async function medEmpAddSave() {
   if (!name) { alert('ملازم کا نام لکھیں'); return; }
   await api('POST', '/api/med/employees', { name, department: $('#medEmpAddDept').value });
   showTrayToast('✅ ملازم شامل!', name);
+  MED_PAGE = 'settings'; renderMedicine();
+}
+
+async function medMergeSave() {
+  const f = parseInt($('#medMergeFrom').value, 10), t = parseInt($('#medMergeTo').value, 10);
+  if (!f || !t) { alert('دونوں نام منتخب کریں'); return; }
+  if (f === t) { alert('دونوں نام الگ ہونے چاہئیں'); return; }
+  const fe = MED_EMPS.find(x => x.id === f), te = MED_EMPS.find(x => x.id === t);
+  if (!confirm('"' + (fe ? fe.name : f) + '" کی ساری پرچیاں "' + (te ? te.name : t) + '" پر منتقل کر دیں؟')) return;
+  await api('POST', '/api/med/employees/merge', { from_id: f, to_id: t });
+  showTrayToast('✅ نام ایک ہو گئے!', te ? te.name : '');
   MED_PAGE = 'settings'; renderMedicine();
 }
