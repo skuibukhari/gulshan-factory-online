@@ -2403,16 +2403,30 @@ const ACCT_TYPES = {
 };
 const acctLabel = u => (u.account_type && ACCT_TYPES[u.account_type] ? ACCT_TYPES[u.account_type].label
   : { super_admin: 'سپر ایڈمن', factory: 'فیکٹری', shop: 'دکان' }[u.role]);
+function lastSeenTxt(ts) {
+  if (!ts) return '<span style="color:#999">—</span>';
+  const t = new Date(ts.replace(' ', 'T') + 'Z').getTime();
+  if (isNaN(t)) return '<span style="color:#999">—</span>';
+  const mins = Math.floor((Date.now() - t) / 60000);
+  if (mins < 5) return '<span style="color:#2e7d32;font-weight:bold">🟢 آن لائن</span>';
+  if (mins < 60) return '⏰ ' + mins + ' منٹ پہلے';
+  const hrs = Math.floor(mins / 60);
+  if (hrs < 24) return '⏰ ' + hrs + ' گھنٹے پہلے';
+  const days = Math.floor(hrs / 24);
+  if (days === 1) return '⏰ کل';
+  if (days < 30) return '⏰ ' + days + ' دن پہلے';
+  return '⏰ ' + new Date(t).toLocaleDateString('en-GB');
+}
 async function renderSettingsUsers() {
   const users = await api('GET', '/api/users');
   await refreshCache();
   const rows = users.map(u => `<tr><td>${esc(u.username)}</td><td>${acctLabel(u)}</td>
-    <td>${esc(u.shop_name || '—')}</td><td dir="ltr">${esc(u.phone || '—')}</td><td>${u.active ? '<span class="badge">فعال</span>' : '<span class="badge off">بند</span>'}</td>
+    <td>${esc(u.shop_name || '—')}</td><td dir="ltr">${esc(u.phone || '—')}</td><td>${u.active ? '<span class="badge">فعال</span>' : '<span class="badge off">بند</span>'}</td><td>${lastSeenTxt(u.last_seen)}</td>
     <td><button class="btn small ghost" onclick="userEdit(${u.id})">✏</button>
     ${u.id !== ME.id ? `<button class="btn small" style="background:#ff9800;color:#fff" onclick="userLogout(${u.id},'${esc(u.username)}')" title="لاگ آؤٹ کریں">🚪</button>
     <button class="btn small danger" onclick="userDel(${u.id})">🗑</button>` : ''}</td></tr>`).join('');
   $('#setUsers').innerHTML = `<h3>👥 یوزرز / اکاؤنٹس</h3>
-    <table><tr><th>یوزر نام</th><th>اکاؤنٹ کی قسم</th><th>دکان</th><th>موبائل</th><th>حالت</th><th></th></tr>${rows}</table>
+    <table><tr><th>یوزر نام</th><th>اکاؤنٹ کی قسم</th><th>دکان</th><th>موبائل</th><th>حالت</th><th>آخری سرگرمی</th><th></th></tr>${rows}</table>
     <h3>➕ نیا اکاؤنٹ</h3>
     <div class="formgrid">
       <label>یوزر نام<br><input id="nu-name"></label>

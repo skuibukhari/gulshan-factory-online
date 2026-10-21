@@ -400,6 +400,8 @@ db.exec(`CREATE TABLE IF NOT EXISTS tray_vouchers (
   created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );`);
+// Migration: users.last_seen — online/last-seen status ke liye
+try { db.exec(`ALTER TABLE users ADD COLUMN last_seen TEXT`); } catch (e) {}
 // Migration: shop_type for daily shops support
 try { db.exec(`ALTER TABLE tray_vouchers ADD COLUMN shop_type TEXT NOT NULL DEFAULT 'shop'`); } catch (e) {}
 // Migration: remove shop_id FK (breaks daily shops - shop_id can be in shops OR daily_shops)
@@ -705,11 +707,19 @@ app.use(session({
   cookie: { httpOnly: true, sameSite: 'lax', secure: process.env.COOKIE_SECURE === '1', maxAge: 1000 * 60 * 60 * 24 * 365 },
 }));
 
+const _lastSeenWrite = {};
+function touchLastSeen(userId) {
+  const now = Date.now();
+  if (_lastSeenWrite[userId] && now - _lastSeenWrite[userId] < 60000) return;
+  _lastSeenWrite[userId] = now;
+  try { db.prepare("UPDATE users SET last_seen=datetime('now') WHERE id=?").run(userId); } catch (e) {}
+}
 function requireLogin(req, res, next) {
   if (!req.session.userId) return res.status(401).json({ error: 'login_required' });
   const u = db.prepare('SELECT id, username, role, shop_id, daily_shop_id, active FROM users WHERE id=?').get(req.session.userId);
   if (!u || !u.active) { req.session.destroy(() => {}); return res.status(401).json({ error: 'login_required' }); }
   req.user = u;
+  touchLastSeen(u.id);
   next();
 }
 function can(user, section, min) {
@@ -2379,7 +2389,7 @@ app.delete('/api/rate-list-items/:id', requireLogin, (req, res) => {
 });
 // ---------- Users & permissions (super admin) ----------
 app.get('/api/users', requireLogin, isAdmin, (req, res) => {
-  const users = db.prepare(`SELECT u.id, u.username, u.role, u.shop_id, u.daily_shop_id, u.active, u.created_at, u.phone, u.account_type,
+  const users = db.prepare(`SELECT u.id, u.username, u.role, u.shop_id, u.daily_shop_id, u.active, u.created_at, u.phone, u.account_type, u.last_seen,
       COALESCE(s.name, ds.name) AS shop_name
     FROM users u LEFT JOIN shops s ON s.id=u.shop_id LEFT JOIN daily_shops ds ON ds.id=u.daily_shop_id ORDER BY u.id`).all();
   res.json(users.map(u => ({ ...u, permissions: u.role === 'super_admin' ? Object.fromEntries(SECTIONS.map(s => [s, 'full'])) : getPermissions(u.id) })));
