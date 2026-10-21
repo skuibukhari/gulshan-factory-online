@@ -391,3 +391,40 @@ tr.hot td{background:#fff3e0 !important;font-weight:bold}
 .ucard{background:#fff;border:1.5px solid #e5ddc8;border-radius:12px;padding:10px 12px;margin:8px 0}
 .ucard .urow{display:flex;justify-content:space-between;align-items:center;gap:8px}
 .ucard .umeta{color:#777;font-size:13px;margin-top:4px}
+
+/* ---------- Medicine Parchi (دوا پرچی) ---------- */
+#v-medicine{font-family:'Jameel Noori Nastaleeq','Noto Nastaliq Urdu',serif}
+#v-medicine h3{margin:4px 0 10px}
+#v-medicine label{display:block;margin:8px 0;font-weight:600}
+#v-medicine input,#v-medicine select{width:100%;margin-top:4px}
+.med-stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:10px;margin:10px 0}
+.med-stat{background:#e8f5e9;border:1.5px solid #2e7d32;border-radius:12px;padding:10px;text-align:center}
+.med-stat.warn{background:#fff3e0;border-color:#e8721c}
+.med-stat-n{font-size:22px;font-weight:800;color:#1b5e20;line-height:1.4}
+.med-stat.warn .med-stat-n{color:#b26a00}
+.med-stat-l{font-size:13.5px;color:#555}
+.med-card{background:#fff;border:1.5px solid var(--border,#ddd);border-radius:12px;padding:14px;margin:12px 0;box-shadow:0 1px 4px rgba(0,0,0,.06)}
+.med-btnrow{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px}
+.med-btnrow .btn{flex:1;min-width:150px;padding:11px}
+.med-tabs{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px}
+.med-tabs button{flex:1;min-width:100px;padding:8px 6px;border:1.5px solid #2e7d32;background:#fff;color:#1b5e20;border-radius:9px;font-weight:700;font-size:15px}
+.med-tabs button.on{background:#2e7d32;color:#fff}
+.med-banner{background:#e8f5e9;border:1.5px solid #2e7d32;border-radius:9px;padding:8px 10px;margin-bottom:10px}
+.med-slip{border:1.5px solid #c8e6c9;border-radius:11px;padding:10px 12px;margin:9px 0;background:#fdfef9}
+.med-slip-hd{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.med-no{font-size:18px;color:#1b5e20}
+.med-badge{font-size:12.5px;border-radius:10px;padding:1px 9px;font-weight:700}
+.med-badge.done{background:#e8f5e9;color:#1b5e20;border:1px solid #2e7d32}
+.med-badge.pend{background:#ffebee;color:#c62828;border:1px solid #c62828}
+.med-badge.prt{background:#e3f2fd;color:#1565c0;border:1px solid #1565c0}
+.med-badge.unprt{background:#fff3e0;color:#b26a00;border:1px solid #e8721c}
+.med-slip-bd{margin-top:5px;font-size:15.5px;line-height:1.8}
+.med-slip-ft{display:flex;gap:6px;flex-wrap:wrap;margin-top:8px}
+.med-emp{color:#1565c0;font-weight:700;text-decoration:none}
+.med-note{font-size:13px;color:#777;margin-top:6px;line-height:1.7}
+.med-prt-row{display:flex;align-items:center;gap:8px;padding:7px 4px;border-bottom:1px dashed #ddd;font-weight:600}
+.med-prt-row input{width:auto;margin:0}
+.med-table{width:100%;border-collapse:collapse;font-size:14.5px;min-width:480px}
+.med-table th{background:#e8f5e9;color:#1b5e20;border:1px solid #c8e6c9;padding:5px 7px;text-align:right}
+.med-table td{border:1px solid #ddd;padding:5px 7px}
+.med-table tr.tot td{background:#f1f8e9;font-weight:800}

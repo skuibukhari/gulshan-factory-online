@@ -476,6 +476,36 @@ db.prepare(`INSERT OR IGNORE INTO tray_items (key, name_ur, name_en, icon) VALUE
   ('sweet_tray', 'سویٹس ٹرے', 'Sweets Tray', '🧁'),
   ('general_tray', 'عام ٹرے', 'General Tray', '🍽️'),
   ('basket', 'باسکٹ', 'Basket', '🧺')`).run();
+// ---------- Medicine Parchi (دوا پرچی) tables ----------
+db.exec(`CREATE TABLE IF NOT EXISTS med_departments (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  name TEXT NOT NULL UNIQUE,
+  created_at TEXT DEFAULT (datetime('now'))
+)`);
+db.exec(`CREATE TABLE IF NOT EXISTS med_employees (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  name TEXT NOT NULL,
+  department TEXT NOT NULL DEFAULT '',
+  active INTEGER NOT NULL DEFAULT 1,
+  created_at TEXT DEFAULT (datetime('now'))
+)`);
+db.exec(`CREATE TABLE IF NOT EXISTS med_slips (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  slip_no TEXT NOT NULL,
+  employee_id INTEGER REFERENCES med_employees(id),
+  emp_name TEXT NOT NULL,
+  department TEXT NOT NULL DEFAULT '',
+  date TEXT NOT NULL,
+  notes TEXT DEFAULT '',
+  has_print INTEGER NOT NULL DEFAULT 1,
+  printed INTEGER NOT NULL DEFAULT 0,
+  status TEXT NOT NULL DEFAULT 'pending',
+  amount REAL,
+  return_detail TEXT DEFAULT '',
+  returned_date TEXT,
+  created_by INTEGER,
+  created_at TEXT DEFAULT (datetime('now'))
+)`);
 // --- Daily system: fully separate catalog (mukamal alag data) — one-time copy ---
 // Same IDs so existing daily_orders/access rows stay valid; after this, independent.
 if (!db.prepare(`SELECT value FROM daily_settings WHERE key='catalog_split'`).get()) {
@@ -536,11 +566,11 @@ for (const [k, v] of Object.entries(printDefaults)) {
   db.prepare(`INSERT OR IGNORE INTO daily_settings (key, value) VALUES (?, ?)`).run(k, v);
 }
 
-const SECTIONS = ['dashboard','orders','order_history','shops','products','categories','units','vehicles','routes','schedule','reports','users','daily','tray_basket','rate_lists'];
+const SECTIONS = ['dashboard','orders','order_history','shops','products','categories','units','vehicles','routes','schedule','reports','users','daily','tray_basket','rate_lists','medicine'];
 
 const DEFAULT_PERMS = {
-  factory: { dashboard:'full', orders:'full', order_history:'full', shops:'view', products:'view', categories:'view', units:'view', vehicles:'view', routes:'view', schedule:'full', reports:'full', users:'none', daily:'full', tray_basket:'view' },
-  shop:    { dashboard:'view', orders:'full', order_history:'view', shops:'none', products:'none', categories:'none', units:'none', vehicles:'none', routes:'none', schedule:'view', reports:'none', users:'none', daily:'full', tray_basket:'none' },
+  factory: { dashboard:'full', orders:'full', order_history:'full', shops:'view', products:'view', categories:'view', units:'view', vehicles:'view', routes:'view', schedule:'full', reports:'full', users:'none', daily:'full', tray_basket:'view', medicine:'full' },
+  shop:    { dashboard:'view', orders:'full', order_history:'view', shops:'none', products:'none', categories:'none', units:'none', vehicles:'none', routes:'none', schedule:'view', reports:'none', users:'none', daily:'full', tray_basket:'none', medicine:'none' },
 };
 
 function seedPermissions(userId, role) {
@@ -562,6 +592,10 @@ function getPermissions(userId) {
   if (!rows.some(r => r.section === 'tray_basket')) {
     const role = (db.prepare('SELECT role FROM users WHERE id=?').get(userId) || {}).role;
     p.tray_basket = (DEFAULT_PERMS[role] || {}).tray_basket || 'none';
+  }
+  if (!rows.some(r => r.section === 'medicine')) {
+    const role = (db.prepare('SELECT role FROM users WHERE id=?').get(userId) || {}).role;
+    p.medicine = (DEFAULT_PERMS[role] || {}).medicine || 'none';
   }
   return p;
 }
@@ -2238,6 +2272,117 @@ app.get('/api/tray/summary', requireLogin, requireSection('tray_basket', 'view')
     shops = [arif, ...dAll];
   }
   res.json({ items, factory, shops });
+});
+
+// ---------- Medicine Parchi (دوا پرچی) — alag dashboard/entry/voucher ----------
+const karachiDateStr = () => new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Karachi' }).format(new Date());
+function medSlipNo() {
+  const r = db.prepare(`SELECT slip_no FROM med_slips WHERE slip_no LIKE 'MP-%' ORDER BY id DESC LIMIT 1`).get();
+  let n = 1;
+  if (r) { const m = /MP-(\d+)/.exec(r.slip_no); if (m) n = parseInt(m[1], 10) + 1; }
+  return 'MP-' + String(n).padStart(4, '0');
+}
+app.get('/api/med/departments', requireLogin, requireSection('medicine', 'view'), (req, res) => {
+  res.json(db.prepare('SELECT * FROM med_departments ORDER BY name').all());
+});
+app.post('/api/med/departments', requireLogin, requireSection('medicine', 'full'), (req, res) => {
+  const name = ((req.body || {}).name || '').trim();
+  if (!name) return res.status(400).json({ error: 'name required' });
+  db.prepare('INSERT OR IGNORE INTO med_departments (name) VALUES (?)').run(name);
+  res.json({ ok: true });
+});
+app.delete('/api/med/departments/:id', requireLogin, (req, res, next) => { if (req.user.role !== 'super_admin') return res.status(403).json({ error: 'super only' }); next(); }, (req, res) => {
+  db.prepare('DELETE FROM med_departments WHERE id=?').run(req.params.id);
+  res.json({ ok: true });
+});
+app.get('/api/med/employees', requireLogin, requireSection('medicine', 'view'), (req, res) => {
+  res.json(db.prepare('SELECT * FROM med_employees WHERE active=1 ORDER BY name').all());
+});
+app.post('/api/med/employees', requireLogin, requireSection('medicine', 'full'), (req, res) => {
+  const b = req.body || {};
+  const name = (b.name || '').trim(); const dept = (b.department || '').trim();
+  if (!name) return res.status(400).json({ error: 'name required' });
+  if (dept) db.prepare('INSERT OR IGNORE INTO med_departments (name) VALUES (?)').run(dept);
+  let e = db.prepare('SELECT * FROM med_employees WHERE name=? AND department=?').get(name, dept);
+  if (!e) { const r = db.prepare('INSERT INTO med_employees (name, department) VALUES (?,?)').run(name, dept); e = db.prepare('SELECT * FROM med_employees WHERE id=?').get(r.lastInsertRowid); }
+  res.json(e);
+});
+app.get('/api/med/stats', requireLogin, requireSection('medicine', 'view'), (req, res) => {
+  const month = karachiDateStr().slice(0, 7);
+  const m = db.prepare(`SELECT COUNT(*) c, COALESCE(SUM(CASE WHEN status='done' THEN amount ELSE 0 END),0) amt FROM med_slips WHERE substr(date,1,7)=?`).get(month);
+  const pend = db.prepare(`SELECT COUNT(*) c FROM med_slips WHERE status='pending'`).get();
+  const unpr = db.prepare(`SELECT COUNT(*) c FROM med_slips WHERE has_print=1 AND printed=0`).get();
+  res.json({ month, month_slips: m.c, month_amount: m.amt, pending: pend.c, unprinted: unpr.c });
+});
+app.get('/api/med/slips', requireLogin, requireSection('medicine', 'view'), (req, res) => {
+  const q = req.query || {};
+  let sql = 'SELECT * FROM med_slips WHERE 1=1'; const args = [];
+  if (q.status) { sql += ' AND status=?'; args.push(q.status); }
+  if (q.employee_id) { sql += ' AND employee_id=?'; args.push(parseInt(q.employee_id, 10)); }
+  if (q.month) { sql += ' AND substr(date,1,7)=?'; args.push(q.month); }
+  if (q.unprinted === '1') { sql += ' AND has_print=1 AND printed=0'; }
+  sql += ' ORDER BY id DESC LIMIT 500';
+  res.json(db.prepare(sql).all(...args));
+});
+app.post('/api/med/slips', requireLogin, requireSection('medicine', 'full'), (req, res) => {
+  const b = req.body || {};
+  const empName = (b.employee_name || '').trim();
+  const dept = (b.department || '').trim();
+  if (!empName) return res.status(400).json({ error: 'employee required' });
+  const date = /^\d{4}-\d{2}-\d{2}$/.test(b.date || '') ? b.date : karachiDateStr();
+  if (dept) db.prepare('INSERT OR IGNORE INTO med_departments (name) VALUES (?)').run(dept);
+  let e = db.prepare('SELECT * FROM med_employees WHERE name=? AND department=? AND active=1').get(empName, dept);
+  if (!e) { const r = db.prepare('INSERT INTO med_employees (name, department) VALUES (?,?)').run(empName, dept); e = { id: r.lastInsertRowid }; }
+  const no = medSlipNo();
+  const hasPrint = b.has_print === 0 ? 0 : 1;
+  const r = db.prepare(`INSERT INTO med_slips (slip_no, employee_id, emp_name, department, date, notes, has_print, printed, created_by)
+    VALUES (?,?,?,?,?,?,?,?,?)`).run(no, e.id, empName, dept, date, (b.notes || '').trim(), hasPrint, hasPrint ? 0 : 1, req.user.id);
+  res.json({ ok: true, id: r.lastInsertRowid, slip_no: no });
+});
+app.put('/api/med/slips/:id/return', requireLogin, requireSection('medicine', 'full'), (req, res) => {
+  const b = req.body || {};
+  const amt = parseFloat(b.amount);
+  if (isNaN(amt) || amt < 0) return res.status(400).json({ error: 'amount required' });
+  const rd = /^\d{4}-\d{2}-\d{2}$/.test(b.returned_date || '') ? b.returned_date : karachiDateStr();
+  db.prepare(`UPDATE med_slips SET status='done', amount=?, return_detail=?, returned_date=? WHERE id=?`)
+    .run(amt, (b.return_detail || '').trim(), rd, req.params.id);
+  res.json({ ok: true });
+});
+app.put('/api/med/slips/:id/reopen', requireLogin, requireSection('medicine', 'full'), (req, res) => {
+  db.prepare(`UPDATE med_slips SET status='pending', amount=NULL, return_detail='', returned_date=NULL WHERE id=?`).run(req.params.id);
+  res.json({ ok: true });
+});
+app.put('/api/med/slips/:id', requireLogin, requireSection('medicine', 'full'), (req, res) => {
+  const b = req.body || {};
+  const s = db.prepare('SELECT * FROM med_slips WHERE id=?').get(req.params.id);
+  if (!s) return res.status(404).json({ error: 'not found' });
+  const date = /^\d{4}-\d{2}-\d{2}$/.test(b.date || '') ? b.date : s.date;
+  db.prepare('UPDATE med_slips SET emp_name=?, department=?, date=?, notes=? WHERE id=?')
+    .run((b.emp_name !== undefined ? b.emp_name : s.emp_name).trim(), (b.department !== undefined ? b.department : s.department).trim(), date, (b.notes !== undefined ? b.notes : s.notes).trim(), req.params.id);
+  res.json({ ok: true });
+});
+app.delete('/api/med/slips/:id', requireLogin, requireSection('medicine', 'full'), (req, res) => {
+  db.prepare('DELETE FROM med_slips WHERE id=?').run(req.params.id);
+  res.json({ ok: true });
+});
+app.post('/api/med/slips/printed', requireLogin, requireSection('medicine', 'full'), (req, res) => {
+  const ids = ((req.body || {}).ids || []).map(x => parseInt(x, 10)).filter(Boolean);
+  if (!ids.length) return res.status(400).json({ error: 'no ids' });
+  const up = db.prepare('UPDATE med_slips SET printed=1 WHERE id=?');
+  const tx = db.transaction(() => { for (const id of ids) up.run(id); });
+  tx();
+  res.json({ ok: true, count: ids.length });
+});
+app.get('/api/med/report', requireLogin, requireSection('medicine', 'view'), (req, res) => {
+  const month = /^\d{4}-\d{2}$/.test(req.query.month || '') ? req.query.month : karachiDateStr().slice(0, 7);
+  const rows = db.prepare(`SELECT employee_id, emp_name, department,
+      COUNT(*) AS slips,
+      SUM(CASE WHEN status='done' THEN 1 ELSE 0 END) AS done,
+      SUM(CASE WHEN status='pending' THEN 1 ELSE 0 END) AS pending,
+      COALESCE(SUM(CASE WHEN status='done' THEN amount ELSE 0 END), 0) AS total_amount
+    FROM med_slips WHERE substr(date,1,7)=? GROUP BY employee_id, emp_name, department ORDER BY total_amount DESC`).all(month);
+  const totals = rows.reduce((a, r) => ({ slips: a.slips + r.slips, done: a.done + (r.done || 0), pending: a.pending + (r.pending || 0), total_amount: a.total_amount + r.total_amount }), { slips: 0, done: 0, pending: 0, total_amount: 0 });
+  res.json({ month, rows, totals });
 });
 
 // ---------- Rate Lists (multiple price lists) ----------
