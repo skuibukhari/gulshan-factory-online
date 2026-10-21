@@ -3913,7 +3913,7 @@ async function medLoadMasters() {
   MED_DOCTORS = await api('GET', '/api/med/doctors');
 }
 function renderMedicine() {
-  const v = $('#view'); if (!v) return;
+  const v = $('#v-medicine'); if (!v) return;
   if (!MED_MONTH) MED_MONTH = karachiToday().slice(0, 7);
   const allowed = medPagesAllowed();
   if (!allowed.includes(MED_PAGE)) MED_PAGE = 'home';
