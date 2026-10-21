@@ -1992,6 +1992,35 @@ app.post('/api/tray/vouchers', requireLogin, requireSection('tray_basket', 'full
       return res.status(500).json({ error: 'db_error', detail: 'table_' + shopTbl + '_missing', msg: e.message });
     }
   }
+  // Grouped save: items array aaye to SAB items AIK hi voucher_no par (atomic)
+  if (Array.isArray(b.items) && b.items.length) {
+    const rowsIn = b.items.map(x => ({
+      item_id: parseInt(x.item_id, 10) || 0,
+      sent: Math.max(0, parseInt(x.sent, 10) || 0),
+      returned: Math.max(0, parseInt(x.returned, 10) || 0),
+    })).filter(x => x.item_id && (x.sent || x.returned));
+    if (!rowsIn.length) return res.status(400).json({ error: 'empty_voucher' });
+    for (const x of rowsIn) {
+      if (!db.prepare('SELECT id FROM tray_items WHERE id=? AND active=1').get(x.item_id))
+        return res.status(400).json({ error: 'bad_item', detail: 'item_not_found_or_inactive id=' + x.item_id });
+    }
+    const gno = trayVoucherNo();
+    try {
+      const ins = db.prepare(`INSERT INTO tray_vouchers (voucher_no, date, shop_id, shop_type, vehicle_id, item_id, sent, returned, notes, created_by)
+        VALUES (?,?,?,?,?,?,?,?,?,?)`);
+      const ids = [];
+      const tx = db.transaction(() => {
+        for (const x of rowsIn) {
+          const r = ins.run(gno, date, shopId, shopType, vehicleId, x.item_id, x.sent, x.returned, (b.notes || '').trim(), req.user.id);
+          ids.push(r.lastInsertRowid);
+        }
+      });
+      tx();
+      return res.json({ ok: true, voucher_no: gno, ids });
+    } catch (e) {
+      return res.status(500).json({ error: 'insert_failed', detail: e.message });
+    }
+  }
   if (!itemId || !db.prepare('SELECT id FROM tray_items WHERE id=? AND active=1').get(itemId))
     return res.status(400).json({ error: 'bad_item', detail: 'item_not_found_or_inactive id=' + itemId });
   if (!sent && !returned) return res.status(400).json({ error: 'empty_voucher' });
@@ -2023,6 +2052,34 @@ app.get('/api/tray/vouchers', requireLogin, requireSection('tray_basket', 'view'
     ${where} ORDER BY v.date DESC, v.id DESC LIMIT 500`).all(...args);
   rows.forEach(r => { r.shop_name = trayShopName(r.shop_type, r.shop_id); });
   res.json(rows);
+});
+app.put('/api/tray/vouchers/group/:vno', requireLogin, requireSection('tray_basket', 'full'), (req, res) => {
+  const b = req.body || {};
+  const vno = req.params.vno;
+  const existing = db.prepare('SELECT * FROM tray_vouchers WHERE voucher_no=?').all(vno);
+  if (!existing.length) return res.status(404).json({ error: 'not_found' });
+  const rowsIn = (Array.isArray(b.items) ? b.items : []).map(x => ({
+    item_id: parseInt(x.item_id, 10) || 0,
+    sent: Math.max(0, parseInt(x.sent, 10) || 0),
+    returned: Math.max(0, parseInt(x.returned, 10) || 0),
+  })).filter(x => x.item_id && (x.sent || x.returned));
+  if (!rowsIn.length) return res.status(400).json({ error: 'empty_voucher' });
+  const date = /^\d{4}-\d{2}-\d{2}$/.test(b.date || '') ? b.date : existing[0].date;
+  const shopId = b.shop_id !== undefined ? (parseInt(b.shop_id, 10) || 0) : existing[0].shop_id;
+  const shopType = b.shop_type === 'daily' ? 'daily' : (b.shop_type === 'shop' ? 'shop' : existing[0].shop_type);
+  const vehicleId = b.vehicle_id ? parseInt(b.vehicle_id, 10) : null;
+  const ins = db.prepare(`INSERT INTO tray_vouchers (voucher_no, date, shop_id, shop_type, vehicle_id, item_id, sent, returned, notes, created_by)
+    VALUES (?,?,?,?,?,?,?,?,?,?)`);
+  const tx = db.transaction(() => {
+    db.prepare('DELETE FROM tray_vouchers WHERE voucher_no=?').run(vno);
+    for (const x of rowsIn) ins.run(vno, date, shopId, shopType, vehicleId, x.item_id, x.sent, x.returned, (b.notes || '').trim(), req.user.id);
+  });
+  tx();
+  res.json({ ok: true, voucher_no: vno });
+});
+app.delete('/api/tray/vouchers/group/:vno', requireLogin, requireSection('tray_basket', 'full'), (req, res) => {
+  const r = db.prepare('DELETE FROM tray_vouchers WHERE voucher_no=?').run(req.params.vno);
+  res.json({ ok: true, deleted: r.changes });
 });
 app.put('/api/tray/vouchers/:id', requireLogin, requireSection('tray_basket', 'full'), (req, res) => {
   const b = req.body || {};

@@ -1640,15 +1640,22 @@ async function loadTrayVoucherList() {
   let url = '/api/tray/vouchers?shop_id=' + sh.shop_id + '&shop_type=' + sh.shop_type + '&_t=' + Date.now();
   let rows = [];
   try { rows = await api('GET', url); } catch (e) {}
-  rows = rows.slice(0, 20);
   window._trayVoucherRows = rows;
+  // Group by voucher_no — aik voucher = aik row (saare items saath)
+  const _groups = [], _seen = {};
+  for (const r of rows) {
+    if (!_seen[r.voucher_no]) { _seen[r.voucher_no] = { first: r, items: [] }; _groups.push(_seen[r.voucher_no]); }
+    _seen[r.voucher_no].items.push(r);
+  }
+  const groups = _groups.slice(0, 20);
   const shopName = ($('#tvShop') && $('#tvShop').selectedOptions[0]) ? $('#tvShop').selectedOptions[0].text : '';
-  box.innerHTML = `<h4 style="margin:8px 0">📝 ${esc(shopName)} — پچھلی انٹریز (${rows.length})</h4>
+  box.innerHTML = `<h4 style="margin:8px 0">📝 ${esc(shopName)} — پچھلی انٹریز (${groups.length})</h4>
     <div style="overflow-x:auto"><table class="tbl"><tr><th>تاریخ</th><th>واؤچر</th><th>دکان</th><th>آئٹم</th><th>تعداد</th><th>عمل</th></tr>` +
-    (rows.map(r => {
-      const qty = r.sent || r.returned;
-      const type = r.sent ? '📤' : '📥';
-      return `<tr><td>${r.date}</td><td>${r.voucher_no}</td><td>${esc(r.shop_name)}</td><td>${r.item_icon} ${r.item_ur}</td><td><b>${type} ${qty}</b></td>
+    (groups.map(g => {
+      const r = g.first;
+      const itemsTxt = g.items.map(x => `${x.item_icon} ${x.item_ur}`).join('<br>');
+      const qtyTxt = g.items.map(x => `<b>${x.sent ? '📤' : '📥'} ${x.sent || x.returned}</b>`).join('<br>');
+      return `<tr><td>${r.date}</td><td>${r.voucher_no}</td><td>${esc(r.shop_name)}</td><td>${itemsTxt}</td><td>${qtyTxt}</td>
       <td style="white-space:nowrap">
         <button class="btn small" onclick="editTrayVoucher(${r.id})">✏️</button>
         <button class="btn small" style="background:#c62828;color:#fff" onclick="delTrayVoucher(${r.id})">🗑️</button>
@@ -1667,13 +1674,16 @@ async function editTrayVoucher(id) {
   // Fill form after render
   const dEl = $('#tvDate');
   if (dEl) dEl.value = v.date || '';
+  const _grpRows = rows.filter(r => r.voucher_no === v.voucher_no);
   TRAY.items.forEach(it => {
     const qEl = $('#tvQ_' + it.id);
-    if (qEl) qEl.value = (it.id === v.item_id) ? (v.sent || v.returned || 0) : 0;
+    if (!qEl) return;
+    const gr = _grpRows.find(r => r.item_id === it.id);
+    qEl.value = gr ? (gr.sent || gr.returned || 0) : 0;
   });
   const nEl = $('#tvNote');
   if (nEl) nEl.value = v.notes || '';
-  window._editingVoucher = id;
+  window._editingVoucher = v.voucher_no;
   const mEl = $('#tvMsg');
   if (mEl) mEl.innerHTML = `<div class="note">✏️ واؤچر <b>${v.voucher_no}</b> ایڈٹ ہو رہا ہے — محفوظ دبائیں</div>
     <button class="btn small" onclick="cancelTrayEdit()">❌ منسوخ</button>`;
@@ -1686,9 +1696,13 @@ function cancelTrayEdit() {
   $('#tvMsg').innerHTML = '';
 }
 async function delTrayVoucher(id) {
-  if (!confirm('Voucher delete karna hai?')) return;
+  const rows = window._trayVoucherRows || [];
+  const v = rows.find(r => r.id === id);
+  const vno = v ? v.voucher_no : null;
+  if (!vno) { alert('واؤچر نہیں ملا'); return; }
+  if (!confirm('واؤچر ' + vno + ' (saare items) delete karna hai?')) return;
   try {
-    await api('DELETE', '/api/tray/vouchers/' + id);
+    await api('DELETE', '/api/tray/vouchers/group/' + encodeURIComponent(vno));
     loadTrayVoucherList();
   } catch (e) { alert('Error: ' + (e.message || '')); }
 }
@@ -1721,15 +1735,14 @@ async function _saveTrayVoucherInner(kind) {
     return { id: it.id, qty: el ? (Number(el.value) || 0) : 0 };
   }).filter(x => x.qty > 0);
   if (!qtys.length) { $('#tvMsg').innerHTML = `<div class="err">❌ کوئی تعداد نہیں لکھی</div>`; return; }
-  // Edit mode: update single voucher
+  // Edit mode: poora voucher (saare items) aik saath update
   if (window._editingVoucher) {
-    const q = qtys[0];
-    if (!q) { $('#tvMsg').innerHTML = `<div class="err">❌ تعداد لکھیں</div>`; return; }
     try {
-      await api('PUT', '/api/tray/vouchers/' + window._editingVoucher, {
+      await api('PUT', '/api/tray/vouchers/group/' + encodeURIComponent(window._editingVoucher), {
         date: $('#tvDate').value, shop_id: sh.shop_id, shop_type: sh.shop_type,
         vehicle_id: ($('#tvVeh') && $('#tvVeh').value) ? Number($('#tvVeh').value) : null,
-        item_id: q.id, sent: isSent ? q.qty : 0, returned: isSent ? 0 : q.qty, notes: $('#tvNote').value,
+        notes: $('#tvNote').value,
+        items: qtys.map(q => ({ item_id: q.id, sent: isSent ? q.qty : 0, returned: isSent ? 0 : q.qty })),
       });
       $('#tvMsg').innerHTML = `<div class="note">✅ واؤچر اپڈیٹ ہو گیا!</div>`;
       window._editingVoucher = null;
@@ -1740,32 +1753,26 @@ async function _saveTrayVoucherInner(kind) {
     return;
   }
   $('#tvMsg').innerHTML = '<p>محفوظ ہو رہا ہے...</p>';
-  let ok = 0, vnos = [];
-  let lastErr = '';
-  for (const q of qtys) {
-    try {
-      const r = await api('POST', '/api/tray/vouchers', {
-        date: $('#tvDate').value, shop_id: sh.shop_id, shop_type: sh.shop_type,
-        vehicle_id: ($('#tvVeh') && $('#tvVeh').value) ? Number($('#tvVeh').value) : null,
-        item_id: q.id, sent: isSent ? q.qty : 0, returned: isSent ? 0 : q.qty, notes: $('#tvNote').value,
-      });
-      ok++; vnos.push(r.voucher_no);
-    } catch (e) { lastErr = (e.detail ? e.detail + ' | ' : '') + (e.message || ''); }
-  }
-  if (!ok && lastErr) {
-    $('#tvMsg').innerHTML = `<div class="err">❌ Save nahi hua: ${lastErr}</div>`;
+  let vnos = [];
+  try {
+    // AIK hi request — saare items AIK voucher me save
+    const r = await api('POST', '/api/tray/vouchers', {
+      date: $('#tvDate').value, shop_id: sh.shop_id, shop_type: sh.shop_type,
+      vehicle_id: ($('#tvVeh') && $('#tvVeh').value) ? Number($('#tvVeh').value) : null,
+      notes: $('#tvNote').value,
+      items: qtys.map(q => ({ item_id: q.id, sent: isSent ? q.qty : 0, returned: isSent ? 0 : q.qty })),
+    });
+    vnos = [r.voucher_no];
+  } catch (e) {
+    $('#tvMsg').innerHTML = `<div class="err">❌ Save nahi hua: ${(e.detail ? e.detail + ' | ' : '') + (e.message || '')}</div>`;
     return;
   }
-  const _failedCount = qtys.length - ok;
-  $('#tvMsg').innerHTML = `<div class="note">✅ ${ok} واؤچر محفوظ! <b>${vnos.join(', ')}</b></div>
+  $('#tvMsg').innerHTML = `<div class="note">✅ واؤچر محفوظ! <b>${vnos.join(', ')}</b> (${qtys.length} آئٹمز)</div>
     <div style="margin-top:8px"><button class="btn small dark" onclick="printLastTrayVouchers('${kind}')">🖨 پرنٹ کریں</button></div>`;
-  showTrayToast(`✅ ${ok} واؤچر محفوظ!`, vnos.join(', '));
+  showTrayToast('✅ واؤچر محفوظ!', vnos.join(', '));
   TRAY.items.forEach(it => { const _e = $('#tvQ_' + it.id); if (!_e) return; window['_tvPQ_' + it.id] = Number(_e.value) || 0; _e.value = 0; const _c = _e.closest('.tv-item'); if (_c) _c.style.borderColor = '#e0e0e0'; });
   $('#tvNote').value = '';
   window._lastTrayVouchers = vnos;
-  if (_failedCount > 0) {
-    $('#tvMsg').innerHTML += `<div class="err" style="margin-top:6px">⚠️ ${_failedCount} آئٹم save NAHI hua — dobara likh kar save karain! (${lastErr})</div>`;
-  }
   // Sync shop before reloading list
   if ($('#tvShop')) window._trayShop = $('#tvShop').value;
   // Small delay to ensure server has committed, then reload
