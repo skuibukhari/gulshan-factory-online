@@ -2340,6 +2340,26 @@ app.post('/api/med/employees/merge', requireLogin, requireSection('medicine', 'f
   tx();
   res.json({ ok: true, merged_into: to.name });
 });
+app.put('/api/med/employees/:id', requireLogin, requireSection('medicine', 'full'), (req, res) => {
+  const b = req.body || {};
+  const e = db.prepare('SELECT * FROM med_employees WHERE id=?').get(req.params.id);
+  if (!e) return res.status(404).json({ error: 'not found' });
+  const name = (b.name !== undefined ? b.name : e.name).trim();
+  const dept = (b.department !== undefined ? b.department : e.department || '').trim();
+  if (!name) return res.status(400).json({ error: 'name required' });
+  if (dept) db.prepare('INSERT OR IGNORE INTO med_departments (name) VALUES (?)').run(dept);
+  db.prepare('UPDATE med_employees SET name=?, department=? WHERE id=?').run(name, dept, e.id);
+  db.prepare('UPDATE med_slips SET emp_name=?, department=? WHERE employee_id=?').run(name, dept, e.id);
+  res.json({ ok: true });
+});
+app.delete('/api/med/employees/:id', requireLogin, requireSection('medicine', 'full'), (req, res) => {
+  const e = db.prepare('SELECT * FROM med_employees WHERE id=?').get(req.params.id);
+  if (!e) return res.status(404).json({ error: 'not found' });
+  const c = db.prepare('SELECT COUNT(*) c FROM med_slips WHERE employee_id=?').get(e.id).c;
+  if (c > 0) { db.prepare('UPDATE med_employees SET active=0 WHERE id=?').run(e.id); return res.json({ ok: true, mode: 'hidden', slips: c }); }
+  db.prepare('DELETE FROM med_employees WHERE id=?').run(e.id);
+  res.json({ ok: true, mode: 'deleted' });
+});
 app.get('/api/med/stats', requireLogin, requireSection('medicine', 'view'), (req, res) => {
   const month = karachiDateStr().slice(0, 7);
   const m = db.prepare(`SELECT COUNT(*) c, COALESCE(SUM(CASE WHEN status='done' THEN amount ELSE 0 END),0) amt FROM med_slips WHERE substr(date,1,7)=?`).get(month);

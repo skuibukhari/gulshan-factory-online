@@ -4071,6 +4071,7 @@ async function medPageReturn() {
         <input id="ret-det-${r.id}" placeholder="ڈاکٹر کی لکھی تفصیل (دوا وغیرہ)">
         <button class="btn green" onclick="medReturnSave(${r.id})">✅ محفوظ — صاف کریں</button>
       </div>
+      <div class="med-slip-actions"><button class="btn small" onclick="medEditSlip(${r.id})">✏️ ترمیم</button><button class="btn small red" onclick="medDelSlip(${r.id})">🗑 حذف</button></div>
     </div>`).join('') : '<div class="med-card"><div class="med-note" style="text-align:center">✅ کوئی پرچی واپسی باقی نہیں</div></div>');
 }
 async function medReturnSave(id) {
@@ -4254,7 +4255,8 @@ async function medLoadEmpList() {
   box.innerHTML = MED_EMPS.length ? MED_EMPS.map(e => { const s = sums[e.id] || { slips: 0, done: 0, pending: 0, amount: 0 }; return `<div class="med-emp-row" onclick="medEmpHistory(${e.id})">
       <div class="med-emp-main"><b>${esc(e.name)}</b>${e.department ? ` <span class="med-emp-dept">${esc(e.department)}</span>` : ''}</div>
       <div class="med-emp-sub">پرچیاں: ${s.slips} · مکمل: ${s.done} · <span style="color:${s.pending ? '#c62828' : '#555'}">باقی: ${s.pending}</span> · کل رقم: <b>${medMoney(s.amount)}</b></div>
-      <span class="med-tile-ar">➜</span></div>`; }).join('') + '<div class="med-note">کسی ملازم پر کلک کریں — اس کی مکمل ہسٹری کھل جائے گی</div>'
+      <span onclick="event.stopPropagation()"><button class="btn small" onclick="medEmpEdit(${e.id})">✏️</button> <button class="btn small red" onclick="medEmpDelete(${e.id})">🗑</button></span>
+      <span class="med-tile-ar">➜</span></div>`; }).join('') + '<div class="med-note">کسی ملازم پر کلک کریں — اس کی مکمل ہسٹری کھل جائے گی · ✏️ سے نام/شعبہ بدلیں، 🗑 سے ملازم ختم کریں</div>'
     : '<div class="med-note">ابھی کوئی ملازم نہیں</div>';
 }
 async function medEmpHistory(empId) {
@@ -4388,6 +4390,22 @@ async function medEditSlip(id) {
   showTrayToast('ترمیم ہو گئی', '');
   renderMedicine();
 }
+async function medEmpEdit(id) {
+  const e = MED_EMPS.find(x => x.id === id); if (!e) return;
+  const name = prompt('ملازم کا نام:', e.name); if (name === null) return;
+  if (!name.trim()) { alert('نام خالی نہیں ہو سکتا'); return; }
+  const dept = prompt('شعبہ:', e.department || ''); if (dept === null) return;
+  const r = await api('PUT', '/api/med/employees/' + id, { name: name.trim(), department: dept.trim() });
+  if (r && r.ok) { showTrayToast('ترمیم ہو گئی ✅', 'اس ملازم کی ساری پرچیوں پر نیا نام/شعبہ لگ گیا'); renderMedicine(); }
+  else showTrayToast('خرابی', (r && r.error) || 'نہیں ہوا');
+}
+async function medEmpDelete(id) {
+  const e = MED_EMPS.find(x => x.id === id); if (!e) return;
+  if (!confirm('ملازم "' + e.name + '" ختم کر دیں؟\n(اگر اس کی پرچیاں موجود ہوئیں تو وہ ویسے ہی رہیں گی — صرف نام فہرست سے چھپ جائے گا)')) return;
+  const r = await api('DELETE', '/api/med/employees/' + id);
+  if (r && r.ok) { showTrayToast('ہو گیا', r.mode === 'hidden' ? 'نام فہرست سے چھپ گیا — پرچیاں محفوظ ہیں' : 'ملازم حذف ہو گیا'); if (MED_EMPVIEW === id) MED_EMPVIEW = null; renderMedicine(); }
+  else showTrayToast('خرابی', (r && r.error) || 'نہیں ہوا');
+}
 // ----- Settings -----
 function medPageSettings() {
   const v = $('#medBody'); if (!v) return;
@@ -4416,7 +4434,7 @@ function medPageSettings() {
   </div>
   <div class="med-card">
     <h3>👥 ملازمین</h3>
-    <div>${MED_EMPS.length ? MED_EMPS.map(e => `<div class="med-set-row"><span><b>${esc(e.name)}</b>${e.department ? ' — ' + esc(e.department) : ''}</span></div>`).join('') : '<div class="med-note">ابھی کوئی ملازم نہیں</div>'}</div>
+    <div>${MED_EMPS.length ? MED_EMPS.map(e => `<div class="med-set-row"><span><b>${esc(e.name)}</b>${e.department ? ' — ' + esc(e.department) : ''}</span><span><button class="btn small" onclick="medEmpEdit(${e.id})">✏️ ترمیم</button> <button class="btn small red" onclick="medEmpDelete(${e.id})">🗑 حذف</button></span></div>`).join('') : '<div class="med-note">ابھی کوئی ملازم نہیں</div>'}</div>
     <label>نیا ملازم — نام<br><input id="medEmpAddName" placeholder="ملازم کا نام"></label>
     <label>شعبہ<br><select id="medEmpAddDept"><option value="">— شعبہ منتخب کریں —</option>${MED_DEPTS.map(d => `<option value="${esc(d.name)}">${esc(d.name)}</option>`).join('')}</select></label>
     <div class="med-btnrow"><button class="btn green" onclick="medAddEmp()">➕ ملازم شامل کریں</button></div>
