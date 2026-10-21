@@ -3943,6 +3943,8 @@ function renderMedicine() {
 }
 function medGo(p) { MED_PAGE = p; const m = $('#medDD'); if (m) m.classList.remove('open'); renderMedicine(); window.scrollTo(0, 0); }
 function medDeptGo(name) { MED_DEPT = name; MED_PAGE = 'dept'; renderMedicine(); window.scrollTo(0, 0); }
+let MED_PF_DEPT = '';
+function medDeptVoucher(name) { MED_PF_DEPT = name; MED_PAGE = 'printform'; renderMedicine(); window.scrollTo(0, 0); }
 function medTypeChip(r) { return r.has_print ? '<span class="med-chip p">🖨 پرنٹ پرچی</span>' : '<span class="med-chip m">🎫 دستی</span>'; }
 function medSlipCard(r, showReturnBtn) {
   const pend = r.status === 'pending';
@@ -3976,7 +3978,7 @@ async function medPageHome() {
     const emps = MED_EMPS.filter(e => e.department === dn).length;
     const dp = pend.filter(r => r.department === dn).length;
     const amt = mslips.filter(r => r.department === dn && r.status === 'done').reduce((a, r) => a + (+r.amount || 0), 0);
-    return `<div class="shop-box ${grads[i % 9]}" onclick="medDeptGo('${esc(dn)}')">
+    return `<div class="shop-box ${grads[i % 9]}" onclick="medDeptVoucher('${esc(dn)}')">
       <div class="sname">${esc(dn)}</div>
       <div class="sitems"><span class="si">👥 ${emps} ملازم</span><span class="si">⏳ ${dp} باقی</span></div>
       <div class="stotal">${medMoney(amt)}</div>
@@ -4017,13 +4019,14 @@ function medEmpListFor(dept) {
 }
 function medPagePrintForm() {
   const v = $('#medBody'); if (!v) return;
-  const deptOpts = MED_DEPTS.map(d => `<option value="${esc(d.name)}">${esc(d.name)}</option>`).join('');
+  const deptOpts = MED_DEPTS.map(d => `<option value="${esc(d.name)}" ${MED_PF_DEPT === d.name ? 'selected' : ''}>${esc(d.name)}</option>`).join('');
   v.innerHTML = `
   <div class="med-card">
     <h3>🖨 پرچی پرنٹ کریں</h3>
+    ${MED_PF_DEPT ? `<div class="med-btnrow" style="margin:0 0 8px"><button class="btn small" onclick="medDeptGo(document.getElementById('medPfDept').value || '${esc(MED_PF_DEPT)}')">📋 اس شعبے کے پرانے واؤچر دیکھیں</button></div>` : ''}
     <label>شعبہ<br><select id="medPfDept" onchange="document.getElementById('medPfNames').innerHTML = medEmpListFor(this.value)"><option value="">— شعبہ منتخب کریں —</option>${deptOpts}</select></label>
     <label>ملازم کا نام (لکھتے جائیں — پرانے نام خود آ جائیں گے)<br>
-      <input id="medPfName" list="medPfNames" placeholder="نام لکھیں" autocomplete="off"><datalist id="medPfNames">${medEmpListFor('')}</datalist></label>
+      <input id="medPfName" list="medPfNames" placeholder="نام لکھیں" autocomplete="off"><datalist id="medPfNames">${medEmpListFor(MED_PF_DEPT || '')}</datalist></label>
     <label>ڈاکٹر / ریفرنس (کس ڈاکٹر کے پاس جا رہا ہے — ٹیلی اسی سے ہوگی)<br>
       <select id="medPfDoc" onchange="medDocChange('medPfDoc','medPfDocNew')">${medDocOptions('')}</select>
       <input id="medPfDocNew" placeholder="نئے ڈاکٹر کا نام" style="display:none;margin-top:6px"></label>
@@ -4304,6 +4307,7 @@ function medSlipHTML(r) {
       <div class="crow"><span class="chip">${label}</span><span>نمبر: <b class="no">${esc(r.slip_no)}</b></span><span>تاریخ: ${medFmtDate(r.date)}</span></div>
       <div class="fld">نام: <b>${esc(r.emp_name)}</b></div>
       <div class="fld">شعبہ: <b>${esc(r.department || '')}</b></div>
+      ${r.doctor ? `<div class="fld">Refer to: <b>${esc(r.doctor)}</b></div>` : ''}
     </div>`;
   return `<div class="slip">
     <div class="hd"><img src="/logo.png" alt=""><div class="t"><div class="n">گلشن فیکٹری — دوا پرچی</div><div class="e">GULSHAN FACTORY • DERA ISMAIL KHAN</div></div></div>
