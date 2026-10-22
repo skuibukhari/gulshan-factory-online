@@ -3904,7 +3904,7 @@ const medFull = () => (typeof can === 'function') ? can('medicine', 'full') : tr
 const medIsDoc = () => !!(typeof ME !== 'undefined' && ME && ME.med_doctor);
 const medCanAdmin = () => medFull() && !medIsDoc();
 function medPages() {
-  if (medIsDoc()) return [['home', '🏠 میرا ڈیش بورڈ'], ['list', '📒 میرے واؤچر'], ['khata', '💰 میرا کھاتہ']];
+  if (medIsDoc()) return [['home', '🏠 میرا ڈیش بورڈ'], ['dentry', '➕ نئی انٹری'], ['list', '📒 میرے واؤچر'], ['khata', '💰 میرا کھاتہ']];
   return MED_PAGES;
 }
 const medMoney = n => 'Rs ' + Number(n || 0).toLocaleString('en-US');
@@ -3925,8 +3925,8 @@ async function renderMedicine() {
   } catch (e) { v.innerHTML = '<div style="padding:22px;text-align:center;color:#b91c1c">ڈیٹا لوڈ نہیں ہوا — دوبارہ کوشش کریں</div>'; return; }
   const dd = medDefDoc();
   if (!MED_CREATE.doctor && dd) MED_CREATE.doctor = dd.id;
-  if (medIsDoc() && !['home', 'list', 'khata'].includes(MED_PAGE)) MED_PAGE = 'home';
-  const pages = { home: medPageHome, create: medPageCreate, ret: medPageRet, manual: medPageManual, list: medPageList, report: medPageReport, khata: medPageKhata, printq: medPagePrintQ, doctors: medPageDoctors, employees: medPageEmployees };
+  if (medIsDoc() && !['home', 'dentry', 'list', 'khata'].includes(MED_PAGE)) MED_PAGE = 'home';
+  const pages = { home: medPageHome, dentry: medPageDocEntry, create: medPageCreate, ret: medPageRet, manual: medPageManual, list: medPageList, report: medPageReport, khata: medPageKhata, printq: medPagePrintQ, doctors: medPageDoctors, employees: medPageEmployees };
   v.innerHTML = medShell() + '<div id="medBody"></div>';
   await (pages[MED_PAGE] || medPageHome)();
 }
@@ -3954,7 +3954,7 @@ async function medPageHome() {
     medSetBody(`
   <div class="md-bento">
     <div class="md-big" onclick="medGo('khata')"><div class="bl">💰 میرا بقایا (فیکٹری سے لینا ہے)</div><div class="bv">Rs ${Number(st.doctor_balance || 0).toLocaleString()}</div><div class="bs"><span>اس مہینے خرچ: ${Number(st.month_amount || 0).toLocaleString()}</span><span>کل ادا شدہ: ${Number(st.doctor_paid || 0).toLocaleString()}</span>${st.balance_from ? `<span>بقایا ${esc(st.balance_from)} سے</span>` : ''}</div><span class="bb">💰 میرا کھاتہ دیکھیں ‹</span></div>
-    <div class="md-act2 g1" onclick="medGo('list')"><div class="ic">📒</div><div><div class="at">میرے واؤچر</div><div class="as">میری تمام پرچیاں — مکمل اور باقی</div></div></div>
+    <div class="md-act2 g1" onclick="medGo('dentry')"><div class="ic">➕</div><div><div class="at">نئی انٹری کریں</div><div class="as">ملازم چنیں، رقم لکھیں — تصدیق کے بعد کھاتے میں شامل ہوگی</div></div>${(st.pending_verify || 0) > 0 ? `<span class="bdg">${st.pending_verify} تصدیق باقی</span>` : ''}</div>
     <div class="md-act2 g2" onclick="var e=document.getElementById('medPendCard'); if(e) e.scrollIntoView({behavior:'smooth'})"><div class="ic">↩️</div><div><div class="at">واپسی کی انٹری کریں</div><div class="as">پرچی نمبر کے سامنے رقم + تفصیل لکھیں</div></div><span class="bdg">${st.pending || 0}</span></div>
     <div class="md-small" onclick="medGo('list')"><div class="lb">📋 اس مہینے پرچیاں</div><div class="vl gt-g">${st.month_slips || 0}</div><div class="sm2">میرے واؤچر ‹</div></div>
     <div class="md-small" onclick="medGo('list')"><div class="lb">💸 اس مہینے کا خرچ</div><div class="vl gt-a">${Number(st.month_amount || 0).toLocaleString()}</div><div class="sm2">Rs · مکمل پرچیاں</div></div>
@@ -3975,10 +3975,12 @@ async function medPageHome() {
     <div class="md-small" onclick="medKpiGo('spent')"><div class="lb">💸 اس مہینے کا خرچ</div><div class="vl gt-a">${Number(st.month_amount || 0).toLocaleString()}</div><div class="sm2">Rs · مکمل پرچیاں</div></div>
     <div class="md-small" onclick="medGo('ret')"><div class="lb">⏳ واپسی باقی</div><div class="vl gt-s">${st.pending || 0}</div><div class="sm2">${pend.length ? 'سب سے پرانی: ' + oldest + ' دن' : 'سب مکمل 🎉'}</div></div>
     <div class="md-small" onclick="medGo('printq')"><div class="lb">🖨 پرنٹ باقی</div><div class="vl gt-v">${st.unprinted || 0}</div><div class="sm2">پرنٹ کی قطار کھولیں ‹</div></div>
+    ${(st.pending_verify || 0) > 0 ? `<div class="md-small" onclick="medVerifyGo()"><div class="lb">⏳ تصدیق باقی</div><div class="vl gt-a">${st.pending_verify}</div><div class="sm2">ڈاکٹر کی انٹریاں Rs ${Number(st.pending_verify_amount || 0).toLocaleString()} ‹</div></div>` : ''}
   </div>
   <div class="md-rail">${dcards}<div class="md-dcard add" onclick="medGo('employees')"><b>➕ نیا شعبہ / ملازم</b><span>شامل کریں</span></div></div>
   ${pendCard}
   <div class="md-links">
+    <button class="md-btn gold" onclick="medVerifyGo()">⏳ تصدیق باقی (${st.pending_verify || 0})</button>
     <button class="md-btn ghost" onclick="medGo('manual')">✍️ دستی انٹری</button>
     <button class="md-btn ghost" onclick="medGo('list')">📒 واؤچر لسٹ</button>
     <button class="md-btn ghost" onclick="medGo('report')">📊 رپورٹ</button>
@@ -3997,10 +3999,44 @@ async function medQuickReturn(id) {
 }
 function medKpiGo(kind) {
   const cur = karachiToday().slice(0, 7);
-  MED_LED = kind === 'month' ? { month: cur, dept: '', status: '', doctor: '', employee_id: 0 } : { month: cur, dept: '', status: 'done', doctor: '', employee_id: 0 };
+  MED_LED = kind === 'month' ? { month: cur, dept: '', status: '', doctor: '', employee_id: 0, vstate: '' } : { month: cur, dept: '', status: 'done', doctor: '', employee_id: 0, vstate: '' };
   medGo('list');
 }
-function medDeptOpen(name) { MED_LED = { month: '', dept: name, status: '', doctor: '', employee_id: 0 }; medGo('list'); }
+function medDeptOpen(name) { MED_LED = { month: '', dept: name, status: '', doctor: '', employee_id: 0, vstate: '' }; medGo('list'); }
+function medVerifyGo(doctor) { MED_LED = { month: '', dept: '', status: '', doctor: doctor || '', employee_id: 0, vstate: 'pending' }; medGo('list'); }
+async function medVerify(id, ok) {
+  if (!confirm(ok ? 'اس انٹری کی تصدیق کریں؟ رقم ڈاکٹر کے کھاتے میں شامل ہو جائے گی۔' : 'یہ انٹری رد کریں؟')) return;
+  try { await api('POST', '/api/med/slips/' + id + '/verify', { action: ok ? 'approve' : 'reject' }); showTrayToast(ok ? '✓ تصدیق ہو گئی' : 'رد کر دی گئی'); renderMedicine(); }
+  catch (e) { showTrayToast('خرابی: ' + (e.message || e)); }
+}
+
+/* ----- Doctor ki apni direct entry (tasdeeq baqi) ----- */
+async function medPageDocEntry() {
+  let mine = [];
+  try { mine = await api('GET', '/api/med/slips'); } catch (e) {}
+  const queue = (mine || []).filter(r => (r.vstate || 'ok') !== 'ok').slice(0, 8);
+  medSetBody(`<div class="md-card"><h3>➕ نئی انٹری — براہِ راست علاج</h3>
+  <div class="md-form">
+    <div class="md-fld"><label class="md-lbl">ملازم</label><select class="md-inp" id="mdeEmp"><option value="">— ملازم چنیں —</option>${MED.emps.map(e => `<option value="${e.id}">${esc(e.name)} — ${esc(e.department)}</option>`).join('')}</select></div>
+    <div class="md-fld"><label class="md-lbl">تاریخ</label><input class="md-inp" type="date" id="mdeDate" value="${karachiToday()}"></div>
+    <div class="md-fld"><label class="md-lbl">رقم (Rs)</label><input class="md-inp" id="mdeAmt" inputmode="numeric" placeholder="مثلاً 800"></div>
+    <div class="md-fld" style="flex:1;min-width:160px"><label class="md-lbl">تفصیل (دوا/علاج)</label><input class="md-inp" id="mdeDet" placeholder="مثلاً بخار کی دوا"></div>
+  </div>
+  <button class="md-btn gold" style="width:100%;margin-top:10px" onclick="medDocEntrySave()">💾 انٹری بھیجیں</button>
+  <div class="md-note">یہ انٹری پہلے <b>⏳ تصدیق باقی</b> رہے گی — فیکٹری تصدیق کرے گی تو رقم آپ کے کھاتے میں شامل ہو جائے گی۔ تصدیق ہوتے ہی آپ کو notification بھی آئے گا۔</div></div>
+  ${queue.length ? `<div class="md-card"><h3>میری بھیجی انٹریاں — حالت</h3>${queue.map(r => `<div class="md-pend"><span><b>${esc(r.slip_no)}</b> — ${esc(r.emp_name)} · ${esc(r.date)} · ${medMoney(r.amount)}</span>${r.vstate === 'pending' ? '<span class="md-tag a">⏳ تصدیق باقی</span>' : '<span class="md-tag r">❌ رد شدہ</span>'}</div>`).join('')}</div>` : ''}`);
+}
+async function medDocEntrySave() {
+  const emp = +($('#mdeEmp') || {}).value || 0;
+  const amt = parseFloat(($('#mdeAmt') || {}).value);
+  if (!emp) { showTrayToast('ملازم چنیں'); return; }
+  if (!amt || amt <= 0) { showTrayToast('رقم لکھیں'); return; }
+  try {
+    const r = await api('POST', '/api/med/doctor-entry', { employee_id: emp, amount: amt, detail: ($('#mdeDet') || {}).value || '', date: ($('#mdeDate') || {}).value || '' });
+    showTrayToast('✓ انٹری ' + r.slip_no + ' بھیج دی گئی — تصدیق باقی');
+    medGo('list');
+  } catch (e) { showTrayToast('خرابی: ' + (e.message || e)); }
+}
 
 /* ----- Parchi banana ----- */
 async function medPageCreate() {
@@ -4089,27 +4125,28 @@ async function medPageList() {
   if (MED_LED.status) q.set('status', MED_LED.status);
   if (MED_LED.doctor) q.set('doctor', MED_LED.doctor);
   if (MED_LED.employee_id) q.set('employee_id', MED_LED.employee_id);
+  if (MED_LED.vstate) q.set('vstate', MED_LED.vstate);
   let rows = [];
   try { rows = await api('GET', '/api/med/slips?' + q.toString()); } catch (e) {}
   MED._listRows = rows;
-  const totAmt = rows.filter(r => r.status === 'done').reduce((a, r) => a + (+r.amount || 0), 0);
+  const totAmt = rows.filter(r => r.status === 'done' && (r.vstate || 'ok') === 'ok').reduce((a, r) => a + (+r.amount || 0), 0);
   medSetBody(`<div class="md-card"><h3>📒 واؤچر لسٹ <button class="md-btn gold sm" style="margin-right:auto" onclick="medListPrint()">🖨 پرنٹ / PDF</button></h3>
   <div class="md-form" style="margin-bottom:10px">
     <input class="md-inp" type="month" id="mlMonth" value="${MED_LED.month || ''}" onchange="medLedSet()">
     <select class="md-inp" id="mlDept" onchange="medLedSet()"><option value="">تمام شعبے</option>${MED.depts.map(d => `<option ${d.name === MED_LED.dept ? 'selected' : ''}>${esc(d.name)}</option>`).join('')}</select>
-    <select class="md-inp" id="mlStatus" onchange="medLedSet()"><option value="">ہر حالت</option><option value="pending" ${MED_LED.status === 'pending' ? 'selected' : ''}>واپسی باقی</option><option value="done" ${MED_LED.status === 'done' ? 'selected' : ''}>مکمل</option></select>
+    <select class="md-inp" id="mlStatus" onchange="medLedSet()"><option value="">ہر حالت</option><option value="pending" ${MED_LED.status === 'pending' ? 'selected' : ''}>واپسی باقی</option><option value="done" ${MED_LED.status === 'done' ? 'selected' : ''}>مکمل</option><option value="__verify" ${MED_LED.vstate === 'pending' ? 'selected' : ''}>⏳ تصدیق باقی</option><option value="__rejected" ${MED_LED.vstate === 'rejected' ? 'selected' : ''}>❌ رد شدہ</option></select>
     ${medIsDoc() ? '' : `<select class="md-inp" id="mlDoc" onchange="medLedSet()"><option value="">تمام ڈاکٹر</option>${MED.doctors.map(d => `<option ${d.name === MED_LED.doctor ? 'selected' : ''}>${esc(d.name)}</option>`).join('')}</select>`}
-    <button class="md-btn ghost sm" onclick="MED_LED={month:'',dept:'',status:'',doctor:'',employee_id:0};medPageList()">✖ صاف</button>
+    <button class="md-btn ghost sm" onclick="MED_LED={month:'',dept:'',status:'',doctor:'',employee_id:0,vstate:''};medPageList()">✖ صاف</button>
   </div>
   <div style="overflow-x:auto"><table class="md-tbl"><tr><th>نمبر</th><th>تاریخ</th><th>ملازم</th><th>شعبہ</th><th>ڈاکٹر</th><th>قسم</th><th>رقم / حالت</th><th>ادائیگی</th>${medFull() ? '<th></th>' : ''}</tr>
   ${rows.map(r => `<tr><td><b>${esc(r.slip_no)}</b></td><td>${esc(r.date)}</td><td>${esc(r.emp_name)}</td><td>${esc(r.department)}</td><td>${esc(r.doctor || '—')}</td>
     <td>${r.has_print ? '<span class="md-tag b">پرنٹ</span>' : '<span class="md-tag a">دستی</span>'}</td>
-    <td>${r.status === 'done' ? medMoney(r.amount) + '<br>' + (r.done_src === 'doctor' ? '<span class="md-tag b">🩺 ڈاکٹر کی انٹری</span>' : '<span class="md-tag g">🏭 دفتری انٹری</span>') : '<span class="md-tag a">⏳ باقی (' + medDays(r.date) + ' دن)</span>'}</td>
-    <td>${r.status === 'done' ? (r.pay_state === 'paid' ? '<span class="md-tag g">✓ ادا شدہ</span>' : r.pay_state === 'partial' ? '<span class="md-tag a">جزوی ادا</span>' : '<span class="md-tag r">ادائیگی باقی</span>') : '—'}</td>
-    ${medCanAdmin() ? `<td style="white-space:nowrap">${r.status === 'pending' ? `<button class="md-btn sm" onclick="medGo('ret')">رقم لکھیں</button>` : ''} <button class="md-btn ghost sm" onclick="medSlipDel(${r.id},'${esc(r.slip_no)}')">🗑</button></td>` : (medIsDoc() && r.status === 'pending' ? `<td><button class="md-btn sm" onclick="medGo('home')">رقم لکھیں</button></td>` : '<td></td>')}</tr>`).join('') || '<tr><td colspan="9" style="color:#667">کوئی واؤچر نہیں ملا</td></tr>'}
+    <td>${(r.vstate || 'ok') === 'pending' ? medMoney(r.amount) + '<br><span class="md-tag a">⏳ تصدیق باقی</span>' : (r.vstate || 'ok') === 'rejected' ? medMoney(r.amount) + '<br><span class="md-tag r">❌ رد شدہ</span>' : r.status === 'done' ? medMoney(r.amount) + '<br>' + (r.done_src === 'doctor' ? '<span class="md-tag b">🩺 ڈاکٹر کی انٹری</span>' : '<span class="md-tag g">🏭 دفتری انٹری</span>') : '<span class="md-tag a">⏳ باقی (' + medDays(r.date) + ' دن)</span>'}</td>
+    <td>${r.status === 'done' && (r.vstate || 'ok') === 'ok' ? (r.pay_state === 'paid' ? '<span class="md-tag g">✓ ادا شدہ</span>' : r.pay_state === 'partial' ? '<span class="md-tag a">جزوی ادا</span>' : '<span class="md-tag r">ادائیگی باقی</span>') : '—'}</td>
+    ${medCanAdmin() ? `<td style="white-space:nowrap">${(r.vstate || 'ok') === 'pending' ? `<button class="md-btn sm" onclick="medVerify(${r.id},1)">✓ تصدیق</button> <button class="md-btn ghost sm" onclick="medVerify(${r.id},0)">✗ رد</button>` : r.status === 'pending' ? `<button class="md-btn sm" onclick="medGo('ret')">رقم لکھیں</button>` : ''} <button class="md-btn ghost sm" onclick="medSlipDel(${r.id},'${esc(r.slip_no)}')">🗑</button></td>` : (medIsDoc() && r.status === 'pending' && (r.vstate || 'ok') === 'ok' ? `<td><button class="md-btn sm" onclick="medGo('home')">رقم لکھیں</button></td>` : '<td></td>')}</tr>`).join('') || '<tr><td colspan="9" style="color:#667">کوئی واؤچر نہیں ملا</td></tr>'}
   <tr class="tot"><td colspan="6">کل (${rows.length} واؤچر)</td><td>${medMoney(totAmt)}</td><td colspan="2"></td></tr></table></div></div>`);
 }
-function medLedSet() { MED_LED.month = ($('#mlMonth') || {}).value || ''; MED_LED.dept = ($('#mlDept') || {}).value || ''; MED_LED.status = ($('#mlStatus') || {}).value || ''; MED_LED.doctor = ($('#mlDoc') || {}).value || ''; MED_LED.employee_id = 0; medPageList(); }
+function medLedSet() { MED_LED.month = ($('#mlMonth') || {}).value || ''; MED_LED.dept = ($('#mlDept') || {}).value || ''; const stv = ($('#mlStatus') || {}).value || ''; MED_LED.status = (stv === '__verify' || stv === '__rejected') ? '' : stv; MED_LED.vstate = stv === '__verify' ? 'pending' : stv === '__rejected' ? 'rejected' : ''; MED_LED.doctor = ($('#mlDoc') || {}).value || ''; MED_LED.employee_id = 0; medPageList(); }
 async function medSlipDel(id, no) { if (!confirm(no + ' حذف کریں؟')) return; try { await api('DELETE', '/api/med/slips/' + id); showTrayToast('حذف ہو گئی'); renderMedicine(); } catch (e) { showTrayToast('خرابی'); } }
 
 /* ----- Report ----- */
@@ -4128,7 +4165,7 @@ async function medPageReport() {
   <table class="md-tbl"><tr><th>User</th><th>پرنٹ</th><th>دستی</th><th>کل</th><th>رقم</th></tr>
   ${(r.users || []).map(u => `<tr><td>${esc(u.username || '—')}</td><td>${u.printed_cnt}</td><td>${u.manual_cnt}</td><td>${u.total_cnt}</td><td>${medMoney(u.total_amount)}</td></tr>`).join('') || '<tr><td colspan="5" style="color:#667">—</td></tr>'}</table></div>`);
 }
-function medEmpOpen(id) { if (!id) return; MED_LED = { month: MED_RPT_MONTH, dept: '', status: '', doctor: '', employee_id: id }; medGo('list'); }
+function medEmpOpen(id) { if (!id) return; MED_LED = { month: MED_RPT_MONTH, dept: '', status: '', doctor: '', employee_id: id, vstate: '' }; medGo('list'); }
 
 /* ----- Doctor khata ----- */
 async function medPageKhata() {
@@ -4139,6 +4176,9 @@ async function medPageKhata() {
   const k = r && (r.doctors || []).find(d => d.doctor === MED_KHATA.doctor);
   let pays = [];
   try { pays = await api('GET', '/api/med/payments?doctor=' + encodeURIComponent(MED_KHATA.doctor)); } catch (e) {}
+  let pv = [];
+  try { pv = await api('GET', '/api/med/slips?vstate=pending' + (medIsDoc() ? '' : '&doctor=' + encodeURIComponent(MED_KHATA.doctor))); } catch (e) {}
+  const pvAmt = (pv || []).reduce((a, r) => a + (+r.amount || 0), 0);
   medSetBody(`<div class="md-card"><h3>💰 ڈاکٹر کھاتہ</h3>
   <div class="md-form" style="margin-bottom:10px">
     ${medIsDoc() ? `<span class="md-tag b" style="font-size:14px;padding:4px 14px">🩺 ${esc(MED_KHATA.doctor)} — میرا کھاتہ</span>` : `<select class="md-inp" onchange="MED_KHATA.doctor=this.value;medPageKhata()">${MED.doctors.map(d => `<option ${d.name === MED_KHATA.doctor ? 'selected' : ''}>${esc(d.name)}</option>`).join('')}</select>`}
@@ -4150,6 +4190,7 @@ async function medPageKhata() {
     <div class="md-kpi b" style="cursor:default"><div class="v">${Number(k.balance || 0).toLocaleString()}</div><div class="t">بقایا</div></div></div>
   ${k.cleared_text ? `<div class="md-clear">✅ ترتیب سے clear: <b>${esc(k.cleared_text)}</b>${k.balance_from ? ` · بقایا <b>${esc(k.balance_from)}</b> سے شروع` : ''}</div>` : (k.balance_from ? `<div class="md-clear">بقایا <b>${esc(k.balance_from)}</b> سے شروع ہے</div>` : '')}
   ` : '<div style="color:#667">اس ڈاکٹر کا کوئی کھاتہ نہیں</div>'}
+  ${pv.length ? `<div class="md-note" style="margin-top:10px">⏳ <b>تصدیق باقی:</b> ${pv.length} انٹریاں · ${medMoney(pvAmt)} — یہ رقم بقایا میں شامل نہیں${medCanAdmin() ? ` · <a href="#" onclick="medVerifyGo('${esc(MED_KHATA.doctor)}');return false">دیکھ کر تصدیق کریں ‹</a>` : ' — فیکٹری تصدیق کرے تو شامل ہو جائے گی'}</div>` : ''}
   </div>
   ${medCanAdmin() ? `<div class="md-card"><h3>➕ نئی ادائیگی لگائیں</h3>
   <div class="md-form"><input class="md-inp" type="date" id="mkDate" value="${karachiToday()}"><input class="md-inp" id="mkAmt" inputmode="numeric" placeholder="رقم" style="width:140px"><input class="md-inp" id="mkNote" placeholder="نوٹ (اختیاری)" style="flex:1;min-width:130px"><button class="md-btn blue" onclick="medPaySave()">ادائیگی لگائیں</button></div>
@@ -4192,7 +4233,7 @@ async function medStmtPrint() {
 function medListPrint() {
   const rows = MED._listRows || [];
   if (!rows.length) { showTrayToast('لسٹ خالی ہے — پہلے واؤچر لسٹ کھولیں'); return; }
-  const totAmt = rows.filter(r => r.status === 'done').reduce((a, r) => a + (+r.amount || 0), 0);
+  const totAmt = rows.filter(r => r.status === 'done' && (r.vstate || 'ok') === 'ok').reduce((a, r) => a + (+r.amount || 0), 0);
   const f = [];
   if (MED_LED.month) f.push('مہینہ: ' + esc(MED_LED.month));
   if (MED_LED.dept) f.push('شعبہ: ' + esc(MED_LED.dept));

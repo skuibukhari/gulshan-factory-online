@@ -529,6 +529,7 @@ try { db.exec(`ALTER TABLE med_doctors ADD COLUMN is_default INTEGER NOT NULL DE
 try { db.exec(`ALTER TABLE med_slips ADD COLUMN doctor_id INTEGER`); } catch (e) { /* already there */ }
 try { db.exec(`ALTER TABLE med_slips ADD COLUMN done_by TEXT DEFAULT ''`); } catch (e) { /* already there */ }
 try { db.exec(`ALTER TABLE med_slips ADD COLUMN done_src TEXT DEFAULT ''`); } catch (e) { /* already there */ }
+try { db.exec(`ALTER TABLE med_slips ADD COLUMN vstate TEXT DEFAULT 'ok'`); } catch (e) { /* already there */ }
 // --- Daily system: fully separate catalog (mukamal alag data) — one-time copy ---
 // Same IDs so existing daily_orders/access rows stay valid; after this, independent.
 if (!db.prepare(`SELECT value FROM daily_settings WHERE key='catalog_split'`).get()) {
@@ -2314,7 +2315,7 @@ function medDefaultDoctor() {
 // FIFO clearing by parchi sequence: purani parchi pehle clear hoti hai.
 // Returns per-doctor totals + har done slip ki pay_state (paid/partial/unpaid) + cleared range text.
 function medDoctorKhata(doctor) {
-  const slips = db.prepare("SELECT * FROM med_slips WHERE doctor=? AND status='done' ORDER BY id").all(doctor);
+  const slips = db.prepare("SELECT * FROM med_slips WHERE doctor=? AND status='done' AND COALESCE(vstate,'ok')='ok' ORDER BY id").all(doctor);
   const pays = db.prepare('SELECT * FROM med_payments WHERE doctor=? ORDER BY date, id').all(doctor);
   const total = slips.reduce((a, x) => a + (+x.amount || 0), 0);
   const paid = pays.reduce((a, x) => a + (+x.amount || 0), 0);
@@ -2337,6 +2338,23 @@ function medDoctorKhata(doctor) {
   }
   if (runStart) ranges.push(runStart === runEnd ? runStart : runStart + ' تا ' + runEnd);
   return { doctor, total, paid, balance: total - paid, slips, payments: pays, cleared_text: ranges.join('، '), balance_from: balanceFrom };
+}
+
+// Medicine push helpers: doctor-linked users / factory staff (doctors excluded).
+function medPushDoctor(doctorName, title, body) {
+  try {
+    if (!doctorName) return;
+    const users = db.prepare('SELECT id FROM users WHERE active=1 AND med_doctor=?').all(doctorName);
+    const payload = JSON.stringify({ title, body, url: '/' });
+    for (const u of users) pushToUser(u.id, payload);
+  } catch (e) {}
+}
+function medPushFactory(title, body, excludeId) {
+  try {
+    const subs = db.prepare(`SELECT ps.* FROM push_subscriptions ps JOIN users u ON u.id=ps.user_id
+      WHERE u.active=1 AND u.role IN ('super_admin','factory') AND (u.med_doctor IS NULL OR u.med_doctor='') AND u.id != ?`).all(excludeId || 0);
+    pushTo(subs, JSON.stringify({ title, body, url: '/' }));
+  } catch (e) {}
 }
 
 app.get('/api/med/departments', requireLogin, requireSection('medicine', 'view'), (req, res) => {
@@ -2404,7 +2422,7 @@ app.delete('/api/med/doctors/:id', requireLogin, requireSection('medicine', 'ful
 });
 
 app.get('/api/med/employees', requireLogin, requireSection('medicine', 'view'), (req, res) => {
-  if (medDoc(req)) return res.json([]);
+  if (medDoc(req)) return res.json(db.prepare('SELECT id, name, department FROM med_employees WHERE active=1 ORDER BY department, name').all());
   const all = req.query.all === '1';
   res.json(db.prepare(`SELECT * FROM med_employees ${all ? '' : 'WHERE active=1'} ORDER BY department, name`).all());
 });
@@ -2454,6 +2472,7 @@ app.get('/api/med/slips', requireLogin, requireSection('medicine', 'view'), (req
   if (dnS) { w.push('s.doctor=?'); args.push(dnS); }
   else if (q.doctor) { w.push('s.doctor=?'); args.push(q.doctor); }
   if (q.month) { w.push('substr(s.date,1,7)=?'); args.push(q.month); }
+  if (q.vstate) { w.push("COALESCE(s.vstate,'ok')=?"); args.push(q.vstate); }
   if (q.unprinted === '1') { w.push('s.has_print=1 AND s.printed=0'); }
   const rows = db.prepare(`SELECT s.*, u.username AS by_name FROM med_slips s LEFT JOIN users u ON u.id=s.created_by
     ${w.length ? 'WHERE ' + w.join(' AND ') : ''} ORDER BY s.id DESC LIMIT 500`).all(...args);
@@ -2482,11 +2501,13 @@ app.post('/api/med/slips', requireLogin, requireSection('medicine', 'full'), (re
     const r = db.prepare(`INSERT INTO med_slips (slip_no, employee_id, emp_name, department, date, notes, has_print, printed, status, amount, return_detail, returned_date, doctor, doctor_id, created_by)
       VALUES (?,?,?,?,?,?,0,1,'done',?,?,?,?,?,?)`)
       .run(no, emp.id, emp.name, emp.department, date, '', amount, String(b.detail || '').trim(), date, doctorName, doc ? doc.id : null, req.session.userId);
+    medPushDoctor(doctorName, '💊 دوا پرچی — دستی انٹری', `${no} — ${emp.name} (${emp.department}): Rs ${amount.toLocaleString()}`);
     return res.json({ ok: true, id: r.lastInsertRowid, slip_no: no });
   }
   const r = db.prepare(`INSERT INTO med_slips (slip_no, employee_id, emp_name, department, date, notes, has_print, printed, status, doctor, doctor_id, created_by)
     VALUES (?,?,?,?,?,?,1,0,'pending',?,?,?)`)
     .run(no, emp.id, emp.name, emp.department, date, String(b.notes || '').trim(), doctorName, doc ? doc.id : null, req.session.userId);
+  medPushDoctor(doctorName, '💊 دوا پرچی — نئی پرچی بنی', `${no} — ملازم: ${emp.name} (${emp.department})`);
   res.json({ ok: true, id: r.lastInsertRowid, slip_no: no });
 });
 app.put('/api/med/slips/:id', requireLogin, requireSection('medicine', 'full'), (req, res) => {
@@ -2497,11 +2518,15 @@ app.put('/api/med/slips/:id', requireLogin, requireSection('medicine', 'full'), 
   if (dnP) {
     // doctor login: sirf APNI parchi, sirf rakam/tafseel ki entry
     if (sl.doctor !== dnP) return res.status(403).json({ error: 'forbidden' });
+    if (sl.vstate === 'rejected') return res.status(403).json({ error: 'rejected_entry' });
+    if (sl.status === 'done' && (sl.vstate || 'ok') === 'ok') return res.status(403).json({ error: 'verified_locked' });
     if (b.amount === undefined) return res.status(403).json({ error: 'doctor_amount_only' });
     const damt = parseFloat(b.amount);
     if (!damt || damt <= 0) return res.status(400).json({ error: 'رقم لکھیں' });
+    const wasPending = sl.status === 'pending';
     db.prepare('UPDATE med_slips SET amount=?, return_detail=?, status=?, returned_date=?, done_by=?, done_src=? WHERE id=?')
       .run(damt, String(b.return_detail || '').trim(), 'done', medToday(), req.user.username, 'doctor', sl.id);
+    if (wasPending) medPushFactory('🩺 ڈاکٹر نے پرچی مکمل کی', `${sl.slip_no} — ${sl.emp_name}: Rs ${damt.toLocaleString()}`, req.user.id);
     return res.json({ ok: true });
   }
   if (b.amount !== undefined) {
@@ -2541,7 +2566,9 @@ app.get('/api/med/stats', requireLogin, requireSection('medicine', 'view'), (req
   res.json({
     month,
     month_slips: one("SELECT COUNT(*) AS v FROM med_slips WHERE substr(date,1,7)=?" + dw, month, ...da),
-    month_amount: one("SELECT COALESCE(SUM(amount),0) AS v FROM med_slips WHERE status='done' AND substr(date,1,7)=?" + dw, month, ...da),
+    month_amount: one("SELECT COALESCE(SUM(amount),0) AS v FROM med_slips WHERE status='done' AND COALESCE(vstate,'ok')='ok' AND substr(date,1,7)=?" + dw, month, ...da),
+    pending_verify: one("SELECT COUNT(*) AS v FROM med_slips WHERE vstate='pending'" + dw, ...da),
+    pending_verify_amount: one("SELECT COALESCE(SUM(amount),0) AS v FROM med_slips WHERE vstate='pending'" + dw, ...da),
     pending: one("SELECT COUNT(*) AS v FROM med_slips WHERE status='pending'" + dw.replace(' AND ', ' AND '), ...da),
     unprinted: dnT ? 0 : one('SELECT COUNT(*) AS v FROM med_slips WHERE has_print=1 AND printed=0'),
     doctor: dd ? dd.name : '',
@@ -2550,7 +2577,7 @@ app.get('/api/med/stats', requireLogin, requireSection('medicine', 'view'), (req
     doctor_total: khata.total,
     balance_from: khata.balance_from || '',
     departments: db.prepare(`SELECT s.department AS name, COUNT(*) AS slips,
-      COALESCE(SUM(CASE WHEN s.status='done' THEN s.amount ELSE 0 END),0) AS amount,
+      COALESCE(SUM(CASE WHEN s.status='done' AND COALESCE(s.vstate,'ok')='ok' THEN s.amount ELSE 0 END),0) AS amount,
       SUM(CASE WHEN s.status='pending' THEN 1 ELSE 0 END) AS pending
       FROM med_slips s WHERE s.department<>''${dnT ? ' AND s.doctor=?' : ''} GROUP BY s.department ORDER BY slips DESC`).all(...da),
   });
@@ -2567,11 +2594,11 @@ app.get('/api/med/report', requireLogin, requireSection('medicine', 'view'), (re
     COUNT(*) AS total_cnt,
     COALESCE(SUM(CASE WHEN s.status='done' THEN s.amount ELSE 0 END),0) AS total_amount,
     SUM(CASE WHEN s.status='pending' THEN 1 ELSE 0 END) AS pending_cnt
-    FROM med_slips s WHERE substr(s.date,1,7)=?${dnR} GROUP BY s.employee_id, s.emp_name, s.department ORDER BY total_amount DESC`).all(month, ...daR);
+    FROM med_slips s WHERE substr(s.date,1,7)=? AND COALESCE(s.vstate,'ok')='ok'${dnR} GROUP BY s.employee_id, s.emp_name, s.department ORDER BY total_amount DESC`).all(month, ...daR);
   const totals = db.prepare(`SELECT COUNT(*) AS total_cnt,
     COALESCE(SUM(CASE WHEN status='done' THEN amount ELSE 0 END),0) AS total_amount,
     SUM(CASE WHEN status='pending' THEN 1 ELSE 0 END) AS pending_cnt
-    FROM med_slips WHERE substr(date,1,7)=?${dnR2}`).get(month, ...daR);
+    FROM med_slips WHERE substr(date,1,7)=? AND COALESCE(vstate,'ok')='ok'${dnR2}`).get(month, ...daR);
   const docNames = db.prepare('SELECT DISTINCT doctor FROM med_slips WHERE doctor<>\'\' UNION SELECT name FROM med_doctors').all().map(r => r.doctor);
   const doctors = docNames.filter(n => !medDoc(req) || n === medDoc(req)).map(n => { const k = medDoctorKhata(n); return { doctor: n, total: k.total, paid: k.paid, balance: k.balance, cleared_text: k.cleared_text, balance_from: k.balance_from }; });
   const users = db.prepare(`SELECT u.username,
@@ -2579,7 +2606,7 @@ app.get('/api/med/report', requireLogin, requireSection('medicine', 'view'), (re
     SUM(CASE WHEN s.has_print=0 THEN 1 ELSE 0 END) AS manual_cnt,
     COUNT(*) AS total_cnt,
     COALESCE(SUM(CASE WHEN s.status='done' THEN s.amount ELSE 0 END),0) AS total_amount
-    FROM med_slips s LEFT JOIN users u ON u.id=s.created_by WHERE substr(s.date,1,7)=?${dnR} GROUP BY s.created_by ORDER BY total_cnt DESC`).all(month, ...daR);
+    FROM med_slips s LEFT JOIN users u ON u.id=s.created_by WHERE substr(s.date,1,7)=? AND COALESCE(s.vstate,'ok')='ok'${dnR} GROUP BY s.created_by ORDER BY total_cnt DESC`).all(month, ...daR);
   res.json({ month, employees, totals, doctors, users });
 });
 
@@ -2602,12 +2629,45 @@ app.post('/api/med/payments', requireLogin, requireSection('medicine', 'full'), 
   const date = /^\d{4}-\d{2}-\d{2}$/.test(b.date || '') ? b.date : medToday();
   const r = db.prepare('INSERT INTO med_payments (doctor, month, amount, date, note, created_by) VALUES (?,?,?,?,?,?)')
     .run(doctorName, date.slice(0, 7), amount, date, String(b.note || '').trim(), req.session.userId);
+  const kAfter = medDoctorKhata(doctorName);
+  medPushDoctor(doctorName, '💰 ادائیگی لگ گئی — گلشن فیکٹری', `Rs ${amount.toLocaleString()} ادا ہوئے — نیا بقایا: Rs ${kAfter.balance.toLocaleString()}`);
   res.json({ ok: true, id: r.lastInsertRowid });
 });
 app.delete('/api/med/payments/:id', requireLogin, requireSection('medicine', 'full'), (req, res) => {
   if (medDocBlock(req, res)) return;
   db.prepare('DELETE FROM med_payments WHERE id=?').run(req.params.id);
   res.json({ ok: true });
+});
+
+// Doctor ki apni direct entry — status 'done' magar vstate 'pending' (factory tasdeeq ke baad hi khata mein ginegi)
+app.post('/api/med/doctor-entry', requireLogin, requireSection('medicine', 'full'), (req, res) => {
+  const dnE = medDoc(req);
+  if (!dnE) return res.status(403).json({ error: 'doctor_only' });
+  const b = req.body || {};
+  const emp = db.prepare('SELECT * FROM med_employees WHERE id=? AND active=1').get(+b.employee_id || 0);
+  if (!emp) return res.status(400).json({ error: 'ملازم منتخب کریں' });
+  const amount = parseFloat(b.amount);
+  if (!amount || amount <= 0) return res.status(400).json({ error: 'رقم لکھیں' });
+  const doc = db.prepare('SELECT * FROM med_doctors WHERE name=?').get(dnE);
+  const date = /^\d{4}-\d{2}-\d{2}$/.test(b.date || '') ? b.date : medToday();
+  const no = medSlipNo();
+  const r = db.prepare(`INSERT INTO med_slips (slip_no, employee_id, emp_name, department, date, notes, has_print, printed, status, amount, return_detail, returned_date, doctor, doctor_id, created_by, done_by, done_src, vstate)
+    VALUES (?,?,?,?,?,?,0,1,'done',?,?,?,?,?,?,?,?, 'pending')`)
+    .run(no, emp.id, emp.name, emp.department, date, '', amount, String(b.detail || '').trim(), date, dnE, doc ? doc.id : null, req.session.userId, req.user.username, 'doctor');
+  medPushFactory('⏳ ڈاکٹر کی نئی انٹری — تصدیق باقی', `${dnE}: ${emp.name} — Rs ${amount.toLocaleString()} (${no})`, req.user.id);
+  res.json({ ok: true, id: r.lastInsertRowid, slip_no: no });
+});
+// Factory tasdeeq: pending entry ko ok (khata mein shamil) ya rejected karein
+app.post('/api/med/slips/:id/verify', requireLogin, requireSection('medicine', 'full'), (req, res) => {
+  if (medDocBlock(req, res)) return;
+  const sl = db.prepare('SELECT * FROM med_slips WHERE id=?').get(req.params.id);
+  if (!sl) return res.status(404).json({ error: 'انٹری نہیں ملی' });
+  if ((sl.vstate || 'ok') !== 'pending') return res.status(400).json({ error: 'یہ انٹری پہلے ہی نمٹ چکی ہے' });
+  const approve = (req.body || {}).action !== 'reject';
+  db.prepare('UPDATE med_slips SET vstate=? WHERE id=?').run(approve ? 'ok' : 'rejected', sl.id);
+  medPushDoctor(sl.doctor, approve ? '✅ انٹری تصدیق ہو گئی' : '❌ انٹری رد کر دی گئی',
+    `${sl.slip_no} — ${sl.emp_name}: Rs ${Number(sl.amount || 0).toLocaleString()}` + (approve ? '' : ' — دفتر سے رابطہ کریں'));
+  res.json({ ok: true, vstate: approve ? 'ok' : 'rejected' });
 });
 
 // ---------- Rate Lists (multiple price lists) ----------
