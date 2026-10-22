@@ -2845,8 +2845,8 @@ app.post('/api/admin/logout-user/:id', requireLogin, (req, res) => {
   res.json({ ok: true, sessions_cleared: count });
 });
 // Public app version — clients detect updates against this.
-// Auto: base version (package.json) + content hash of the frontend files —
-// har deploy/file-change par version KHUD badal jata hai, koi manual bump nahi.
+// Auto clean number: base (package.json major.minor) + auto patch counter —
+// har frontend change/deploy par aakhri number khud barh jata hai, manual bump nahi.
 let _verCache = { key: '', version: '' };
 function appVersion() {
   try {
@@ -2856,7 +2856,20 @@ function appVersion() {
     if (_verCache.key === key) return _verCache.version;
     const h = crypto.createHash('md5');
     for (const f of files) { try { h.update(fs.readFileSync(path.join(__dirname, f))); } catch (e) {} }
-    const version = require('./package.json').version + '+' + h.digest('hex').slice(0, 8);
+    const hash = h.digest('hex');
+    const pkg = String(require('./package.json').version || '1.0.0');
+    const pp = pkg.split('.');
+    const base = (pp[0] || '1') + '.' + (pp[1] || '0');
+    // Clean auto number: frontend files badalne par aakhri number KHUD +1 ho jata hai
+    // (2.4.0 -> 2.4.1 -> 2.4.2 ...), koi hash-code nahi; number DB mein mehfooz rehta hai.
+    let counter = parseInt(appSetting('ver_counter') || '0', 10) || 0;
+    const lastHash = appSetting('ver_hash') || '';
+    const lastBase = appSetting('ver_base') || '';
+    if (lastBase !== base) { counter = 0; appSetting('ver_base', base); appSetting('ver_hash', hash); }
+    else if (lastHash && lastHash !== hash) { counter += 1; appSetting('ver_hash', hash); }
+    else if (!lastHash) { appSetting('ver_hash', hash); }
+    appSetting('ver_counter', String(counter));
+    const version = base + '.' + counter;
     _verCache = { key, version };
     return version;
   } catch (e) { return require('./package.json').version; }
