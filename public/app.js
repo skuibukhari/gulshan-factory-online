@@ -1354,7 +1354,11 @@ function showTrayToast(title, subtitle) {
   }, 3000);
 }
 async function renderTrayDash() {
+  // Purana auto-refresh timer band karo (dobara render par naya lagega)
+  if (window._trayDashTimer) { clearInterval(window._trayDashTimer); window._trayDashTimer = null; }
   const box = document.getElementById('trayBody');
+  // Dashboard fingerprint: data badla to hi dobara render hoga (video/scroll disturb nahi hoga)
+  let _pvFP = '[]', _todayFP = '[]';
   const isShop = ME.role === 'shop';
   let s;
   try { s = await api('GET', '/api/tray/summary'); }
@@ -1382,6 +1386,7 @@ async function renderTrayDash() {
     if (fromStr) vurl += '?from='+fromStr;
     if (typeof toStr !== 'undefined' && toStr) vurl += (fromStr ? '&' : '?') + 'to='+toStr;
     const pv = await api('GET', vurl);
+    _pvFP = JSON.stringify(pv); window._trayDashVurl = vurl;
     window._trayEarliest = null;
     pv.forEach(v => {
       const k = v.shop_type + '_' + v.shop_id + '_' + v.item_id;
@@ -1496,6 +1501,7 @@ async function renderTrayDash() {
     let todayRet = {};
     try {
       const tv = await api('GET', '/api/tray/vouchers?from='+todayStr+'&to='+todayStr);
+      _todayFP = JSON.stringify(tv);
       tv.forEach(v => {
         const k = v.item_id;
         todayRet[k] = (todayRet[k]||0) + (v.returned||0);
@@ -1571,6 +1577,17 @@ async function renderTrayDash() {
       '<button class="btn" style="margin-top:8px;background:#c62828;color:#fff" onclick="resetTrayData()">🗑️ سارا ڈیٹا ری سیٹ</button></div>';
   }
   box.innerHTML = html;
+  // Auto-refresh: dashboard khula ho aur koi user nayi entry kare to 30 sec me khud taza ho jaye (refresh ki zaroorat nahi)
+  window._trayDashFP = JSON.stringify([s, _pvFP, _todayFP]);
+  window._trayDashTimer = setInterval(async () => {
+    try {
+      if (CUR_VIEW !== 'tray' || TRAY.tab !== 'dash' || document.hidden) { clearInterval(window._trayDashTimer); window._trayDashTimer = null; return; }
+      const s2 = await api('GET', '/api/tray/summary');
+      const pv2 = await api('GET', window._trayDashVurl || '/api/tray/vouchers');
+      const tv2 = await api('GET', '/api/tray/vouchers?from=' + karachiToday() + '&to=' + karachiToday());
+      if (JSON.stringify([s2, JSON.stringify(pv2), JSON.stringify(tv2)]) !== window._trayDashFP) renderTrayDash();
+    } catch (e) {}
+  }, 30000);
 }
 
 // Combined shop list: regular shops + daily shops (tray module)
@@ -3891,6 +3908,10 @@ async function dailyShopEdit(id) {
 }
 
 document.addEventListener('DOMContentLoaded', init);
+// App par wapas aate hi tray dashboard taza karo (doosri device/user ki entry nazar aaye)
+document.addEventListener('visibilitychange', () => {
+  if (!document.hidden && typeof CUR_VIEW !== 'undefined' && CUR_VIEW === 'tray' && typeof TRAY !== 'undefined' && TRAY.tab === 'dash') renderTrayDash();
+});
 
 // ---------- Medicine Parchi (دوا پرچی) FINAL — alag pages, doctor register, sequence clearing ----------
 let MED_PAGE = 'home';
