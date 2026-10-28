@@ -2515,10 +2515,12 @@ async function userEdit(id) {
     } catch (e) {}
   }
   const active = confirm('اکاؤنٹ فعال رکھیں؟ (OK=فعال، Cancel=بند)');
-  const meddoc = prompt('🩺 ڈاکٹر لاگن — رجسٹرڈ ڈاکٹر کا عین نام (خالی = کوئی ڈاکٹر لاگن نہیں):', u.med_doctor || ''); if (meddoc === null) return;
+  // 🩺 ڈاکٹر والا سوال صرف اسی اکاؤنٹ کی edit میں آئے جس پر پہلے سے ڈاکٹر لاگن ہو — باقی ہر یوزر پر نہیں
+  let meddoc = u.med_doctor || '';
+  if (meddoc) { const md = prompt('🩺 ڈاکٹر لاگن — رجسٹرڈ ڈاکٹر کا عین نام (خالی = کوئی ڈاکٹر لاگن نہیں):', meddoc); if (md === null) return; meddoc = md.trim(); }
   const pw = prompt('نیا پاس ورڈ (خالی چھوڑیں تو تبدیل نہیں ہوگا):', '');
   await api('PUT', '/api/users/' + id, { role: ['super_admin', 'factory', 'shop'].includes(role) ? role : u.role,
-    shop_id: u.shop_id, daily_shop_id: dshopId, active: active ? 1 : 0, phone, med_doctor: meddoc.trim(), ...(pw ? { password: pw } : {}) });
+    shop_id: u.shop_id, daily_shop_id: dshopId, active: active ? 1 : 0, phone, med_doctor: meddoc, ...(pw ? { password: pw } : {}) });
   renderSettingsUsers();
 }
 const SEC_UR = { dashboard: 'ڈیش بورڈ', orders: 'آرڈرز', order_history: 'آرڈر ہسٹری', shops: 'دکانیں', products: 'آئٹمز',
