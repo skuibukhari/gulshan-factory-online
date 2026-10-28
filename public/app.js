@@ -3219,15 +3219,18 @@ function waNum92(p) {
 async function renderDailyBoard(di) {
   const isAdmin = ME.role === 'super_admin';
   const date = DAILY_VIEW_DATE || di.order_date;
-  const [orders, totals, tracker, catalog, dshops] = await Promise.all([
+  const [orders, totals, tracker, catalog, dshops, users] = await Promise.all([
     api('GET', '/api/daily/orders?date=' + encodeURIComponent(date)),
     api('GET', '/api/daily/totals?date=' + encodeURIComponent(date)),
     api('GET', '/api/daily/tracker?date=' + encodeURIComponent(date)),
     api('GET', '/api/daily/catalog'),
     api('GET', '/api/daily-shops').catch(() => []),
+    api('GET', '/api/users').catch(() => []),
   ]);
   const phoneById = {};
-  (dshops || []).forEach(s => { phoneById[String(s.id)] = s.phone || ''; });
+  // Pehle linked user accounts ke number (jahan aam tor par number maintain hota hai), phir shop record ka number sab se upar
+  (users || []).forEach(u => { if (u.daily_shop_id && u.phone) phoneById[String(u.daily_shop_id)] = u.phone; });
+  (dshops || []).forEach(s => { if (s.phone) phoneById[String(s.id)] = s.phone; });
   const isCurrent = date === di.order_date;
 
   const rec = tracker.shops.filter(s => s.ordered), pend = tracker.shops.filter(s => !s.ordered);
