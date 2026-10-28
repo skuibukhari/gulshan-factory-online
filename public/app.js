@@ -3146,7 +3146,10 @@ async function submitDailyOrder() {
 async function renderDailyAdminOrder() {
   const di = await api('GET', '/api/daily/date');
   DAILY_DATE = di.order_date;
-  const [shops, catalog] = await Promise.all([api('GET', '/api/daily-shops'), api('GET', '/api/daily/catalog')]);
+  const [shops, catalog, orders] = await Promise.all([api('GET', '/api/daily-shops'), api('GET', '/api/daily/catalog'), api('GET', '/api/daily/orders?date=' + encodeURIComponent(di.order_date)).catch(() => [])]);
+  // shop_id -> us shop ka us date ka mojooda order (agar hai)
+  window._daoOrders = {};
+  (orders || []).forEach(o => { window._daoOrders[String(o.shop_id)] = o; });
   const catsHtml = catalog.map(c => {
     if (!c.products.length) return '';
     return `<div class="cathead">🗂 ${esc(c.name)}</div>` + c.products.map(p =>
@@ -3157,13 +3160,34 @@ async function renderDailyAdminOrder() {
     <h2 class="st">📝 <span>دکان کا آرڈر دیں</span></h2>
     <button class="btn small" onclick="DAILY_VIEW_DATE=null;renderDaily()">← واپس</button>
     <div class="supbanner">📦 پیداوار: <b>${esc(di.order_date)}</b></div>
-    <div class="formgrid"><label>دکان منتخب کریں<br><select id="dao-shop">
-      ${shops.filter(s => s.active).map(s => `<option value="${s.id}">${esc(s.name)}</option>`).join('')}
+    <div class="formgrid"><label>دکان منتخب کریں<br><select id="dao-shop" onchange="daoShopLoad()">
+      ${shops.filter(s => s.active).map(s => `<option value="${s.id}">${esc(s.name)}${window._daoOrders[String(s.id)] ? ' ✅' : ''}</option>`).join('')}
     </select></label></div>
+    <div id="dao-note"></div>
     ${catsHtml || '<p class="note">⚠️ کوئی آئٹم نہیں — پہلے 📦 روزانہ ڈیٹا سے آئٹمز شامل کریں</p>'}
     <div class="err" id="dErr"></div>
     ${catsHtml ? '<button class="btn green" onclick="submitDailyAdminOrder()">✅ آرڈر بھیجیں</button>' : ''}`;
+  daoShopLoad();
 }
+// Admin form: select ki hui shop ka mojooda order (agar hai) quantities me bhar do + note dikhao
+window.daoShopLoad = function() {
+  const sel = document.getElementById('dao-shop');
+  const note = document.getElementById('dao-note');
+  if (!sel) return;
+  const o = (window._daoOrders || {})[String(sel.value)] || null;
+  const qty = {};
+  if (o && o.items) o.items.forEach(i => { qty[i.product_id] = i.quantity; });
+  document.querySelectorAll('#v-daily input[data-pid]').forEach(inp => {
+    inp.value = qty[inp.dataset.pid] != null ? qty[inp.dataset.pid] : '';
+  });
+  if (!note) return;
+  if (o) {
+    const cnt = (o.items || []).length;
+    note.innerHTML = `<div style="background:linear-gradient(135deg,#fff3e0,#ffe0b2);border:2px solid #fb8c00;border-radius:10px;padding:10px 12px;margin:10px 0;font-size:14px;color:#6d3b00">⚠️ <b>اس دکان کا آرڈر پہلے سے موجود ہے</b> (${cnt} آئٹم) — نیچے وہی مقداریں بھری ہوئی ہیں۔ تبدیلی کر کے "آرڈر بھیجیں" دبائیں گے تو آرڈر انہی مقداروں سے <b>اپڈیٹ</b> ہو جائے گا۔${o.note ? `<br>نوٹ: ${esc(o.note)}` : ''}</div>`;
+  } else {
+    note.innerHTML = `<div style="background:linear-gradient(135deg,#e8f5e9,#c8e6c9);border:2px solid #81c784;border-radius:10px;padding:10px 12px;margin:10px 0;font-size:14px;color:#1b5e20">اس دکان کا اس تاریخ کا ابھی کوئی آرڈر نہیں — نیا آرڈر درج کریں۔</div>`;
+  }
+};
 async function submitDailyAdminOrder() {
   const shop_id = Number($('#dao-shop').value);
   if (!shop_id) { alert('دکان منتخب کریں'); return; }
