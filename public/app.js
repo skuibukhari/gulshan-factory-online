@@ -3207,15 +3207,27 @@ async function delDailyOrder(id) {
 }
 
 // ---------- board: viewer / supplier / factory / admin ----------
+// Phone ko WhatsApp ke international format (92...) me badlo; khaali/invalid par ''
+function waNum92(p) {
+  let d = String(p || '').replace(/[^0-9]/g, '');
+  if (!d) return '';
+  if (d.startsWith('92')) return d;
+  if (d.startsWith('0')) return '92' + d.slice(1);
+  if (d.length === 10 && d.startsWith('3')) return '92' + d;
+  return d.length >= 10 ? d : '';
+}
 async function renderDailyBoard(di) {
   const isAdmin = ME.role === 'super_admin';
   const date = DAILY_VIEW_DATE || di.order_date;
-  const [orders, totals, tracker, catalog] = await Promise.all([
+  const [orders, totals, tracker, catalog, dshops] = await Promise.all([
     api('GET', '/api/daily/orders?date=' + encodeURIComponent(date)),
     api('GET', '/api/daily/totals?date=' + encodeURIComponent(date)),
     api('GET', '/api/daily/tracker?date=' + encodeURIComponent(date)),
     api('GET', '/api/daily/catalog'),
+    api('GET', '/api/daily-shops').catch(() => []),
   ]);
+  const phoneById = {};
+  (dshops || []).forEach(s => { phoneById[String(s.id)] = s.phone || ''; });
   const isCurrent = date === di.order_date;
 
   const rec = tracker.shops.filter(s => s.ordered), pend = tracker.shops.filter(s => !s.ordered);
@@ -3238,10 +3250,11 @@ async function renderDailyBoard(di) {
     <div style="margin:12px 0">
       <div style="font-size:16px;font-weight:bold;color:#c62828;margin-bottom:8px">⏳ پینڈنگ (${pend.length})</div>
       <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:8px">
-        ${pend.map(s => `<div style="background:linear-gradient(135deg,#ffebee,#ffcdd2);border:2px solid #e57373;border-radius:10px;padding:10px;text-align:center;box-shadow:0 2px 6px rgba(198,40,40,.15)">
+        ${pend.map(s => { const ph = waNum92(phoneById[String(s.id)]); const msg = encodeURIComponent('السلام علیکم! 🏭 گلشن فیکٹری کی طرف سے یاددہانی: ' + date + ' کے روزانہ آرڈر کی آخری حد (کٹ آف) ' + (di.cutoff_time || '') + ' ہے۔ براہ کرم اپنا آرڈر وقت پر بھیج دیں۔ شکریہ!'); return `<div style="background:linear-gradient(135deg,#ffebee,#ffcdd2);border:2px solid #e57373;border-radius:10px;padding:10px;text-align:center;box-shadow:0 2px 6px rgba(198,40,40,.15)">
           <div style="font-size:14px;font-weight:bold;color:#b71c1c">🏪 ${esc(s.name)}</div>
           <div style="font-size:11px;color:#c62828">آرڈر باقی</div>
-        </div>`).join('')}
+          ${isCurrent ? (ph ? `<a href="https://wa.me/${ph}?text=${msg}" target="_blank" style="display:inline-block;margin-top:8px;background:linear-gradient(135deg,#25D366,#128C7E);color:#fff;padding:6px 12px;border-radius:8px;font-size:12px;font-weight:bold;text-decoration:none;box-shadow:0 2px 6px rgba(18,140,126,.35)">🔔 WhatsApp یاددہانی</a>` : `<div style="font-size:10px;color:#999;margin-top:8px">📵 نمبر درج نہیں</div>`) : ''}
+        </div>`; }).join('')}
       </div>
     </div>` : `<div style="background:linear-gradient(135deg,#e8f5e9,#c8e6c9);border-radius:12px;padding:16px;text-align:center;margin:12px 0;font-size:16px;font-weight:bold;color:#2e7d32">🎉 سب دکانوں کا آرڈر آ گیا!</div>`}
     ${rec.length ? `
