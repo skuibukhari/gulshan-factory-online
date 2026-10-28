@@ -2504,11 +2504,21 @@ async function userEdit(id) {
   const u = users.find(x => x.id === id); if (!u) return;
   const role = prompt('رول (super_admin / factory / shop):', u.role); if (role === null) return;
   const phone = prompt('موبائل نمبر:', u.phone || ''); if (phone === null) return;
+  // روزانہ دکان: لنک برقرار رکھیں، اور daily_shop اکاؤنٹ ہو تو منتخب/تبدیل بھی کر سکیں (پہلے یہ لنک edit پر خود مٹ جاتا تھا)
+  let dshopId = (u.daily_shop_id === undefined ? null : u.daily_shop_id);
+  if (u.account_type === 'daily_shop') {
+    try {
+      const dshops = await api('GET', '/api/daily-shops');
+      const cur = dshops.findIndex(s => s.id === u.daily_shop_id);
+      const ans = prompt('روزانہ دکان منتخب کریں — صرف نمبر لکھیں:\n0 = کوئی نہیں\n' + dshops.map((s, i) => (i + 1) + ' = ' + s.name).join('\n'), cur >= 0 ? String(cur + 1) : '0');
+      if (ans !== null) { const n = parseInt(ans, 10); dshopId = (n >= 1 && dshops[n - 1]) ? dshops[n - 1].id : null; }
+    } catch (e) {}
+  }
   const active = confirm('اکاؤنٹ فعال رکھیں؟ (OK=فعال، Cancel=بند)');
   const meddoc = prompt('🩺 ڈاکٹر لاگن — رجسٹرڈ ڈاکٹر کا عین نام (خالی = کوئی ڈاکٹر لاگن نہیں):', u.med_doctor || ''); if (meddoc === null) return;
   const pw = prompt('نیا پاس ورڈ (خالی چھوڑیں تو تبدیل نہیں ہوگا):', '');
   await api('PUT', '/api/users/' + id, { role: ['super_admin', 'factory', 'shop'].includes(role) ? role : u.role,
-    shop_id: u.shop_id, active: active ? 1 : 0, phone, med_doctor: meddoc.trim(), ...(pw ? { password: pw } : {}) });
+    shop_id: u.shop_id, daily_shop_id: dshopId, active: active ? 1 : 0, phone, med_doctor: meddoc.trim(), ...(pw ? { password: pw } : {}) });
   renderSettingsUsers();
 }
 const SEC_UR = { dashboard: 'ڈیش بورڈ', orders: 'آرڈرز', order_history: 'آرڈر ہسٹری', shops: 'دکانیں', products: 'آئٹمز',
